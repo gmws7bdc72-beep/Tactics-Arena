@@ -4,9 +4,10 @@ import { CommandType, GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
 import { generateAICommands } from "../engine/ai";
+import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 
@@ -118,6 +119,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const playersRef = useRef(players);
   const ballRef = useRef(ball);
   const pendingCommandsRef = useRef(pendingCommands);
+  // Tracks where the AI conceded goals this match so it can adapt its defensive shape
+  const adaptiveAIRef = useRef<AdaptiveAIState>({ concededRows: [] });
 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { ballRef.current = ball; }, [ball]);
@@ -144,6 +147,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       newScore = { player: oldScore.player + 1, ai: oldScore.ai };
       setShowGoalBanner("player");
       setTimeout(() => setShowGoalBanner(null), 2200);
+      // Record the row where the AI was beaten so it can adapt its defensive shape
+      const concededRow = Math.max(0, Math.min(6, Math.floor(lastFrame.ball.position.y / TILE_H)));
+      adaptiveAIRef.current = {
+        concededRows: [...adaptiveAIRef.current.concededRows, concededRow],
+      };
     } else if (goalEvent?.teamId === "ai") {
       newScore = { player: oldScore.player, ai: oldScore.ai + 1 };
       setShowGoalBanner("ai");
@@ -239,7 +247,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
 
     const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
     const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
-    const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier);
+    const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current);
 
     const withCommands = currentPlayers.map(p => {
       const cmd = p.teamId === "player"

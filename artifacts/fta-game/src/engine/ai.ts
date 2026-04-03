@@ -6,6 +6,42 @@ import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COL
 
 export type AiTier = 1 | 2 | 3;
 
+// ─── Adaptive AI ─────────────────────────────────────────────────────────────
+
+// Tracks where the AI has conceded goals so it can adjust its defensive shape.
+export interface AdaptiveAIState {
+  concededRows: number[]; // pitch rows (0-6) where each goal was conceded, oldest first
+}
+
+interface Adaptation {
+  dangerRow: number | null; // weighted average conceded row, null if nothing conceded
+  urgency: number;          // 0-3: how many recent concessions (caps at 3 for calculations)
+}
+
+function computeAdaptation(state: AdaptiveAIState | undefined): Adaptation {
+  if (!state || state.concededRows.length === 0) return { dangerRow: null, urgency: 0 };
+  const rows = state.concededRows.slice(-3); // consider last 3 goals
+  // Weighted average — most recent goal has highest weight
+  let totalWeight = 0, weightedSum = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const w = i + 1;
+    weightedSum += rows[i] * w;
+    totalWeight += w;
+  }
+  return {
+    dangerRow: Math.round(weightedSum / totalWeight),
+    urgency: Math.min(3, rows.length),
+  };
+}
+
+// Blend a ball-tracking row toward the danger zone proportional to urgency.
+// urgency 1 = 20% shift, 2 = 40%, 3 = 60%.
+function adaptRow(ballRow: number, { dangerRow, urgency }: Adaptation): number {
+  if (dangerRow === null || urgency === 0) return ballRow;
+  const weight = urgency * 0.2;
+  return Math.max(1, Math.min(5, Math.round(ballRow * (1 - weight) + dangerRow * weight)));
+}
+
 // ─── Low-level helpers ───────────────────────────────────────────────────────
 
 function tileDist(a: TilePos, b: TilePos): number {
@@ -358,11 +394,14 @@ function tier1Defense(
   playerPlayers: SimPlayer[],
   ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  adaptiveState?: AdaptiveAIState
 ): Command {
+  const adapt = computeAdaptation(adaptiveState);
   if (player.role === "goalkeeper") {
-    // Track ball row tightly, stay at col 9
-    const targetRow = Math.max(1, Math.min(5, ballTile.row));
+    // Track ball row, blending toward the zone where goals were conceded
+    const ballRow = Math.max(1, Math.min(5, ballTile.row));
+    const targetRow = adaptRow(ballRow, adapt);
     return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
   }
 
@@ -394,10 +433,12 @@ function tier1Defense(
     return moveStep(player, pt, oppTile, claimed, friendly);
   }
 
-  // Cover the intercept position between assigned opponent and ball
+  // Cover the intercept position between assigned opponent and ball,
+  // biasing the row toward the danger zone when the AI has been punished there.
+  const interceptRow = adaptRow(Math.max(0, Math.min(6, oppTile.row)), adapt);
   const interceptTile: TilePos = {
     col: Math.max(0, Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2))),
-    row: Math.max(0, Math.min(6, oppTile.row)),
+    row: interceptRow,
   };
   return moveStep(player, pt, interceptTile, claimed, friendly);
 }
@@ -468,33 +509,43 @@ function tier2Defense(
   playerPlayers: SimPlayer[],
   ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  adaptiveState?: AdaptiveAIState
 ): Command {
+  const adapt = computeAdaptation(adaptiveState);
+
   if (player.role === "goalkeeper") {
-    const targetRow = Math.max(1, Math.min(5, ballTile.row));
+    // Track ball row, shifting toward the conceded danger zone as urgency rises
+    const ballRow = Math.max(1, Math.min(5, ballTile.row));
+    const targetRow = adaptRow(ballRow, adapt);
     return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
   }
 
-  // Zonal mid-block: defend column bands, press if ball enters zone
+  // Zonal mid-block: defend column bands, press if ball enters zone.
+  // After concessions, widen the press radius and shift block row toward danger.
   const zoneColMap: Record<string, number> = {
     defender: 8, midfielder: 7, forward: 6, striker: 6,
   };
   const baseCol = zoneColMap[player.role] ?? 7;
-  const targetRow = Math.max(1, Math.min(5, ballTile.row));
 
-  // Check if ball is in this player's zone
+  // Danger-aware target row: blend ball row and conceded row
+  const ballRow = Math.max(1, Math.min(5, ballTile.row));
+  const targetRow = adaptRow(ballRow, adapt);
+
+  // Press threshold expands by 1 per concession (base 2, max 4)
+  const pressThreshold = Math.min(4, 2 + adapt.urgency);
   const ballInZone = ballTile.col >= baseCol - 1 && ballTile.col <= baseCol + 1;
 
-  if (ballInZone || tileDist(pt, ballTile) <= 2) {
-    // Press toward ball
+  if (ballInZone || tileDist(pt, ballTile) <= pressThreshold) {
     return moveStep(player, pt, ballTile, claimed, friendly);
   }
 
-  // Check for opponent in zone to mark
+  // Check for opponent in zone to mark (also consider danger row vicinity when adapted)
+  const dangerRowWindow = adapt.dangerRow !== null ? 3 : 2;
   const zoneOpponent = playerPlayers.find(opp => {
     if (opp.role === "goalkeeper") return false;
     const ot = posToTile(opp.position);
-    return ot.col >= baseCol - 1 && ot.col <= baseCol + 1 && Math.abs(ot.row - pt.row) <= 2;
+    return ot.col >= baseCol - 1 && ot.col <= baseCol + 1 && Math.abs(ot.row - pt.row) <= dangerRowWindow;
   });
 
   if (zoneOpponent) {
@@ -502,7 +553,7 @@ function tier2Defense(
     return moveStep(player, pt, { col: Math.min(GRID_COLS - 1, oppTile.col + 1), row: oppTile.row }, claimed, friendly);
   }
 
-  // Shift toward ball (compact mid-block)
+  // Compact block, shifted toward danger row
   const shiftedCol = Math.min(baseCol, Math.max(baseCol - 1, ballTile.col + 2));
   return moveStep(player, pt, { col: shiftedCol, row: targetRow }, claimed, friendly);
 }
@@ -557,17 +608,31 @@ function tier3Defense(
   _playerPlayers: SimPlayer[],
   ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  adaptiveState?: AdaptiveAIState
 ): Command {
-  if (player.role === "goalkeeper") return stayPut({ col: 9, row: 3 });
+  const adapt = computeAdaptation(adaptiveState);
 
-  // Passive: sit in own half, only press if ball is very close
+  if (player.role === "goalkeeper") {
+    // Tier 3 GK normally stays fixed — but after conceding, starts tracking the danger row
+    if (adapt.urgency > 0 && adapt.dangerRow !== null) {
+      const gkRow = Math.max(1, Math.min(5, adapt.dangerRow));
+      return moveStep(player, pt, { col: 9, row: gkRow }, claimed, friendly);
+    }
+    return stayPut({ col: 9, row: 3 });
+  }
+
+  // Passive: sit in own half, only press if ball is very close.
+  // After concessions, press threshold and shape row shift toward danger.
   const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
   const compactCol: Record<string, number> = { defender: 8, midfielder: 7, forward: 6, striker: 6 };
   const col = compactCol[player.role] ?? 7;
-  const compactRow = roleIdx === 0 ? Math.max(1, ballTile.row - 1) : Math.min(5, ballTile.row + 1);
 
-  if (tileDist(pt, ballTile) <= 2) {
+  const ballRow = roleIdx === 0 ? Math.max(1, ballTile.row - 1) : Math.min(5, ballTile.row + 1);
+  const compactRow = adaptRow(ballRow, adapt);
+  const pressThreshold = Math.min(4, 2 + adapt.urgency);
+
+  if (tileDist(pt, ballTile) <= pressThreshold) {
     return moveStep(player, pt, ballTile, claimed, friendly);
   }
   return moveStep(player, pt, { col, row: compactRow }, claimed, friendly);
@@ -579,7 +644,8 @@ export function generateAICommands(
   aiPlayers: SimPlayer[],
   playerPlayers: SimPlayer[],
   ball: SimBall,
-  tier: AiTier = 2
+  tier: AiTier = 2,
+  adaptiveState?: AdaptiveAIState
 ): Map<string, Command> {
   const commands = new Map<string, Command>();
 
@@ -631,16 +697,16 @@ export function generateAICommands(
       }
     } else if (playerHasBall) {
       switch (tier) {
-        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
-        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
-        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
+        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
       }
     } else {
       // Transition — treat as defensive
       switch (tier) {
-        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
-        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
-        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
+        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
       }
     }
 
