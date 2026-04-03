@@ -46,7 +46,7 @@ export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryCol
           </div>
           <div className="text-xs text-right">
             <div style={{ color: STAT_COLOR(card.stats.attack) }}>ATK {card.stats.attack}</div>
-            <div style={{ color: STAT_COLOR(card.stats.speed) }}>SPD {card.stats.speed}</div>
+            <div style={{ color: STAT_COLOR(card.stats.defense) }}>DEF {card.stats.defense}</div>
           </div>
         </div>
       </div>
@@ -78,7 +78,7 @@ export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryCol
         <div className="text-white text-sm font-bold text-center mb-2">{card.name}</div>
 
         <div className="grid grid-cols-2 gap-1 mb-2">
-          {(["attack", "defense", "speed", "luck"] as const).map(stat => (
+          {(["attack", "defense", "luck"] as const).map(stat => (
             <div key={stat} className="flex items-center gap-1">
               <span className="text-gray-400 text-[10px] uppercase w-8 flex-shrink-0">{stat.slice(0, 3)}</span>
               <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">

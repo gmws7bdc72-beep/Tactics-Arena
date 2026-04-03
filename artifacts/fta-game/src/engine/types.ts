@@ -33,7 +33,6 @@ export interface Command {
 export interface PlayerStats {
   attack: number;
   defense: number;
-  speed: number;
   luck: number;
 }
 

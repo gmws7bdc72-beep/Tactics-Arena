@@ -4,7 +4,7 @@ import {
   PITCH_WIDTH, PITCH_HEIGHT, DELTA, TICKS_PER_TURN,
   BALL_FRICTION, PASS_SPEED, SHOT_SPEED,
   PASS_WIND_UP, PASS_RECOVERY, SHOT_WIND_UP, SHOT_RECOVERY,
-  BASE_PLAYER_SPEED, SPEED_STAT_MULTIPLIER, ACCELERATION, TURNING_COST,
+  BASE_PLAYER_SPEED, ACCELERATION, TURNING_COST,
   INTERCEPTION_RADIUS, CONTEST_RADIUS,
   GOAL_TOP_Y, GOAL_BOTTOM_Y, GOAL_LEFT_X, GOAL_RIGHT_X, GOAL_DEPTH,
   PLAYER_RADIUS
@@ -70,6 +70,7 @@ export function runSimulation(
     updatePlayerMovement(simPlayers, simBall, DELTA, tickEvents, tick, passTracker);
     updateBallPhysics(simBall, DELTA);
     detectAndResolveEvents(simPlayers, simBall, tick, tickEvents, rng, passTracker);
+    separateFriendlies(simPlayers);
     constrainToField(simPlayers, simBall);
 
     const goalResult = checkGoal(simBall);
@@ -114,11 +115,8 @@ function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events
   };
 }
 
-function getPlayerSpeed(player: SimPlayer): number {
-  let speed = BASE_PLAYER_SPEED + player.stats.speed * SPEED_STAT_MULTIPLIER;
-  if (player.ability === "ghost_run") speed *= 1.3;
-  if (player.ability === "powerhouse") speed *= 1.2;
-  return speed;
+function getPlayerSpeed(_player: SimPlayer): number {
+  return BASE_PLAYER_SPEED;
 }
 
 function updatePlayerMovement(
@@ -445,6 +443,27 @@ function constrainToField(players: SimPlayer[], ball: SimBall): void {
       ball.position.x = GOAL_RIGHT_X - GOAL_DEPTH - 5;
       ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
       ball.velocity.y *= 0.3;
+    }
+  }
+}
+
+function separateFriendlies(players: SimPlayer[]): void {
+  const sep = PLAYER_RADIUS * 2.2;
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      if (players[i].teamId !== players[j].teamId) continue;
+      const dx = players[i].position.x - players[j].position.x;
+      const dy = players[i].position.y - players[j].position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < sep && dist > 0) {
+        const push = (sep - dist) / 2;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        players[i].position.x += nx * push;
+        players[i].position.y += ny * push;
+        players[j].position.x -= nx * push;
+        players[j].position.y -= ny * push;
+      }
     }
   }
 }

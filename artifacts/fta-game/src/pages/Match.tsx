@@ -5,8 +5,7 @@ import type { PlayerCard } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
 import { generateAICommands } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
-import { getAIFormationById } from "../game/formations";
-import { getFormationById } from "../game/formations";
+import { getAIFormationById, getFormationById } from "../game/formations";
 import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
@@ -66,7 +65,7 @@ function GoalDots({ filled, total }: { filled: number; total: number }) {
         <div
           key={i}
           className="w-2 h-2 rounded-full"
-          style={{ background: i < filled ? "#ffd700" : "rgba(255,255,255,0.15)" }}
+          style={{ background: i < filled ? "#ffd700" : "rgba(255,255,255,0.12)" }}
         />
       ))}
     </div>
@@ -85,9 +84,8 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     const ai = opponentTeamDef.players.slice(0, 5).map((card, i) =>
       makeSimPlayer(card, "ai", aiFormation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
     );
-    const allP = [...pl, ...ai];
     const ball: SimBall = { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
-    return { players: allP, ball };
+    return { players: [...pl, ...ai], ball };
   })());
 
   const [players, setPlayers] = useState<SimPlayer[]>(initState.current.players);
@@ -99,9 +97,7 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
   const [phase, setPhase] = useState<"planning" | "simulating" | "finished">("planning");
   const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map());
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [selectedAction, setSelectedAction] = useState<"move" | "pass" | "shoot" | null>(null);
   const [passTargetMode, setPassTargetMode] = useState(false);
-  const [actionPicker, setActionPicker] = useState<{ playerId: string } | null>(null);
   const [currentFrame, setCurrentFrame] = useState<FrameSnapshot>(() =>
     makeInitFrame(initState.current.players, initState.current.ball)
   );
@@ -131,12 +127,10 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
 
   const clearSelection = useCallback(() => {
     setSelectedPlayerId(null);
-    setSelectedAction(null);
-    setActionPicker(null);
     setPassTargetMode(false);
   }, []);
 
-  const finishSimulation = useCallback((lastFrame: FrameSnapshot, _frames: FrameSnapshot[], allNewEvents: GameEvent[]) => {
+  const finishSimulation = useCallback((lastFrame: FrameSnapshot, allNewEvents: GameEvent[]) => {
     const goalEvent = allNewEvents.find(e => e.type === GameEventType.GOAL);
     const oldScore = scoreRef.current;
     let newScore = { ...oldScore };
@@ -144,11 +138,11 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     if (goalEvent?.teamId === "player") {
       newScore = { player: oldScore.player + 1, ai: oldScore.ai };
       setShowGoalBanner("player");
-      setTimeout(() => setShowGoalBanner(null), 2000);
+      setTimeout(() => setShowGoalBanner(null), 2200);
     } else if (goalEvent?.teamId === "ai") {
       newScore = { player: oldScore.player, ai: oldScore.ai + 1 };
       setShowGoalBanner("ai");
-      setTimeout(() => setShowGoalBanner(null), 2000);
+      setTimeout(() => setShowGoalBanner(null), 2200);
     }
 
     scoreRef.current = newScore;
@@ -156,26 +150,17 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
 
     const nextTurn = turnRef.current + 1;
 
-    const newSimPlayers = (() => {
-      const fp = lastFrame.players;
-      let pi = 0, ai = 0;
-      return playersRef.current.map(orig => {
-        const frameP = fp.find(x => x.id === orig.id)!;
-        const pos = goalEvent
-          ? (orig.teamId === "player"
-              ? playerFormation.positions[pi++] ?? frameP.position
-              : aiFormation.positions[ai++] ?? frameP.position)
-          : { ...frameP.position };
-        return {
-          ...orig,
-          position: pos,
-          velocity: { x: 0, y: 0 },
-          state: "IDLE" as SimPlayer["state"],
-          command: null,
-          commandExecuted: false,
-        };
-      });
-    })();
+    // Reset player positions after goal
+    let pIdx = 0, aIdx = 0;
+    const newSimPlayers = playersRef.current.map(orig => {
+      const frameP = lastFrame.players.find(x => x.id === orig.id)!;
+      const pos = goalEvent
+        ? orig.teamId === "player"
+          ? playerFormation.positions[pIdx++] ?? frameP.position
+          : aiFormation.positions[aIdx++] ?? frameP.position
+        : { ...frameP.position };
+      return { ...orig, position: pos, velocity: { x: 0, y: 0 }, state: "IDLE" as SimPlayer["state"], command: null, commandExecuted: false };
+    });
 
     const newBall: SimBall = goalEvent
       ? { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null }
@@ -187,14 +172,13 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     ballRef.current = newBall;
     setCurrentFrame(makeInitFrame(newSimPlayers, newBall));
 
-    // First to GOALS_TO_WIN wins
     const matchOver = newScore.player >= GOALS_TO_WIN || newScore.ai >= GOALS_TO_WIN || nextTurn > MAX_MATCH_TURNS;
     if (matchOver) {
       phaseRef.current = "finished";
       setPhase("finished");
       setTimeout(() => {
         onMatchEnd({ playerScore: newScore.player, aiScore: newScore.ai, events: allEventsRef.current });
-      }, goalEvent ? 2200 : 1200);
+      }, goalEvent ? 2400 : 1200);
     } else {
       turnRef.current = nextTurn;
       setTurn(nextTurn);
@@ -224,7 +208,7 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           idx++;
           last = time;
         } else {
-          finishSimulation(frames[frames.length - 1], frames, allNewEvents);
+          finishSimulation(frames[frames.length - 1], allNewEvents);
           return;
         }
       }
@@ -286,11 +270,12 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     };
   }, [phase, turn]);
 
+  // Player click: select and show grid immediately
   const handlePlayerClick = useCallback((playerId: string, _pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
-    // Pass target mode: clicking a player as target
     if (passTargetMode && selectedPlayerId) {
+      // Pass to this player
       const targetFrame = currentFrame.players.find(p => p.id === playerId);
       if (!targetFrame) return;
       const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...targetFrame.position } };
@@ -299,120 +284,90 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
       return;
     }
 
-    // Toggle selection
+    // Toggle selection: clicking the same player deselects
     if (selectedPlayerId === playerId) {
-      if (selectedAction === "move") {
-        // Cancel move mode, show action picker again
-        setSelectedAction(null);
-        setActionPicker({ playerId });
-      } else {
-        clearSelection();
-      }
+      clearSelection();
     } else {
       setSelectedPlayerId(playerId);
-      setActionPicker({ playerId });
-      setSelectedAction(null);
       setPassTargetMode(false);
     }
-  }, [passTargetMode, selectedPlayerId, selectedAction, currentFrame, clearSelection]);
+  }, [passTargetMode, selectedPlayerId, currentFrame, clearSelection]);
 
-  const handlePitchClick = useCallback((pos: Vec2) => {
-    if (phaseRef.current !== "planning") return;
-    if (!selectedPlayerId) return;
+  // Tile click: move (or tackle) or pass depending on mode
+  const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
+    if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
     if (passTargetMode) {
       const cmd: Command = { type: CommandType.PASS, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
-      clearSelection();
-      return;
+    } else {
+      // Move (including tackle)
+      const cmd: Command = { type: CommandType.MOVE, targetPosition: pos };
+      setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
-
-    // Move: pos is already tile-snapped from PitchCanvas
-    const cmd: Command = { type: CommandType.MOVE, targetPosition: pos };
-    setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     clearSelection();
   }, [selectedPlayerId, passTargetMode, clearSelection]);
 
-  const setAction = useCallback((type: CommandType) => {
+  const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
-    if (type === CommandType.MOVE) {
-      setSelectedAction("move");
-      setActionPicker(null);
-      return;
-    }
-    if (type === CommandType.PASS) {
-      setPassTargetMode(true);
-      setSelectedAction("pass");
-      setActionPicker(null);
-      return;
-    }
-    if (type === CommandType.SHOOT) {
-      const cmd: Command = { type: CommandType.SHOOT };
-      setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
-      clearSelection();
-    }
+    const cmd: Command = { type: CommandType.SHOOT };
+    setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+    clearSelection();
   }, [selectedPlayerId, clearSelection]);
 
-  const aiPositions = currentFrame.players.filter(p => p.teamId === "ai").map(p => p.position);
+  const setPass = useCallback(() => {
+    if (!selectedPlayerId) return;
+    setPassTargetMode(true);
+  }, [selectedPlayerId]);
+
+  const cancelAction = useCallback(() => {
+    clearSelection();
+  }, [clearSelection]);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#070b14" }}>
       {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
+      <div
+        className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
+        style={{ background: "rgba(255,255,255,0.04)" }}
+      >
         <button onClick={onForfeit} className="text-gray-500 hover:text-white transition-colors text-sm px-2 py-1">
           ✕
         </button>
-        <div className="flex items-center gap-4">
-          {/* Player side */}
+        <div className="flex items-center gap-5">
           <div className="text-center min-w-20">
             <div className="text-xs text-gray-400 truncate">{team.crestIcon} {team.name}</div>
             <div className="text-white font-black text-3xl leading-none">{score.player}</div>
             <GoalDots filled={score.player} total={GOALS_TO_WIN} />
           </div>
-
-          {/* Center */}
           <div className="text-center">
-            <div className="text-gray-500 text-xs">First to {GOALS_TO_WIN}</div>
+            <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
             {phase === "planning" && (
-              <div
-                className="text-sm font-bold leading-none mt-0.5"
-                style={{ color: turnTimer <= 5 ? "#ff5252" : "#ffd700" }}
-              >
+              <div className="text-sm font-bold leading-tight" style={{ color: turnTimer <= 5 ? "#ff5252" : "#ffd700" }}>
                 {turnTimer}s
               </div>
             )}
-            {phase === "simulating" && <div className="text-xs text-[#00e676] mt-0.5">▶</div>}
-            {phase === "finished" && <div className="text-xs text-gray-500 mt-0.5">FT</div>}
-            <div className="text-gray-600 text-[10px] mt-0.5">T{turn}/{MAX_MATCH_TURNS}</div>
+            {phase === "simulating" && <div className="text-[#00e676] text-sm">▶</div>}
+            {phase === "finished" && <div className="text-gray-500 text-xs">FT</div>}
+            <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
           </div>
-
-          {/* AI side */}
           <div className="text-center min-w-20">
             <div className="text-xs text-gray-400 truncate">{opponentTeamDef.crestIcon} {opponentTeamDef.name}</div>
             <div className="text-white font-black text-3xl leading-none">{score.ai}</div>
             <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
           </div>
         </div>
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-sm"
-          style={{ background: `${opponentTeamDef.jerseyColor}33` }}
-        >
-          {opponentTeamDef.crestIcon}
-        </div>
+        <div className="w-8" />
       </div>
 
-      {/* GOAL banner */}
+      {/* Goal banner */}
       {showGoalBanner && (
         <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
           <div
-            className="px-12 py-6 rounded-3xl text-center"
+            className="px-12 py-6 rounded-3xl text-center animate-bounce"
             style={{
-              background: showGoalBanner === "player"
-                ? "rgba(0,230,118,0.92)"
-                : "rgba(255,82,82,0.92)",
-              boxShadow: showGoalBanner === "player"
-                ? "0 0 60px rgba(0,230,118,0.5)"
-                : "0 0 60px rgba(255,82,82,0.5)",
+              background: showGoalBanner === "player" ? "rgba(0,230,118,0.94)" : "rgba(255,82,82,0.94)",
+              boxShadow: showGoalBanner === "player" ? "0 0 80px rgba(0,230,118,0.5)" : "0 0 80px rgba(255,82,82,0.5)",
             }}
           >
             <div className="text-4xl font-black text-white">⚽ GOAL!</div>
@@ -432,55 +387,43 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           aiTeamSecondaryColor={opponentTeamDef.secondaryColor}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
-          selectedAction={selectedAction}
+          passTargetMode={passTargetMode}
           phase={phase}
           onPlayerClick={handlePlayerClick}
-          onPitchClick={handlePitchClick}
+          onTileClick={handleTileClick}
           showPressure={showPressure}
-          aiPositions={aiPositions}
         />
-        {/* Move mode hint */}
-        {selectedAction === "move" && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-green-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none">
-            Tap an adjacent tile to move
-          </div>
-        )}
-        {/* Pass mode hint */}
+
+        {/* Pass mode overlay hint */}
         {passTargetMode && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-yellow-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none">
-            Tap teammate or pitch to pass
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-yellow-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg">
+            Tap tile or teammate to pass
           </div>
         )}
       </div>
 
-      {/* Controls */}
-      <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.5)" }}>
-        {/* Action picker */}
-        {actionPicker && phase === "planning" && !passTargetMode && selectedAction !== "move" && (
-          <div className="flex gap-2 justify-center px-4 pt-2">
+      {/* Controls bottom bar */}
+      <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.55)" }}>
+
+        {/* Action picker: shows when player selected and not in pass mode */}
+        {selectedPlayerId && phase === "planning" && !passTargetMode && (
+          <div className="flex gap-2 px-4 pt-2.5">
             <button
-              onClick={() => clearSelection()}
-              className="px-3 py-1.5 rounded-lg text-gray-400 text-xs font-medium transition-all hover:bg-white/10"
+              onClick={cancelAction}
+              className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
             >
               ✕
             </button>
             <button
-              onClick={() => setAction(CommandType.MOVE)}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold transition-all active:scale-95"
-              style={{ background: "#1565c0" }}
-            >
-              Move
-            </button>
-            <button
-              onClick={() => setAction(CommandType.PASS)}
-              className="flex-1 py-2 rounded-xl text-black text-sm font-semibold transition-all active:scale-95"
+              onClick={setPass}
+              className="flex-1 py-2 rounded-xl text-black text-sm font-bold transition-all active:scale-95"
               style={{ background: "#ffeb3b" }}
             >
               Pass
             </button>
             <button
-              onClick={() => setAction(CommandType.SHOOT)}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold transition-all active:scale-95"
+              onClick={setShoot}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
               style={{ background: "#d32f2f" }}
             >
               Shoot
@@ -488,13 +431,13 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           </div>
         )}
 
+        {/* Status & confirm row */}
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="flex-1 text-xs text-gray-500">
-            {phase === "planning" && !selectedPlayerId && "Tap a player to command"}
-            {phase === "planning" && selectedPlayerId && selectedAction === "move" && "Tap adjacent tile · tap player to cancel"}
-            {phase === "planning" && selectedPlayerId && passTargetMode && "Select pass target"}
-            {phase === "planning" && selectedPlayerId && !selectedAction && !passTargetMode && ""}
-            {phase === "simulating" && "Simulating..."}
+            {phase === "planning" && !selectedPlayerId && "Tap a player · grid shows moves"}
+            {phase === "planning" && selectedPlayerId && !passTargetMode && "Tap tile to move · ⚔ orange = tackle"}
+            {phase === "planning" && passTargetMode && "Tap a tile or player to pass"}
+            {phase === "simulating" && "Simulating…"}
             {phase === "finished" && "Match over!"}
           </div>
           <button
@@ -505,19 +448,24 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
               color: showPressure ? "#ff5252" : "#6b7280",
             }}
           >
-            Heat
+            Heatmap
           </button>
           <button
             onClick={confirmTurn}
             disabled={phase !== "planning"}
-            className="px-5 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95 disabled:opacity-40"
-            style={{ background: phase === "planning" ? "linear-gradient(135deg, #00e676, #00b288)" : "rgba(255,255,255,0.08)" }}
+            className="px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
+            style={{
+              background: phase === "planning"
+                ? "linear-gradient(135deg, #00e676, #00b288)"
+                : "rgba(255,255,255,0.08)",
+            }}
           >
             Confirm
           </button>
         </div>
 
-        <div className="px-4 pb-3 h-12 overflow-hidden">
+        {/* Event log */}
+        <div className="px-4 pb-3 h-10 overflow-hidden">
           <EventLog events={allEvents} />
         </div>
       </div>
