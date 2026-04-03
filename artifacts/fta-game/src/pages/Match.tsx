@@ -52,6 +52,7 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
+      tileRange: Math.ceil(Math.max(1, Math.min(10, p.stats.speed)) / 2),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId },
     events: [],
@@ -105,7 +106,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
   const allEventsRef = useRef<GameEvent[]>([]);
   const [turnTimer, setTurnTimer] = useState(TURN_TIME);
   const [showGoalBanner, setShowGoalBanner] = useState<"player" | "ai" | null>(null);
-  const [showPressure, setShowPressure] = useState(false);
 
   const animRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -150,7 +150,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
 
     const nextTurn = turnRef.current + 1;
 
-    // Reset player positions after goal
     let pIdx = 0, aIdx = 0;
     const newSimPlayers = playersRef.current.map(orig => {
       const frameP = lastFrame.players.find(x => x.id === orig.id)!;
@@ -250,7 +249,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     runTurn();
   }, [runTurn, clearSelection]);
 
-  // Turn timer
   useEffect(() => {
     if (phase !== "planning") return;
     setTurnTimer(TURN_TIME);
@@ -270,12 +268,10 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     };
   }, [phase, turn]);
 
-  // Player click: select and show grid immediately
   const handlePlayerClick = useCallback((playerId: string, _pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
     if (passTargetMode && selectedPlayerId) {
-      // Pass to this player
       const targetFrame = currentFrame.players.find(p => p.id === playerId);
       if (!targetFrame) return;
       const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...targetFrame.position } };
@@ -284,7 +280,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
       return;
     }
 
-    // Toggle selection: clicking the same player deselects
     if (selectedPlayerId === playerId) {
       clearSelection();
     } else {
@@ -293,7 +288,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     }
   }, [passTargetMode, selectedPlayerId, currentFrame, clearSelection]);
 
-  // Tile click: move (or tackle) or pass depending on mode
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
@@ -301,7 +295,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
       const cmd: Command = { type: CommandType.PASS, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     } else {
-      // Move (including tackle)
       const cmd: Command = { type: CommandType.MOVE, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
@@ -391,10 +384,8 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           phase={phase}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
-          showPressure={showPressure}
         />
 
-        {/* Pass mode overlay hint */}
         {passTargetMode && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-yellow-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg">
             Tap tile or teammate to pass
@@ -404,8 +395,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
 
       {/* Controls bottom bar */}
       <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.55)" }}>
-
-        {/* Action picker: shows when player selected and not in pass mode */}
         {selectedPlayerId && phase === "planning" && !passTargetMode && (
           <div className="flex gap-2 px-4 pt-2.5">
             <button
@@ -431,25 +420,14 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           </div>
         )}
 
-        {/* Status & confirm row */}
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="flex-1 text-xs text-gray-500">
-            {phase === "planning" && !selectedPlayerId && "Tap a player · grid shows moves"}
-            {phase === "planning" && selectedPlayerId && !passTargetMode && "Tap tile to move · ⚔ orange = tackle"}
+            {phase === "planning" && !selectedPlayerId && "Tap a player · green tiles = your range"}
+            {phase === "planning" && selectedPlayerId && !passTargetMode && "Tap green tile to move · ⚔ orange = tackle"}
             {phase === "planning" && passTargetMode && "Tap a tile or player to pass"}
             {phase === "simulating" && "Simulating…"}
             {phase === "finished" && "Match over!"}
           </div>
-          <button
-            onClick={() => setShowPressure(p => !p)}
-            className="px-2 py-1 rounded text-xs font-medium transition-all"
-            style={{
-              background: showPressure ? "rgba(220,50,50,0.2)" : "rgba(255,255,255,0.07)",
-              color: showPressure ? "#ff5252" : "#6b7280",
-            }}
-          >
-            Heatmap
-          </button>
           <button
             onClick={confirmTurn}
             disabled={phase !== "planning"}
@@ -464,7 +442,6 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
           </button>
         </div>
 
-        {/* Event log */}
         <div className="px-4 pb-3 h-10 overflow-hidden">
           <EventLog events={allEvents} />
         </div>

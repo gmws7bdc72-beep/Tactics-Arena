@@ -37,12 +37,11 @@ export const PASS_RECOVERY = 0.4;
 export const SHOT_WIND_UP = 0.35;
 export const SHOT_RECOVERY = 0.6;
 
-export const BASE_PLAYER_SPEED = 220;
-export const ACCELERATION = 600;
-export const TURNING_COST = 0.4;
-
-// GK zone: cols 0-1 for player team, cols 8-9 for AI
-export const GK_ZONE_COLS = 2;
+// GK zone: cols 0-2 for player team GK, cols 7-9 for AI GK
+export const GK_COLS_PLAYER_MIN = 0;
+export const GK_COLS_PLAYER_MAX = 2;
+export const GK_COLS_AI_MIN = 7;
+export const GK_COLS_AI_MAX = 9;
 
 export const GOALS_TO_WIN = 3;
 export const MAX_MATCH_TURNS = 30;
@@ -51,6 +50,15 @@ export const PLAYERS_PER_TEAM = 5;
 export const AI_SHOT_RANGE = 200;
 export const AI_PASS_SAFE_DISTANCE = 120;
 
-export const ARENAS = ["bronze", "silver", "gold", "elite"] as const;
-export const WINS_TO_PROMOTE = 3;
-export const LOSSES_TO_RELEGATE = 3;
+// Speed stat → tile range per turn
+// speed 1-2 = 1 tile, 3-4 = 2 tiles, 5-6 = 3 tiles, 7-8 = 4 tiles, 9-10 = 5 tiles
+export function speedToTiles(speed: number): number {
+  return Math.ceil(Math.max(1, Math.min(10, speed)) / 2);
+}
+
+// Compute linear pixel speed so player covers their tile range in ~75% of turn duration
+export function getLinearPixelSpeed(speed: number): number {
+  const tiles = speedToTiles(speed);
+  const targetTicks = TICKS_PER_TURN * 0.75;
+  return (tiles * TILE_W) / (targetTicks * DELTA);
+}

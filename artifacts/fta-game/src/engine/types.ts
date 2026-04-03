@@ -33,6 +33,8 @@ export interface Command {
 export interface PlayerStats {
   attack: number;
   defense: number;
+  passing: number;
+  speed: number;
   luck: number;
 }
 
@@ -116,6 +118,7 @@ export interface FrameSnapshot {
     name: string;
     jerseyNumber: number;
     role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+    tileRange: number;
   }[];
   ball: {
     position: Vec2;
@@ -141,7 +144,6 @@ export interface TeamConfig {
   startPositions: Vec2[];
 }
 
-// League types
 export interface LeagueTeamEntry {
   id: string;
   name: string;
@@ -167,4 +169,3 @@ export interface LeagueState {
   schedule: ScheduledMatch[];
   currentMatchIndex: number;
 }
-
