@@ -25,7 +25,7 @@ function moveStep(
   from: TilePos,
   to: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  _friendly: Set<string>
 ): Command {
   if (from.col === to.col && from.row === to.row) {
     return { type: CommandType.MOVE, targetPosition: tileToPos(from.col, from.row) };
@@ -40,7 +40,6 @@ function moveStep(
 
   for (const c of reachable) {
     const k = tileKey(c.col, c.row);
-    if (friendly.has(k)) continue;
     if (claimed.has(k)) continue;
     const d = tileDist(c, to);
     if (d < bestDist) {
@@ -84,17 +83,16 @@ function isHardPressed(pt: TilePos, opponents: SimPlayer[]): boolean {
   });
 }
 
-// Is the forward path (lower col) blocked by an opponent?
+// Is the very next tile forward blocked by an opponent?
 function isForwardBlocked(pt: TilePos, opponents: SimPlayer[]): boolean {
   return opponents.some(opp => {
     const ot = posToTile(opp.position);
-    return ot.col < pt.col &&        // they are ahead of me (lower col = toward player goal)
-           ot.col >= pt.col - 3 &&   // within 3 tiles ahead
-           Math.abs(ot.row - pt.row) <= 1; // in my row band
+    return ot.col === pt.col - 1 && Math.abs(ot.row - pt.row) <= 1;
   });
 }
 
-// Best teammate for a forward pass (more advanced = lower col)
+// Best teammate for a forward pass (more advanced = lower col).
+// Prefers un-threatened targets but does NOT exclude threatened ones.
 function bestForwardPass(
   carrier: SimPlayer,
   aiPlayers: SimPlayer[],
@@ -105,10 +103,14 @@ function bestForwardPass(
   const candidates = aiPlayers
     .filter(p => p.id !== carrier.id && p.role !== "goalkeeper")
     .map(p => ({ p, t: posToTile(p.position) }))
-    .filter(({ t }) => t.col < ct.col)            // strictly ahead of carrier
-    .filter(({ t }) => tileDist(t, ct) <= maxDist) // within pass range
-    .filter(({ t }) => !isThreatened(t, playerPlayers))
-    .sort((a, b) => a.t.col - b.t.col);            // most advanced first
+    .filter(({ t }) => t.col < ct.col)
+    .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .sort((a, b) => {
+      const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
+      const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
+      if (aThreat !== bThreat) return aThreat - bThreat;
+      return a.t.col - b.t.col; // most advanced first
+    });
   return candidates[0]?.p ?? null;
 }
 
@@ -123,14 +125,18 @@ function bestLateralPass(
   const candidates = aiPlayers
     .filter(p => p.id !== carrier.id && p.role !== "goalkeeper")
     .map(p => ({ p, t: posToTile(p.position) }))
-    .filter(({ t }) => Math.abs(t.col - ct.col) <= 1)       // same column band
+    .filter(({ t }) => Math.abs(t.col - ct.col) <= 1)
     .filter(({ t }) => tileDist(t, ct) >= 1 && tileDist(t, ct) <= maxDist)
-    .filter(({ t }) => !isThreatened(t, playerPlayers))
-    .sort((a, b) => tileDist(a.t, ct) - tileDist(b.t, ct)); // closest first
+    .sort((a, b) => {
+      const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
+      const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
+      if (aThreat !== bThreat) return aThreat - bThreat;
+      return tileDist(a.t, ct) - tileDist(b.t, ct);
+    });
   return candidates[0]?.p ?? null;
 }
 
-// Best teammate for a backward/recycling pass (carrier's col or behind)
+// Best teammate for a backward/recycling pass
 function bestBackwardPass(
   carrier: SimPlayer,
   aiPlayers: SimPlayer[],
@@ -141,14 +147,18 @@ function bestBackwardPass(
   const candidates = aiPlayers
     .filter(p => p.id !== carrier.id)
     .map(p => ({ p, t: posToTile(p.position) }))
-    .filter(({ t }) => t.col > ct.col)               // behind carrier (closer to own goal)
+    .filter(({ t }) => t.col > ct.col)
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
-    .filter(({ t }) => !isThreatened(t, playerPlayers))
-    .sort((a, b) => tileDist(a.t, ct) - tileDist(b.t, ct));
+    .sort((a, b) => {
+      const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
+      const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
+      if (aThreat !== bThreat) return aThreat - bThreat;
+      return tileDist(a.t, ct) - tileDist(b.t, ct);
+    });
   return candidates[0]?.p ?? null;
 }
 
-// Any open teammate in any direction
+// Any teammate in any direction (least threatened, most advanced)
 function bestAnyPass(
   carrier: SimPlayer,
   aiPlayers: SimPlayer[],
@@ -160,8 +170,12 @@ function bestAnyPass(
     .filter(p => p.id !== carrier.id)
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
-    .filter(({ t }) => !isThreatened(t, playerPlayers))
-    .sort((a, b) => a.t.col - b.t.col); // prefer more advanced
+    .sort((a, b) => {
+      const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
+      const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
+      if (aThreat !== bThreat) return aThreat - bThreat;
+      return a.t.col - b.t.col; // prefer more advanced
+    });
   return candidates[0]?.p ?? null;
 }
 
@@ -203,22 +217,25 @@ function computeRunTarget(
     };
   }
   if (role === "midfielder") {
-    // Midfielder provides a triangle — sits BEHIND carrier but open
-    const supportOffset = tier === 1 ? 1 : tier === 2 ? 2 : 3;
+    // Midfielders fan out ahead/level with carrier to create passing lanes
+    const fwdOffset = tier === 1 ? 2 : tier === 2 ? 1 : 0;
     const supportRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
       : Math.min(5, ballCarrierTile.row + 1);
     return {
-      col: Math.min(GRID_COLS - 2, ballCarrierTile.col + supportOffset),
+      col: Math.max(2, ballCarrierTile.col - fwdOffset),
       row: supportRow,
     };
   }
   if (role === "defender") {
-    // Defender covers behind ball, ready for recycled pass
+    // Defender stays 2 tiles behind ball — recycling option
     const coverOffset = tier === 1 ? 2 : 3;
+    const coverRow = roleIdx === 0
+      ? Math.max(1, ballCarrierTile.row - 1)
+      : Math.min(5, ballCarrierTile.row + 1);
     return {
       col: Math.min(GRID_COLS - 2, ballCarrierTile.col + coverOffset),
-      row: Math.max(1, Math.min(5, ballCarrierTile.row)),
+      row: coverRow,
     };
   }
   return ballCarrierTile;
@@ -237,7 +254,14 @@ function tier1Possession(
   friendly: Set<string>
 ): Command {
   if (player.role === "goalkeeper") {
-    // GK tracks ball row, pushes up slightly when team has possession
+    if (hasBall) {
+      // GK must distribute — always pass out to an outfield player
+      const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
+      if (fwdTarget) return passTo(fwdTarget);
+      const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
+      if (anyTarget) return passTo(anyTarget);
+    }
+    // Off-ball: track ball row
     const gkRow = Math.max(1, Math.min(5, ballTile.row));
     return moveStep(player, pt, { col: 9, row: gkRow }, claimed, friendly);
   }
@@ -358,7 +382,15 @@ function tier2Possession(
   claimed: Set<string>,
   friendly: Set<string>
 ): Command {
-  if (player.role === "goalkeeper") return stayPut({ col: 9, row: 3 });
+  if (player.role === "goalkeeper") {
+    if (hasBall) {
+      const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
+      if (fwdTarget) return passTo(fwdTarget);
+      const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
+      if (anyTarget) return passTo(anyTarget);
+    }
+    return stayPut({ col: 9, row: 3 });
+  }
 
   if (hasBall) {
     // Shoot from closer range than tier 1
@@ -450,12 +482,19 @@ function tier3Possession(
   pt: TilePos,
   hasBall: boolean,
   aiPlayers: SimPlayer[],
-  _playerPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
   _ballTile: TilePos,
   claimed: Set<string>,
   friendly: Set<string>
 ): Command {
-  if (player.role === "goalkeeper") return stayPut({ col: 9, row: 3 });
+  if (player.role === "goalkeeper") {
+    if (hasBall) {
+      // Tier 3 GK just boots it to anyone
+      const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
+      if (anyTarget) return passTo(anyTarget);
+    }
+    return stayPut({ col: 9, row: 3 });
+  }
 
   if (hasBall) {
     // Shoot from very early (they are not sophisticated)

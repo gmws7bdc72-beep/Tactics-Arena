@@ -159,28 +159,35 @@ export function runSimulation(
     p.position = snapToTile(p.position);
   }
 
-  // Separate same-team players that landed on the same tile
-  const tileMap = new Map<string, SimPlayer>();
-  for (const p of simPlayers) {
-    const t = posToTile(p.position);
-    const key = `${p.teamId}:${t.col},${t.row}`;
-    const existing = tileMap.get(key);
-    if (existing) {
-      // Push p to adjacent tile (prefer row-wise offset)
-      const offsets = [[0, 1], [0, -1], [1, 0], [-1, 0]];
-      for (const [dc, dr] of offsets) {
-        const nc = t.col + dc;
-        const nr = t.row + dr;
-        if (nc < 0 || nc > 9 || nr < 0 || nr > 6) continue;
-        const altKey = `${p.teamId}:${nc},${nr}`;
-        if (!tileMap.has(altKey)) {
-          p.position = tileToPos(nc, nr);
-          tileMap.set(altKey, p);
-          break;
-        }
+  // Separate ALL players that share a tile — 3 passes to handle cascading collisions
+  for (let iter = 0; iter < 3; iter++) {
+    const occupied = new Map<string, string>(); // tileKey → playerId
+    // Register ball owner first (wins the tile)
+    for (const p of simPlayers) {
+      if (p.id === simBall.ownerId) {
+        const t = posToTile(p.position);
+        occupied.set(`${t.col},${t.row}`, p.id);
       }
-    } else {
-      tileMap.set(key, p);
+    }
+    for (const p of simPlayers) {
+      if (p.id === simBall.ownerId) continue;
+      const t = posToTile(p.position);
+      const key = `${t.col},${t.row}`;
+      if (occupied.has(key)) {
+        const offsets = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+        for (const [dc, dr] of offsets) {
+          const nc = clamp(t.col + dc, 0, 9);
+          const nr = clamp(t.row + dr, 0, 6);
+          const ak = `${nc},${nr}`;
+          if (!occupied.has(ak)) {
+            p.position = tileToPos(nc, nr);
+            occupied.set(ak, p.id);
+            break;
+          }
+        }
+      } else {
+        occupied.set(key, p.id);
+      }
     }
   }
 
