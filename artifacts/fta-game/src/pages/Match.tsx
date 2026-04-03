@@ -6,7 +6,7 @@ import { runSimulation } from "../engine/simulation";
 import { generateAICommands } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 
@@ -52,7 +52,7 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      tileRange: Math.ceil(Math.max(1, Math.min(10, p.stats.speed)) / 2),
+      tileRange: speedToTiles(p.stats.speed),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId },
     events: [],

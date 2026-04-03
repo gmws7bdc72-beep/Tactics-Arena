@@ -119,6 +119,12 @@ export function runSimulation(
     p.position = snapToTile(p.position);
   }
 
+  // Record start-of-turn tiles for direction-aware separation later
+  const startTile = new Map<string, { col: number; row: number }>();
+  for (const p of simPlayers) {
+    startTile.set(p.id, posToTile(p.position));
+  }
+
   // Clamp GK target positions to their zone
   for (const p of simPlayers) {
     if (p.role === "goalkeeper" && p.command?.type === CommandType.MOVE && p.command.targetPosition) {
@@ -159,10 +165,11 @@ export function runSimulation(
     p.position = snapToTile(p.position);
   }
 
-  // Separate ALL players that share a tile — 3 passes to handle cascading collisions
+  // Direction-aware tile separation: push each player back toward where they came from.
+  // Run 3 passes to resolve cascading overlaps.
   for (let iter = 0; iter < 3; iter++) {
-    const occupied = new Map<string, string>(); // tileKey → playerId
-    // Register ball owner first (wins the tile)
+    const occupied = new Map<string, string>(); // "col,row" → playerId
+    // Ball owner claims their tile first — they always win
     for (const p of simPlayers) {
       if (p.id === simBall.ownerId) {
         const t = posToTile(p.position);
@@ -174,17 +181,40 @@ export function runSimulation(
       const t = posToTile(p.position);
       const key = `${t.col},${t.row}`;
       if (occupied.has(key)) {
-        const offsets = [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-        for (const [dc, dr] of offsets) {
+        // Compute retreat direction: from current tile back toward start tile
+        const st = startTile.get(p.id) ?? t;
+        const ddc = st.col - t.col; // direction toward start
+        const ddr = st.row - t.row;
+        // Normalise to ±1 steps, prefer the axis with larger movement
+        const preferCol = Math.abs(ddc) >= Math.abs(ddr);
+        // Build ordered list of retreat offsets (most natural direction first)
+        const retreatOffsets: [number, number][] = [];
+        if (ddc !== 0 || ddr !== 0) {
+          const sc = ddc !== 0 ? Math.sign(ddc) : 0;
+          const sr = ddr !== 0 ? Math.sign(ddr) : 0;
+          if (preferCol) {
+            retreatOffsets.push([sc, sr], [sc, 0], [0, sr], [-sc, 0], [0, -sr]);
+          } else {
+            retreatOffsets.push([sc, sr], [0, sr], [sc, 0], [0, -sr], [-sc, 0]);
+          }
+        }
+        // Fall back to cardinal directions if player didn't move
+        retreatOffsets.push([0, 1], [0, -1], [1, 0], [-1, 0]);
+
+        let pushed = false;
+        for (const [dc, dr] of retreatOffsets) {
+          if (dc === 0 && dr === 0) continue;
           const nc = clamp(t.col + dc, 0, 9);
           const nr = clamp(t.row + dr, 0, 6);
           const ak = `${nc},${nr}`;
           if (!occupied.has(ak)) {
             p.position = tileToPos(nc, nr);
             occupied.set(ak, p.id);
+            pushed = true;
             break;
           }
         }
+        if (!pushed) occupied.set(key, p.id); // No free tile found; stay put
       } else {
         occupied.set(key, p.id);
       }
