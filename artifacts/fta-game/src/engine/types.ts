@@ -190,4 +190,6 @@ export interface LeagueState {
   schedule: ScheduledMatch[];
   currentMatchIndex: number;
   playoff?: PlayoffBracket;
+  aiSchedule?: [string, string][];
+  aiMatchIndex?: number;
 }

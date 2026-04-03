@@ -86,7 +86,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     const ai = opponentTeamDef.players.slice(0, 5).map((card, i) =>
       makeSimPlayer(card, "ai", aiFormation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
     );
-    const kickoffGK = isHome
+    // 50/50 kickoff — random regardless of home/away
+    const kickoffGK = Math.random() < 0.5
       ? pl.find(p => p.role === "goalkeeper") ?? pl[0]
       : ai.find(p => p.role === "goalkeeper") ?? ai[0];
     const ball: SimBall = { position: { ...kickoffGK.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffGK.id };
