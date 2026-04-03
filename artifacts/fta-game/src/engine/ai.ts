@@ -32,7 +32,8 @@ function moveStep(
   }
 
   const isGK = player.role === "goalkeeper";
-  const range = isGK ? 1 : speedToTiles(player.stats.speed);
+  // GK gets 2 tiles so they can quickly return to goal after chasing loose balls
+  const range = isGK ? 2 : speedToTiles(player.stats.speed);
   const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
 
   let best: TilePos = from;

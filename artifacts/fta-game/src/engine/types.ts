@@ -165,8 +165,29 @@ export interface ScheduledMatch {
   isHome?: boolean;
 }
 
+export interface PlayoffMatch {
+  homeId: string;
+  awayId: string;
+  homeName: string;
+  awayName: string;
+  homeGoals?: number;
+  awayGoals?: number;
+  winnerId?: string;
+}
+
+export interface PlayoffBracket {
+  stage: "sf1" | "sf2" | "final" | "complete";
+  top4: string[];         // team IDs ranked 1st–4th
+  sf1: PlayoffMatch;      // 1st vs 2nd
+  sf2: PlayoffMatch;      // 3rd vs 4th
+  final?: PlayoffMatch;   // sf1 winner vs sf2 winner
+  champion?: string;      // winning team ID
+  championName?: string;  // winning team name
+}
+
 export interface LeagueState {
   teams: LeagueTeamEntry[];
   schedule: ScheduledMatch[];
   currentMatchIndex: number;
+  playoff?: PlayoffBracket;
 }

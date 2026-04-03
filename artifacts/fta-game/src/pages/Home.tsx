@@ -1,9 +1,10 @@
-import type { TeamConfig, LeagueState } from "../engine/types";
+import type { TeamConfig, LeagueState, PlayoffBracket, PlayoffMatch } from "../engine/types";
 import { getLeagueStandings, getTeamPoints } from "../game/league";
 
 interface Props {
   team: TeamConfig;
   league: LeagueState;
+  isLeagueComplete: boolean;
   onStartMatch: () => void;
   onGoToTeamSetup: () => void;
   onGoToCustomize: () => void;
@@ -11,15 +12,104 @@ interface Props {
 
 const TIER_LABEL: Record<number, string> = { 1: "Elite", 2: "Mid", 3: "Easy" };
 const TIER_COLOR: Record<number, string> = { 1: "#ff5252", 2: "#ffeb3b", 3: "#00e676" };
+const PLAYER_ID = "player_team";
 
-export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGoToCustomize }: Props) {
+function PlayoffMatchRow({
+  match,
+  playerTeamName,
+  jerseyColor,
+  label,
+  isCurrent,
+}: {
+  match: PlayoffMatch;
+  playerTeamName: string;
+  jerseyColor: string;
+  label: string;
+  isCurrent: boolean;
+}) {
+  const isDone = match.winnerId !== undefined;
+  const playerIsHome = match.homeId === PLAYER_ID;
+  const playerIsAway = match.awayId === PLAYER_ID;
+  const playerInvolved = playerIsHome || playerIsAway;
+
+  const homeName = playerIsHome ? playerTeamName : match.homeName;
+  const awayName = playerIsAway ? playerTeamName : match.awayName;
+
+  const homeColor = playerIsHome ? jerseyColor : "#d1d5db";
+  const awayColor = playerIsAway ? jerseyColor : "#d1d5db";
+
+  const homeWon = isDone && match.winnerId === match.homeId;
+  const awayWon = isDone && match.winnerId === match.awayId;
+
+  return (
+    <div
+      className="rounded-xl px-3 py-2.5"
+      style={{
+        background: isCurrent
+          ? playerInvolved ? "rgba(0,230,118,0.07)" : "rgba(255,255,255,0.05)"
+          : "rgba(255,255,255,0.03)",
+        border: `1px solid ${isCurrent ? (playerInvolved ? "rgba(0,230,118,0.25)" : "rgba(255,255,255,0.15)") : "rgba(255,255,255,0.06)"}`,
+      }}
+    >
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</span>
+        {isDone && (
+          <span className="text-[10px] text-gray-500">FT</span>
+        )}
+        {!isDone && isCurrent && (
+          <span className="text-[10px] font-bold" style={{ color: playerInvolved ? "#00e676" : "#9ca3af" }}>
+            {playerInvolved ? "YOUR MATCH" : "UPCOMING"}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span
+          className="flex-1 text-xs font-semibold truncate"
+          style={{ color: homeWon ? "#fff" : isDone ? "#6b7280" : homeColor, fontWeight: homeWon ? 800 : 600 }}
+        >
+          {homeName}
+        </span>
+        <span className="text-gray-500 text-xs font-mono shrink-0">
+          {isDone ? `${match.homeGoals} – ${match.awayGoals}` : "vs"}
+        </span>
+        <span
+          className="flex-1 text-xs font-semibold truncate text-right"
+          style={{ color: awayWon ? "#fff" : isDone ? "#6b7280" : awayColor, fontWeight: awayWon ? 800 : 600 }}
+        >
+          {awayName}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export default function Home({
+  team,
+  league,
+  isLeagueComplete,
+  onStartMatch,
+  onGoToTeamSetup,
+  onGoToCustomize,
+}: Props) {
   const standings = getLeagueStandings(league.teams);
-  const playerEntry = league.teams.find(t => t.id === "player_team")!;
-  const playerRank = standings.findIndex(t => t.id === "player_team") + 1;
+  const playerEntry = league.teams.find(t => t.id === PLAYER_ID)!;
+  const playerRank = standings.findIndex(t => t.id === PLAYER_ID) + 1;
   const nextMatch = league.schedule[league.currentMatchIndex] ?? null;
-  const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const totalMatches = league.schedule.length;
   const played = league.currentMatchIndex;
+
+  const po = league.playoff;
+  const isPlayoffActive = isLeagueComplete && po && po.stage !== "complete";
+  const isPlayoffComplete = po?.stage === "complete";
+
+  // Determine the call-to-action state for the main button
+  const playerInCurrentPlayoffStage = po && isPlayoffActive
+    ? (po.stage === "sf1" && (po.sf1.homeId === PLAYER_ID || po.sf1.awayId === PLAYER_ID))
+      || (po.stage === "sf2" && (po.sf2.homeId === PLAYER_ID || po.sf2.awayId === PLAYER_ID))
+      || (po.stage === "final" && po.final && (po.final.homeId === PLAYER_ID || po.final.awayId === PLAYER_ID))
+    : false;
+
+  const playerEliminated = isLeagueComplete && po && po.stage !== "complete" && !playerInCurrentPlayoffStage;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#0a0e1a" }}>
@@ -47,19 +137,102 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
         {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span>Match {played + 1} of {totalMatches}</span>
+            <span>{isLeagueComplete ? "League complete" : `Match ${played + 1} of ${totalMatches}`}</span>
             <span>{getTeamPoints(playerEntry)} pts</span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
             <div
               className="h-full rounded-full transition-all"
-              style={{ width: `${(played / totalMatches) * 100}%`, background: "linear-gradient(90deg, #00e676, #00b4d8)" }}
+              style={{
+                width: `${Math.min(100, (played / totalMatches) * 100)}%`,
+                background: "linear-gradient(90deg, #00e676, #00b4d8)",
+              }}
             />
           </div>
         </div>
 
-        {/* Next match card */}
-        {nextMatch && !isLeagueComplete ? (
+        {/* ── Playoff bracket ────────────────────────────────────────────── */}
+        {isLeagueComplete && po && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-white text-sm font-bold">🏆 Playoff</div>
+              {isPlayoffComplete && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "rgba(255,215,0,0.15)", color: "#ffd700" }}>
+                  Champion: {po.championName ?? po.champion}
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              {/* SF1 */}
+              <PlayoffMatchRow
+                match={po.sf1}
+                playerTeamName={team.name}
+                jerseyColor={team.jerseyColor}
+                label="SF1 · 1st vs 2nd"
+                isCurrent={po.stage === "sf1"}
+              />
+
+              {/* SF2 */}
+              <PlayoffMatchRow
+                match={po.sf2}
+                playerTeamName={team.name}
+                jerseyColor={team.jerseyColor}
+                label="SF2 · 3rd vs 4th"
+                isCurrent={po.stage === "sf2"}
+              />
+
+              {/* Final */}
+              {(po.final || po.stage === "final" || po.stage === "complete") && po.final && (
+                <PlayoffMatchRow
+                  match={po.final}
+                  playerTeamName={team.name}
+                  jerseyColor={team.jerseyColor}
+                  label="Final"
+                  isCurrent={po.stage === "final"}
+                />
+              )}
+              {!po.final && (po.stage === "sf1" || po.stage === "sf2") && (
+                <div
+                  className="rounded-xl px-3 py-2.5 text-center"
+                  style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.08)" }}
+                >
+                  <span className="text-gray-600 text-xs">Final · TBD</span>
+                </div>
+              )}
+            </div>
+
+            {/* CTA */}
+            {isPlayoffComplete ? (
+              <button
+                onClick={onStartMatch}
+                className="w-full mt-3 py-3.5 rounded-xl text-white font-black text-base tracking-wide transition-all active:scale-95 shadow-lg"
+                style={{ background: "linear-gradient(135deg, #ffd700, #ff9800)" }}
+              >
+                🏆 New Season
+              </button>
+            ) : playerEliminated ? (
+              <button
+                onClick={onStartMatch}
+                className="w-full mt-3 py-3 rounded-xl font-bold text-sm transition-all active:scale-95"
+                style={{ background: "rgba(255,255,255,0.06)", color: "#9ca3af" }}
+              >
+                Watch Playoff Results →
+              </button>
+            ) : (
+              <button
+                onClick={onStartMatch}
+                className="w-full mt-3 py-3.5 rounded-xl text-white font-black text-base tracking-wide transition-all active:scale-95 shadow-lg"
+                style={{ background: "linear-gradient(135deg, #ffd700, #ff8c00)" }}
+              >
+                ▶ {po.stage === "final" ? "Play Final" : "Play Semi-Final"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Regular season next match card ───────────────────────────── */}
+        {!isLeagueComplete && nextMatch && (
           <div
             className="rounded-2xl p-4"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
@@ -105,19 +278,34 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
               ▶ Kick Off
             </button>
           </div>
-        ) : isLeagueComplete ? (
-          <div className="rounded-2xl p-5 text-center" style={{ background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)" }}>
+        )}
+
+        {/* Season complete but playoff not yet initialized */}
+        {isLeagueComplete && !po && (
+          <div
+            className="rounded-2xl p-4 text-center"
+            style={{ background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)" }}
+          >
             <div className="text-3xl mb-1">🏆</div>
-            <div className="text-[#ffd700] font-black text-lg">Season Complete!</div>
-            <div className="text-gray-400 text-sm mt-1">Final rank: #{playerRank} · {getTeamPoints(playerEntry)} pts</div>
+            <div className="text-[#ffd700] font-black text-lg">League Complete!</div>
+            <div className="text-gray-400 text-sm mt-1">
+              #{playerRank} · {getTeamPoints(playerEntry)} pts
+              {playerRank <= 4 ? " · You qualified for the Playoff!" : ""}
+            </div>
+            <button
+              onClick={onStartMatch}
+              className="w-full mt-4 py-3.5 rounded-xl text-white font-black text-base tracking-wide transition-all active:scale-95"
+              style={{ background: playerRank <= 4 ? "linear-gradient(135deg, #ffd700, #ff8c00)" : "rgba(255,255,255,0.08)" }}
+            >
+              {playerRank <= 4 ? "🏆 Start Playoff" : "View Playoff"}
+            </button>
           </div>
-        ) : null}
+        )}
 
         {/* League Table */}
         <div>
           <div className="text-white text-sm font-bold mb-2">League Table</div>
           <div className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-            {/* Header */}
             <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
               <span>Club</span>
               <span className="text-right w-6">PL</span>
@@ -127,8 +315,9 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
               <span className="text-right w-8">Pts</span>
             </div>
             {standings.map((t, i) => {
-              const isPlayer = t.id === "player_team";
+              const isPlayer = t.id === PLAYER_ID;
               const isNext = nextMatch?.opponentId === t.id;
+              const inTop4 = i < 4 && isLeagueComplete;
               return (
                 <div
                   key={t.id}
@@ -149,7 +338,8 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
                     >
                       {isPlayer ? `${team.crestIcon} ${t.name}` : t.name}
                     </span>
-                    {isNext && <span className="text-[9px] text-[#00b4d8] font-bold flex-shrink-0">NEXT</span>}
+                    {inTop4 && <span className="text-[9px] font-bold shrink-0" style={{ color: "#ffd700" }}>PO</span>}
+                    {isNext && !inTop4 && <span className="text-[9px] text-[#00b4d8] font-bold flex-shrink-0">NEXT</span>}
                   </div>
                   <span className="text-gray-400 text-xs text-right w-6">{t.played}</span>
                   <span className="text-gray-300 text-xs text-right w-6">{t.won}</span>
@@ -165,6 +355,9 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
               );
             })}
           </div>
+          {isLeagueComplete && (
+            <p className="text-[10px] text-gray-600 mt-1 text-center">PO = Playoff qualified (Top 4)</p>
+          )}
         </div>
 
         {/* Your stats */}

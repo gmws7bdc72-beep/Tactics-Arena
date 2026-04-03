@@ -1,4 +1,4 @@
-import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch } from "../engine/types";
+import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch, PlayoffMatch, PlayoffBracket } from "../engine/types";
 import { tileToPos } from "../engine/grid";
 
 export interface AITeamDef {
@@ -347,4 +347,133 @@ export function getAIFormationPositions(formationId: string): { col: number; row
         { col: 3, row: 3 },
       ];
   }
+}
+
+// ─── Playoff ─────────────────────────────────────────────────────────────────
+
+function knockoutResult(
+  teams: LeagueTeamEntry[],
+  homeId: string,
+  awayId: string,
+  seed: number
+): { homeGoals: number; awayGoals: number } {
+  const result = simulateOneAIMatch(teams, homeId, awayId, seed);
+  if (result.homeGoals !== result.awayGoals) return result;
+  const rng = seededRng(seed + 98765);
+  return rng() < 0.5
+    ? { homeGoals: result.homeGoals + 1, awayGoals: result.awayGoals }
+    : { homeGoals: result.homeGoals, awayGoals: result.awayGoals + 1 };
+}
+
+function resolveWinner(
+  match: PlayoffMatch,
+  homeGoals: number,
+  awayGoals: number,
+  seed: number
+): PlayoffMatch {
+  let winnerId: string;
+  if (homeGoals > awayGoals) winnerId = match.homeId;
+  else if (awayGoals > homeGoals) winnerId = match.awayId;
+  else {
+    const rng = seededRng(seed + 11111);
+    winnerId = rng() < 0.5 ? match.homeId : match.awayId;
+  }
+  return { ...match, homeGoals, awayGoals, winnerId };
+}
+
+export function initPlayoff(state: LeagueState): LeagueState {
+  const standings = getLeagueStandings(state.teams);
+  const top4 = standings.slice(0, 4);
+
+  const sf1: PlayoffMatch = {
+    homeId: top4[0].id,
+    awayId: top4[1].id,
+    homeName: top4[0].name,
+    awayName: top4[1].name,
+  };
+  const sf2: PlayoffMatch = {
+    homeId: top4[2].id,
+    awayId: top4[3].id,
+    homeName: top4[2].name,
+    awayName: top4[3].name,
+  };
+
+  const playoff: PlayoffBracket = {
+    stage: "sf1",
+    top4: top4.map(t => t.id),
+    sf1,
+    sf2,
+  };
+
+  return { ...state, playoff };
+}
+
+export function applyPlayoffResult(
+  state: LeagueState,
+  stage: "sf1" | "sf2" | "final",
+  homeGoals: number,
+  awayGoals: number,
+  seed: number
+): LeagueState {
+  const po = state.playoff!;
+  let updated: PlayoffBracket = { ...po, sf1: { ...po.sf1 }, sf2: { ...po.sf2 } };
+
+  if (stage === "sf1") {
+    updated.sf1 = resolveWinner(po.sf1, homeGoals, awayGoals, seed);
+    updated.stage = "sf2";
+  } else if (stage === "sf2") {
+    updated.sf2 = resolveWinner(po.sf2, homeGoals, awayGoals, seed);
+    const sf1WinnerId = updated.sf1.winnerId!;
+    const sf2WinnerId = updated.sf2.winnerId!;
+    const sf1WinnerName = state.teams.find(t => t.id === sf1WinnerId)?.name ?? sf1WinnerId;
+    const sf2WinnerName = state.teams.find(t => t.id === sf2WinnerId)?.name ?? sf2WinnerId;
+    updated.final = {
+      homeId: sf1WinnerId,
+      awayId: sf2WinnerId,
+      homeName: sf1WinnerName,
+      awayName: sf2WinnerName,
+    };
+    updated.stage = "final";
+  } else if (stage === "final") {
+    const fin = resolveWinner(po.final!, homeGoals, awayGoals, seed);
+    updated.final = fin;
+    updated.champion = fin.winnerId;
+    updated.championName = state.teams.find(t => t.id === fin.winnerId)?.name ?? fin.winnerId;
+    updated.stage = "complete";
+  }
+
+  return { ...state, playoff: updated };
+}
+
+export function autoSimPlayoffStage(state: LeagueState, seed: number): LeagueState {
+  const po = state.playoff!;
+  if (po.stage === "sf1") {
+    const { homeGoals, awayGoals } = knockoutResult(state.teams, po.sf1.homeId, po.sf1.awayId, seed);
+    return applyPlayoffResult(state, "sf1", homeGoals, awayGoals, seed);
+  }
+  if (po.stage === "sf2") {
+    const { homeGoals, awayGoals } = knockoutResult(state.teams, po.sf2.homeId, po.sf2.awayId, seed + 111);
+    return applyPlayoffResult(state, "sf2", homeGoals, awayGoals, seed + 111);
+  }
+  if (po.stage === "final" && po.final) {
+    const { homeGoals, awayGoals } = knockoutResult(state.teams, po.final.homeId, po.final.awayId, seed + 222);
+    return applyPlayoffResult(state, "final", homeGoals, awayGoals, seed + 222);
+  }
+  return state;
+}
+
+export function getPlayerPlayoffMatch(
+  po: PlayoffBracket,
+  playerTeamId: string
+): { stage: "sf1" | "sf2" | "final"; match: PlayoffMatch; isHome: boolean } | null {
+  const check = (stage: "sf1" | "sf2" | "final", match: PlayoffMatch | undefined) => {
+    if (!match) return null;
+    if (match.homeId === playerTeamId) return { stage, match, isHome: true };
+    if (match.awayId === playerTeamId) return { stage, match, isHome: false };
+    return null;
+  };
+  if (po.stage === "sf1") return check("sf1", po.sf1);
+  if (po.stage === "sf2") return check("sf2", po.sf2);
+  if (po.stage === "final") return check("final", po.final);
+  return null;
 }
