@@ -4,11 +4,13 @@ import {
   PITCH_WIDTH, PITCH_HEIGHT, DELTA, TICKS_PER_TURN,
   BALL_FRICTION, PASS_SPEED, SHOT_SPEED,
   PASS_WIND_UP, PASS_RECOVERY, SHOT_WIND_UP, SHOT_RECOVERY,
-  BASE_PLAYER_SPEED, ACCELERATION, TURNING_COST,
   INTERCEPTION_RADIUS, CONTEST_RADIUS,
   GOAL_TOP_Y, GOAL_BOTTOM_Y, GOAL_LEFT_X, GOAL_RIGHT_X, GOAL_DEPTH,
-  PLAYER_RADIUS
+  PLAYER_RADIUS, TILE_W,
+  GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX,
+  getLinearPixelSpeed,
 } from "./constants";
+import { posToTile, tileToPos } from "./grid";
 
 function vec2Add(a: Vec2, b: Vec2): Vec2 { return { x: a.x + b.x, y: a.y + b.y }; }
 function vec2Sub(a: Vec2, b: Vec2): Vec2 { return { x: a.x - b.x, y: a.y - b.y }; }
@@ -34,11 +36,33 @@ function seededRandom(seed: number): () => number {
   };
 }
 
+// Snap position to nearest tile center
+function snapToTile(pos: Vec2): Vec2 {
+  const t = posToTile(pos);
+  return tileToPos(t.col, t.row);
+}
+
+// Clamp target tile for GK role
+function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
+  const t = posToTile(target);
+  let col = t.col;
+  if (teamId === "player") {
+    col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+  } else {
+    col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+  }
+  return tileToPos(col, t.row);
+}
+
 interface BallTracker {
   type: "pass" | "shot" | null;
   teamId: "player" | "ai" | null;
   playerId: string | null;
   name: string | null;
+}
+
+export function speedToTiles(speed: number): number {
+  return Math.ceil(Math.max(1, Math.min(10, speed)) / 2);
 }
 
 export function runSimulation(
@@ -55,7 +79,9 @@ export function runSimulation(
     ...p,
     position: { ...p.position },
     velocity: { ...p.velocity },
-    command: p.command ? { ...p.command, targetPosition: p.command.targetPosition ? { ...p.command.targetPosition } : undefined } : null,
+    command: p.command
+      ? { ...p.command, targetPosition: p.command.targetPosition ? { ...p.command.targetPosition } : undefined }
+      : null,
   }));
 
   const simBall: SimBall = {
@@ -64,13 +90,27 @@ export function runSimulation(
     ownerId: ball.ownerId,
   };
 
+  // Snap all players to tile centers at start of turn
+  for (const p of simPlayers) {
+    p.position = snapToTile(p.position);
+  }
+
+  // Clamp GK target positions to their zone
+  for (const p of simPlayers) {
+    if (p.role === "goalkeeper" && p.command?.type === CommandType.MOVE && p.command.targetPosition) {
+      p.command = {
+        ...p.command,
+        targetPosition: clampGKTarget(p.command.targetPosition, p.teamId),
+      };
+    }
+  }
+
   for (let tick = 0; tick < TICKS_PER_TURN; tick++) {
     const tickEvents: GameEvent[] = [];
 
-    updatePlayerMovement(simPlayers, simBall, DELTA, tickEvents, tick, passTracker);
+    updatePlayerMovement(simPlayers, simBall, DELTA, tickEvents, tick, passTracker, rng);
     updateBallPhysics(simBall, DELTA);
     detectAndResolveEvents(simPlayers, simBall, tick, tickEvents, rng, passTracker);
-    separateFriendlies(simPlayers);
     constrainToField(simPlayers, simBall);
 
     const goalResult = checkGoal(simBall);
@@ -90,6 +130,11 @@ export function runSimulation(
     frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
   }
 
+  // Snap all players to tile centers at end of turn
+  for (const p of simPlayers) {
+    p.position = snapToTile(p.position);
+  }
+
   return { frames, events: allEvents };
 }
 
@@ -105,6 +150,7 @@ function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
+      tileRange: speedToTiles(p.stats.speed),
     })),
     ball: {
       position: { ...ball.position },
@@ -115,8 +161,27 @@ function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events
   };
 }
 
-function getPlayerSpeed(_player: SimPlayer): number {
-  return BASE_PLAYER_SPEED;
+// Linear movement — player moves at constant speed directly toward target, no overshoot
+function moveLinear(player: SimPlayer, target: Vec2, dt: number): boolean {
+  const dx = target.x - player.position.x;
+  const dy = target.y - player.position.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const pixelSpeed = getLinearPixelSpeed(player.stats.speed);
+  const step = pixelSpeed * dt;
+
+  if (dist <= step || dist < 0.5) {
+    // Arrived — snap exactly
+    player.position.x = target.x;
+    player.position.y = target.y;
+    player.velocity = { x: 0, y: 0 };
+    return true; // arrived
+  }
+
+  const scale = step / dist;
+  player.position.x += dx * scale;
+  player.position.y += dy * scale;
+  player.velocity = { x: (dx / dist) * pixelSpeed, y: (dy / dist) * pixelSpeed };
+  return false;
 }
 
 function updatePlayerMovement(
@@ -125,7 +190,8 @@ function updatePlayerMovement(
   dt: number,
   events: GameEvent[],
   tick: number,
-  passTracker: BallTracker
+  passTracker: BallTracker,
+  rng: () => number
 ): void {
   for (const player of players) {
     if (player.state === PlayerState.RECOVERING) {
@@ -134,7 +200,8 @@ function updatePlayerMovement(
         player.state = PlayerState.IDLE;
         player.recoveryTimer = 0;
       }
-      player.velocity = vec2Scale(player.velocity, 0.85);
+      // Damp any leftover velocity
+      player.velocity = vec2Scale(player.velocity, 0.7);
       player.position = vec2Add(player.position, vec2Scale(player.velocity, dt));
       continue;
     }
@@ -147,7 +214,7 @@ function updatePlayerMovement(
           passTracker.teamId = player.teamId;
           passTracker.playerId = player.id;
           passTracker.name = player.name;
-          executePas(player, ball);
+          executePass(player, ball, rng);
           player.state = PlayerState.RECOVERING;
           player.recoveryTimer = PASS_RECOVERY;
         } else if (player.state === PlayerState.SHOOTING) {
@@ -167,7 +234,7 @@ function updatePlayerMovement(
           });
         }
       }
-      player.velocity = vec2Scale(player.velocity, 0.9);
+      player.velocity = vec2Scale(player.velocity, 0.8);
       player.position = vec2Add(player.position, vec2Scale(player.velocity, dt));
       continue;
     }
@@ -177,7 +244,7 @@ function updatePlayerMovement(
       if (player.stateTimer <= 0) {
         player.state = PlayerState.IDLE;
       }
-      player.velocity = vec2Scale(player.velocity, 0.8);
+      player.velocity = vec2Scale(player.velocity, 0.7);
       player.position = vec2Add(player.position, vec2Scale(player.velocity, dt));
       continue;
     }
@@ -186,11 +253,9 @@ function updatePlayerMovement(
     const cmd = player.command;
 
     if (!cmd || player.commandExecuted) {
-      player.velocity = vec2Scale(player.velocity, 0.85);
-      player.position = vec2Add(player.position, vec2Scale(player.velocity, dt));
-      if (vec2Len(player.velocity) < 1) {
-        player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
-      }
+      // No command — stay still
+      player.velocity = { x: 0, y: 0 };
+      player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
       continue;
     }
 
@@ -199,65 +264,68 @@ function updatePlayerMovement(
         player.state = PlayerState.PASSING;
         player.stateTimer = PASS_WIND_UP;
         player.commandExecuted = true;
+        player.velocity = { x: 0, y: 0 };
       } else {
+        // Move toward ball to gain possession first
         const target = cmd.targetPosition ?? { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
-        moveToward(player, target, dt);
+        const arrived = moveLinear(player, ball.position, dt);
+        if (arrived) {
+          // Near ball — now pass
+          player.state = PlayerState.PASSING;
+          player.stateTimer = PASS_WIND_UP;
+          player.commandExecuted = true;
+          if (cmd.targetPosition) {
+            // Restore the target
+            player.command = { ...cmd };
+          }
+        }
+        void target;
+        player.state = PlayerState.MOVING;
       }
     } else if (cmd.type === CommandType.SHOOT) {
       if (hasBall) {
         player.state = PlayerState.SHOOTING;
         player.stateTimer = SHOT_WIND_UP;
         player.commandExecuted = true;
+        player.velocity = { x: 0, y: 0 };
       } else {
-        moveToward(player, cmd.targetPosition ?? ball.position, dt);
+        moveLinear(player, ball.position, dt);
+        player.state = PlayerState.MOVING;
       }
     } else if (cmd.type === CommandType.MOVE) {
       const target = cmd.targetPosition!;
-      const dist = vec2Dist(player.position, target);
-      if (dist < 5) {
-        player.velocity = vec2Scale(player.velocity, 0.7);
+      const arrived = moveLinear(player, target, dt);
+      if (arrived) {
         player.commandExecuted = true;
         player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
       } else {
-        moveToward(player, target, dt);
         player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.MOVING;
       }
-    }
 
-    player.position = vec2Add(player.position, vec2Scale(player.velocity, dt));
-
-    if (hasBall && (player.state === PlayerState.MOVING || player.state === PlayerState.DRIBBLING)) {
-      const offset = vec2Scale(vec2Normalize(player.velocity), PLAYER_RADIUS + 4);
-      if (vec2Len(player.velocity) > 10) {
+      // Drag ball along when dribbling
+      if (hasBall && player.state === PlayerState.DRIBBLING) {
+        const offset = vec2Len(player.velocity) > 5
+          ? vec2Scale(vec2Normalize(player.velocity), PLAYER_RADIUS + 4)
+          : { x: 0, y: 0 };
         ball.position = vec2Add(player.position, offset);
-      } else {
-        ball.position = { ...player.position };
+        ball.velocity = { x: 0, y: 0 };
       }
-      ball.velocity = { x: 0, y: 0 };
     }
   }
 }
 
-function moveToward(player: SimPlayer, target: Vec2, dt: number): void {
-  const desired = vec2Normalize(vec2Sub(target, player.position));
-  const speed = getPlayerSpeed(player);
-
-  const currentDir = vec2Normalize(player.velocity);
-  const turnFactor = player.ability === "ghost_run" ? TURNING_COST * 0.5 : TURNING_COST;
-  const blended = vec2Normalize({
-    x: currentDir.x + desired.x * (1 + turnFactor) * dt * 10,
-    y: currentDir.y + desired.y * (1 + turnFactor) * dt * 10,
-  });
-
-  const accel = vec2Scale(blended, ACCELERATION * dt);
-  player.velocity = vec2Add(player.velocity, accel);
-  const currentSpeed = vec2Len(player.velocity);
-  if (currentSpeed > speed) {
-    player.velocity = vec2Scale(vec2Normalize(player.velocity), speed);
-  }
+// Pass accuracy: short passes always accurate; long passes need high passing stat
+function computePassAccuracy(player: SimPlayer, distTiles: number): number {
+  const base = 0.95; // Everyone is accurate at short range
+  const passStat = player.stats.passing / 10;
+  // Per-tile penalty decreases as passing stat increases
+  const penaltyPerTile = (1.0 - passStat) * 0.09;
+  const rawPenalty = Math.max(0, distTiles - 1) * penaltyPerTile;
+  const penalty = player.ability === "bullet_pass" ? rawPenalty * 0.35 : rawPenalty;
+  return Math.max(0.05, Math.min(1.0, base - penalty));
 }
 
-function executePas(player: SimPlayer, ball: SimBall): void {
+function executePass(player: SimPlayer, ball: SimBall, rng: () => number): void {
   const cmd = player.command;
   if (!cmd || cmd.type !== CommandType.PASS) return;
   const targetPos = cmd.targetPosition ?? { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
@@ -265,7 +333,25 @@ function executePas(player: SimPlayer, ball: SimBall): void {
   let passSpd = PASS_SPEED;
   if (player.ability === "bullet_pass") passSpd *= 1.5;
 
-  const dir = vec2Normalize(vec2Sub(targetPos, ball.position));
+  const rawDir = vec2Normalize(vec2Sub(targetPos, ball.position));
+  const distPx = vec2Dist(ball.position, targetPos);
+  const distTiles = distPx / TILE_W;
+
+  const accuracy = computePassAccuracy(player, distTiles);
+  let dir = rawDir;
+
+  if (rng() > accuracy) {
+    // Inaccurate pass: deviate the direction by a random angle
+    const maxDeviation = Math.PI * 0.35 * (1 - accuracy);
+    const angle = (rng() * 2 - 1) * maxDeviation;
+    const cos_a = Math.cos(angle);
+    const sin_a = Math.sin(angle);
+    dir = {
+      x: dir.x * cos_a - dir.y * sin_a,
+      y: dir.x * sin_a + dir.y * cos_a,
+    };
+  }
+
   ball.velocity = vec2Scale(dir, passSpd);
   ball.ownerId = null;
 }
@@ -303,10 +389,12 @@ function detectAndResolveEvents(
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
       if (dist < INTERCEPTION_RADIUS && player.state !== PlayerState.RECOVERING) {
-        const velTowardBall = vec2Dot(
-          vec2Normalize(player.velocity),
-          vec2Normalize(vec2Sub(ball.position, player.position))
-        );
+        const velTowardBall = vec2Len(player.velocity) > 0
+          ? vec2Dot(
+            vec2Normalize(player.velocity),
+            vec2Normalize(vec2Sub(ball.position, player.position))
+          )
+          : 0;
         let score = (INTERCEPTION_RADIUS - dist) / INTERCEPTION_RADIUS;
         score += Math.max(0, velTowardBall) * 0.3;
         score += (player.stats.defense / 10) * 0.2;
@@ -345,10 +433,7 @@ function detectAndResolveEvents(
           } else {
             events.push({ type: GameEventType.TACKLE, tick, playerId: loser.id, targetId: winner.id, teamId: loser.teamId, message: `${loser.name} wins the ball!` });
           }
-          passTracker.type = null;
-          passTracker.teamId = null;
-          passTracker.playerId = null;
-          passTracker.name = null;
+          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
           return;
         }
       }
@@ -365,10 +450,7 @@ function detectAndResolveEvents(
         } else {
           events.push({ type: GameEventType.PASS_INTERCEPTED, tick, playerId: winner.id, targetId: passTracker.playerId ?? undefined, teamId: winner.teamId, message: `${winner.name} intercepts!` });
         }
-        passTracker.type = null;
-        passTracker.teamId = null;
-        passTracker.playerId = null;
-        passTracker.name = null;
+        passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
       } else if (candidates.length > 1 && candidates[1].player.teamId !== winner.teamId) {
         events.push({ type: GameEventType.TACKLE, tick, playerId: winner.id, teamId: winner.teamId, message: `${winner.name} picks up the ball!` });
       }
@@ -377,10 +459,7 @@ function detectAndResolveEvents(
   }
 
   if (ball.ownerId !== null) {
-    passTracker.type = null;
-    passTracker.teamId = null;
-    passTracker.playerId = null;
-    passTracker.name = null;
+    passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
 
     const owner = players.find(p => p.id === ball.ownerId)!;
     for (const other of players) {
@@ -390,13 +469,17 @@ function detectAndResolveEvents(
         const attackerScore = owner.stats.attack / 10 + rng() * 0.25;
         let defenderScore = other.stats.defense / 10 + rng() * 0.25;
         if (other.ability === "iron_tackle") defenderScore += 0.2;
+        if (other.ability === "powerhouse") defenderScore += 0.2;
         if (other.ability === "goalkeeper") defenderScore += 0.35;
         if (other.ability === "shadow_mark") {
           defenderScore += 0.1;
-          owner.velocity = vec2Scale(owner.velocity, 0.8);
+          owner.velocity = vec2Scale(owner.velocity, 0.6);
         }
+        let effectiveAttacker = attackerScore;
+        if (owner.ability === "powerhouse") effectiveAttacker += 0.2;
+        if (owner.ability === "ghost_run") effectiveAttacker += 0.15;
 
-        if (defenderScore > attackerScore) {
+        if (defenderScore > effectiveAttacker) {
           ball.ownerId = other.id;
           ball.velocity = { x: 0, y: 0 };
           other.state = PlayerState.DRIBBLING;
@@ -443,27 +526,6 @@ function constrainToField(players: SimPlayer[], ball: SimBall): void {
       ball.position.x = GOAL_RIGHT_X - GOAL_DEPTH - 5;
       ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
       ball.velocity.y *= 0.3;
-    }
-  }
-}
-
-function separateFriendlies(players: SimPlayer[]): void {
-  const sep = PLAYER_RADIUS * 2.2;
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
-      if (players[i].teamId !== players[j].teamId) continue;
-      const dx = players[i].position.x - players[j].position.x;
-      const dy = players[i].position.y - players[j].position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < sep && dist > 0) {
-        const push = (sep - dist) / 2;
-        const nx = dx / dist;
-        const ny = dy / dist;
-        players[i].position.x += nx * push;
-        players[i].position.y += ny * push;
-        players[j].position.x -= nx * push;
-        players[j].position.y -= ny * push;
-      }
     }
   }
 }

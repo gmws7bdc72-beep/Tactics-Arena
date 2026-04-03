@@ -108,8 +108,9 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
           <div className="text-white text-sm font-bold mb-2">League Table</div>
           <div className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
             {/* Header */}
-            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
               <span>Club</span>
+              <span className="text-right w-6">PL</span>
               <span className="text-right w-6">W</span>
               <span className="text-right w-6">D</span>
               <span className="text-right w-6">L</span>
@@ -121,7 +122,7 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
               return (
                 <div
                   key={t.id}
-                  className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-0 px-3 py-2 border-b border-white/5 last:border-0"
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-2 border-b border-white/5 last:border-0"
                   style={{
                     background: isPlayer
                       ? `${team.jerseyColor}18`
@@ -140,6 +141,7 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
                     </span>
                     {isNext && <span className="text-[9px] text-[#00b4d8] font-bold flex-shrink-0">NEXT</span>}
                   </div>
+                  <span className="text-gray-400 text-xs text-right w-6">{t.played}</span>
                   <span className="text-gray-300 text-xs text-right w-6">{t.won}</span>
                   <span className="text-gray-300 text-xs text-right w-6">{t.drawn}</span>
                   <span className="text-gray-300 text-xs text-right w-6">{t.lost}</span>

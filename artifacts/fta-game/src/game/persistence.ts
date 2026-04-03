@@ -10,12 +10,20 @@ const PLAYER_TEAM_ID = "player_team";
 
 const CREST_ICONS = ["⚡", "🔥", "🦅", "🐺", "🦁", "⭐", "🛡️", "🗡️"];
 
+function hasValidStats(t: TeamConfig): boolean {
+  return t.players.every(
+    p => p.stats &&
+      typeof p.stats.speed === "number" &&
+      typeof p.stats.passing === "number"
+  );
+}
+
 export function loadTeam(): TeamConfig {
   try {
     const raw = localStorage.getItem(TEAM_KEY);
     if (raw) {
       const t = JSON.parse(raw) as TeamConfig;
-      if (t.players && t.players.length === 5) return t;
+      if (t.players && t.players.length === 5 && hasValidStats(t)) return t;
     }
   } catch {}
   return getDefaultTeam();
