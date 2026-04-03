@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2 } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, speedToTiles } from "./constants";
+import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX } from "./constants";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -55,6 +55,37 @@ function moveStep(
 
 function stayPut(tile: TilePos): Command {
   return { type: CommandType.MOVE, targetPosition: tileToPos(tile.col, tile.row) };
+}
+
+// Chase a loose ball at full speed. GK stays within their zone but moves at their real speed.
+function chaseLooseBall(
+  player: SimPlayer,
+  pt: TilePos,
+  ballTile: TilePos,
+  claimed: Set<string>,
+  _friendly: Set<string>
+): Command {
+  const isGK = player.role === "goalkeeper";
+  const range = speedToTiles(player.stats.speed); // full speed — not the GK-limited 1
+  const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId);
+
+  // GK targets ball clamped to their zone; outfield targets ball directly
+  const gkMin = player.teamId === "ai" ? GK_COLS_AI_MIN : GK_COLS_PLAYER_MIN;
+  const gkMax = player.teamId === "ai" ? GK_COLS_AI_MAX : GK_COLS_PLAYER_MAX;
+  const target: TilePos = isGK
+    ? { col: Math.max(gkMin, Math.min(gkMax, ballTile.col)), row: Math.max(0, Math.min(6, ballTile.row)) }
+    : ballTile;
+
+  let best: TilePos = pt;
+  let bestDist = tileDist(pt, target);
+  for (const c of reachable) {
+    const k = tileKey(c.col, c.row);
+    if (claimed.has(k)) continue;
+    const d = tileDist(c, target);
+    if (d < bestDist) { bestDist = d; best = c; }
+  }
+  if (best !== pt) claimed.add(tileKey(best.col, best.row));
+  return { type: CommandType.MOVE, targetPosition: tileToPos(best.col, best.row) };
 }
 
 function shoot(): Command {
@@ -573,16 +604,21 @@ export function generateAICommands(
     ...aiPlayers.filter(p => p.role === "forward" || p.role === "striker"),
   ];
 
+  // Loose ball: all players chase at full speed, closest gets first pick of the ball tile
+  if (ballIsLoose) {
+    const byProximity = [...sorted].sort(
+      (a, b) => eucDist(a.position, ball.position) - eucDist(b.position, ball.position)
+    );
+    for (const p of byProximity) {
+      const pTile = posToTile(p.position);
+      commands.set(p.id, chaseLooseBall(p, pTile, ballTile, claimed, friendly));
+    }
+    return commands;
+  }
+
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
-
-    // Loose ball: chase it
-    if (ballIsLoose) {
-      const cmd = moveStep(player, pt, ballTile, claimed, friendly);
-      commands.set(player.id, cmd);
-      continue;
-    }
 
     let cmd: Command;
 
