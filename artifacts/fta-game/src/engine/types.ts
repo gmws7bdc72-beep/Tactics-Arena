@@ -168,11 +168,3 @@ export interface LeagueState {
   currentMatchIndex: number;
 }
 
-// Legacy kept for compat
-export interface ArenaProgress {
-  arena: "bronze" | "silver" | "gold" | "elite";
-  wins: number;
-  losses: number;
-  winsInArena: number;
-  lossesInArena: number;
-}
