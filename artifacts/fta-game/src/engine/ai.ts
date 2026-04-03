@@ -348,8 +348,8 @@ export function generateAICommands(
   const commands = new Map<string, Command>();
 
   const ballOwner = [...aiPlayers, ...playerPlayers].find(p => p.id === ball.ownerId) ?? null;
-  const aiHasBall = ballOwner?.teamId === "ai" ?? false;
-  const playerHasBall = ballOwner?.teamId === "player" ?? false;
+  const aiHasBall = ballOwner?.teamId === "ai";
+  const playerHasBall = ballOwner?.teamId === "player";
   const ballIsLoose = ball.ownerId === null;
   const ballTile = posToTile(ball.position);
 
