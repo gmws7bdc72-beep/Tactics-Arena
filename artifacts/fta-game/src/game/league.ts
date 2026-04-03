@@ -1,4 +1,4 @@
-import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch, PlayoffMatch, PlayoffBracket } from "../engine/types";
+import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch, PlayoffMatch, PlayoffBracket, MatchdayResult } from "../engine/types";
 import { tileToPos } from "../engine/grid";
 
 export interface AITeamDef {
@@ -284,10 +284,14 @@ export function applyMatchResult(
   const aiSchedule = state.aiSchedule ?? [];
   const aiMatchIndex = state.aiMatchIndex ?? 0;
   const batch = aiSchedule.slice(aiMatchIndex, aiMatchIndex + 4);
+  const lastMatchdayResults: MatchdayResult[] = [];
   for (const [a, b] of batch) {
     const { homeGoals: hg, awayGoals: ag } = simulateOneAIMatch(teams, a, b, seed + a.length + b.length + aiMatchIndex);
     updateTeam(a, hg, ag);
     updateTeam(b, ag, hg);
+    const homeName = teams.find(t => t.id === a)?.name ?? a;
+    const awayName = teams.find(t => t.id === b)?.name ?? b;
+    lastMatchdayResults.push({ homeId: a, awayId: b, homeName, awayName, homeGoals: hg, awayGoals: ag });
   }
 
   return {
@@ -296,7 +300,34 @@ export function applyMatchResult(
     schedule,
     currentMatchIndex: state.currentMatchIndex + 1,
     aiMatchIndex: aiMatchIndex + batch.length,
+    lastMatchdayResults,
   };
+}
+
+/**
+ * Migrates a league saved before aiSchedule was introduced.
+ * If aiSchedule is missing, generates all 36 AI-vs-AI pairs and sets
+ * aiMatchIndex to estimate how many have already been played.
+ */
+export function migrateLeague(state: LeagueState): LeagueState {
+  if (state.aiSchedule && state.aiSchedule.length > 0) return state;
+
+  const aiIds = AI_TEAMS.map(t => t.id);
+  const allAIPairs: [string, string][] = [];
+  for (let i = 0; i < aiIds.length; i++) {
+    for (let j = i + 1; j < aiIds.length; j++) {
+      allAIPairs.push([aiIds[i], aiIds[j]]);
+    }
+  }
+  const rng = seededRng(42);
+  for (let i = allAIPairs.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [allAIPairs[i], allAIPairs[j]] = [allAIPairs[j], allAIPairs[i]];
+  }
+
+  // Estimate how many pairs have already been processed: 4 per player match played
+  const estimatedDone = Math.min(state.currentMatchIndex * 4, allAIPairs.length);
+  return { ...state, aiSchedule: allAIPairs, aiMatchIndex: estimatedDone };
 }
 
 export function getLeagueStandings(teams: LeagueTeamEntry[]): LeagueTeamEntry[] {

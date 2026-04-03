@@ -329,8 +329,8 @@ function tier1Possession(
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
       if (anyTarget) return passTo(anyTarget);
     }
-    // Off-ball: track ball row
-    const gkRow = Math.max(1, Math.min(5, ballTile.row));
+    // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
+    const gkRow = Math.max(2, Math.min(4, ballTile.row));
     return moveStep(player, pt, { col: 9, row: gkRow }, claimed, friendly);
   }
 
@@ -399,8 +399,8 @@ function tier1Defense(
 ): Command {
   const adapt = computeAdaptation(adaptiveState);
   if (player.role === "goalkeeper") {
-    // Track ball row, blending toward the zone where goals were conceded
-    const ballRow = Math.max(1, Math.min(5, ballTile.row));
+    // Track ball row, stay in central 3 rows so corners remain scorable
+    const ballRow = Math.max(2, Math.min(4, ballTile.row));
     const targetRow = adaptRow(ballRow, adapt);
     return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
   }
@@ -515,8 +515,8 @@ function tier2Defense(
   const adapt = computeAdaptation(adaptiveState);
 
   if (player.role === "goalkeeper") {
-    // Track ball row, shifting toward the conceded danger zone as urgency rises
-    const ballRow = Math.max(1, Math.min(5, ballTile.row));
+    // Track ball row, stay in central 3 rows so corners remain scorable
+    const ballRow = Math.max(2, Math.min(4, ballTile.row));
     const targetRow = adaptRow(ballRow, adapt);
     return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
   }

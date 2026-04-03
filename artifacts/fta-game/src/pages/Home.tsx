@@ -375,6 +375,40 @@ export default function Home({
           ))}
         </div>
 
+        {/* Last matchday — other results */}
+        {league.lastMatchdayResults && league.lastMatchdayResults.length > 0 && (
+          <div>
+            <div className="text-white text-sm font-bold mb-2">
+              Last Matchday · Other Results
+            </div>
+            <div className="rounded-xl overflow-hidden space-y-px" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+              {league.lastMatchdayResults.map((r, i) => {
+                const homeWon = r.homeGoals > r.awayGoals;
+                const awayWon = r.awayGoals > r.homeGoals;
+                return (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 text-xs border-b border-white/5 last:border-0">
+                    <span
+                      className="flex-1 text-right truncate"
+                      style={{ color: homeWon ? "#d1d5db" : "#6b7280", fontWeight: homeWon ? 700 : 400 }}
+                    >
+                      {r.homeName}
+                    </span>
+                    <span className="font-black text-white text-sm tabular-nums shrink-0 px-1">
+                      {r.homeGoals} – {r.awayGoals}
+                    </span>
+                    <span
+                      className="flex-1 truncate"
+                      style={{ color: awayWon ? "#d1d5db" : "#6b7280", fontWeight: awayWon ? 700 : 400 }}
+                    >
+                      {r.awayName}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Navigation */}
         <div className="grid grid-cols-2 gap-3">
           <button

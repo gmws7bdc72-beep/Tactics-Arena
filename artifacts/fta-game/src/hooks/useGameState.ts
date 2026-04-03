@@ -2,12 +2,16 @@ import { useState, useCallback } from "react";
 import type { TeamConfig, LeagueState } from "../engine/types";
 import { loadTeam, saveTeam, loadLeague, saveLeague, resetLeague } from "../game/persistence";
 import { PLAYER_TEAM_ID_CONST } from "../game/persistence";
+import { migrateLeague } from "../game/league";
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
   const [league, setLeagueState] = useState<LeagueState>(() => {
     const t = loadTeam();
-    return loadLeague(t.name);
+    const raw = loadLeague(t.name);
+    const migrated = migrateLeague(raw);
+    if (migrated !== raw) saveLeague(migrated);
+    return migrated;
   });
 
   const updateTeam = useCallback((t: TeamConfig) => {
