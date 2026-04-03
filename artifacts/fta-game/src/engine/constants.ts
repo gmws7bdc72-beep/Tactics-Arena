@@ -37,10 +37,9 @@ export const PASS_RECOVERY = 0.4;
 export const SHOT_WIND_UP = 0.35;
 export const SHOT_RECOVERY = 0.6;
 
-export const BASE_PLAYER_SPEED = 80;
-export const SPEED_STAT_MULTIPLIER = 4.5;
-export const ACCELERATION = 400;
-export const TURNING_COST = 0.3;
+export const BASE_PLAYER_SPEED = 220;
+export const ACCELERATION = 600;
+export const TURNING_COST = 0.4;
 
 // GK zone: cols 0-1 for player team, cols 8-9 for AI
 export const GK_ZONE_COLS = 2;

@@ -141,7 +141,7 @@ export default function TeamSetup({ team, onSave, onBack }: Props) {
                                   <div className="text-gray-400 text-[10px] truncate">{candidate.role} · {candidate.ability.replace(/_/g, " ")}</div>
                                 </div>
                                 <div className="text-xs text-gray-400 flex-shrink-0">
-                                  {candidate.stats.attack}·{candidate.stats.defense}·{candidate.stats.speed}
+                                  {candidate.stats.attack}·{candidate.stats.defense}·{candidate.stats.luck}
                                 </div>
                               </button>
                             ))}
