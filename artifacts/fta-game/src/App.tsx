@@ -116,6 +116,7 @@ export default function App() {
         <Match
           team={team}
           opponentTeamDef={currentOpponentDef}
+          isHome={currentScheduledMatch?.isHome !== false}
           onMatchEnd={handleMatchEnd}
           onForfeit={handleForfeit}
         />
