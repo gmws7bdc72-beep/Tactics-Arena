@@ -3,6 +3,11 @@ export interface Vec2 {
   y: number;
 }
 
+export interface TilePos {
+  col: number;
+  row: number;
+}
+
 export enum PlayerState {
   IDLE = "IDLE",
   MOVING = "MOVING",
@@ -23,7 +28,6 @@ export interface Command {
   type: CommandType;
   targetPosition?: Vec2;
   targetPlayerId?: string;
-  triggerTime?: number;
 }
 
 export interface PlayerStats {
@@ -39,7 +43,8 @@ export type AbilityId =
   | "ghost_run"
   | "eagle_eye"
   | "powerhouse"
-  | "shadow_mark";
+  | "shadow_mark"
+  | "goalkeeper";
 
 export interface Ability {
   id: AbilityId;
@@ -50,7 +55,7 @@ export interface Ability {
 export interface PlayerCard {
   id: string;
   name: string;
-  role: "defender" | "midfielder" | "forward" | "striker";
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
   stats: PlayerStats;
   ability: AbilityId;
   jerseyNumber: number;
@@ -71,6 +76,7 @@ export interface SimPlayer {
   recoveryTimer: number;
   name: string;
   jerseyNumber: number;
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
 }
 
 export interface SimBall {
@@ -110,6 +116,7 @@ export interface FrameSnapshot {
     state: PlayerState;
     name: string;
     jerseyNumber: number;
+    role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
   }[];
   ball: {
     position: Vec2;
@@ -117,17 +124,6 @@ export interface FrameSnapshot {
     ownerId: string | null;
   };
   events: GameEvent[];
-}
-
-export interface MatchState {
-  score: { player: number; ai: number };
-  turn: number;
-  maxTurns: number;
-  phase: "planning" | "simulating" | "finished";
-  frames: FrameSnapshot[];
-  currentFrame: number;
-  allEvents: GameEvent[];
-  goalScoredBy?: "player" | "ai";
 }
 
 export interface Formation {
@@ -146,6 +142,34 @@ export interface TeamConfig {
   startPositions: Vec2[];
 }
 
+// League types
+export interface LeagueTeamEntry {
+  id: string;
+  name: string;
+  tier: 1 | 2 | 3;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+}
+
+export interface ScheduledMatch {
+  opponentId: string;
+  opponentName: string;
+  played: boolean;
+  playerGoals: number;
+  opponentGoals: number;
+}
+
+export interface LeagueState {
+  teams: LeagueTeamEntry[];
+  schedule: ScheduledMatch[];
+  currentMatchIndex: number;
+}
+
+// Legacy kept for compat
 export interface ArenaProgress {
   arena: "bronze" | "silver" | "gold" | "elite";
   wins: number;
