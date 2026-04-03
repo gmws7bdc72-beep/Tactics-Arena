@@ -382,7 +382,7 @@ function updatePlayerMovement(
           passTracker.teamId = player.teamId;
           passTracker.playerId = player.id;
           passTracker.name = player.name;
-          executeShot(player, ball);
+          executeShot(player, ball, rng);
           player.state = PlayerState.RECOVERING;
           player.recoveryTimer = SHOT_RECOVERY;
           events.push({
@@ -516,15 +516,19 @@ function executePass(player: SimPlayer, ball: SimBall, rng: () => number): void 
   ball.ownerId = null;
 }
 
-function executeShot(player: SimPlayer, ball: SimBall): void {
-  const goalCenter: Vec2 = player.teamId === "player"
-    ? { x: GOAL_RIGHT_X, y: PITCH_HEIGHT / 2 }
-    : { x: GOAL_LEFT_X, y: PITCH_HEIGHT / 2 };
+function executeShot(player: SimPlayer, ball: SimBall, rng: () => number): void {
+  const goalX = player.teamId === "player" ? GOAL_RIGHT_X : GOAL_LEFT_X;
+
+  // Aim at a random point within the goal opening so the GK can't simply
+  // pre-park at the centre. 85% of half-width keeps shots inside the post.
+  const goalMid = PITCH_HEIGHT / 2;
+  const halfGoal = GOAL_WIDTH / 2;
+  const targetY = goalMid + (rng() * 2 - 1) * halfGoal * 0.85;
 
   let shotSpd = SHOT_SPEED;
   if (player.ability === "eagle_eye") shotSpd *= 1.15;
 
-  const dir = vec2Normalize(vec2Sub(goalCenter, ball.position));
+  const dir = vec2Normalize(vec2Sub({ x: goalX, y: targetY }, ball.position));
   ball.velocity = vec2Scale(dir, shotSpd);
   ball.ownerId = null;
 }
@@ -639,7 +643,7 @@ function detectAndResolveEvents(
         let defenderScore = other.stats.defense / 10 + rng() * 0.25;
         if (other.ability === "iron_tackle") defenderScore += 0.2;
         if (other.ability === "powerhouse") defenderScore += 0.2;
-        if (other.ability === "goalkeeper") defenderScore += 0.35;
+        if (other.ability === "goalkeeper") defenderScore += 0.12;
         if (other.ability === "shadow_mark") {
           defenderScore += 0.1;
           owner.velocity = vec2Scale(owner.velocity, 0.6);

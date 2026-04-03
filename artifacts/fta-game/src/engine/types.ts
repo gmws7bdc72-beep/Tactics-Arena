@@ -185,6 +185,15 @@ export interface PlayoffBracket {
   championName?: string;  // winning team name
 }
 
+export interface MatchdayResult {
+  homeId: string;
+  awayId: string;
+  homeName: string;
+  awayName: string;
+  homeGoals: number;
+  awayGoals: number;
+}
+
 export interface LeagueState {
   teams: LeagueTeamEntry[];
   schedule: ScheduledMatch[];
@@ -192,4 +201,5 @@ export interface LeagueState {
   playoff?: PlayoffBracket;
   aiSchedule?: [string, string][];
   aiMatchIndex?: number;
+  lastMatchdayResults?: MatchdayResult[];
 }
