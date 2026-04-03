@@ -28,6 +28,30 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
+  const lt = posToTile(loser.position);
+  const wt = posToTile(winner.position);
+  const dc = lt.col - wt.col;
+  const dr = lt.row - wt.row;
+
+  let rdc: number, rdr: number;
+  if (dc !== 0 || dr !== 0) {
+    rdc = Math.sign(dc);
+    rdr = Math.sign(dr);
+  } else {
+    rdc = loser.teamId === "player" ? -1 : 1;
+    rdr = 0;
+  }
+
+  const retreatCol = clamp(lt.col + rdc, 0, 9);
+  const retreatRow = clamp(lt.row + rdr, 0, 6);
+
+  loser.position = tileToPos(retreatCol, retreatRow);
+  loser.velocity = { x: 0, y: 0 };
+  loser.command = null;
+  loser.commandExecuted = false;
+}
+
 function seededRandom(seed: number): () => number {
   let s = seed;
   return function () {
@@ -133,6 +157,31 @@ export function runSimulation(
   // Snap all players to tile centers at end of turn
   for (const p of simPlayers) {
     p.position = snapToTile(p.position);
+  }
+
+  // Separate same-team players that landed on the same tile
+  const tileMap = new Map<string, SimPlayer>();
+  for (const p of simPlayers) {
+    const t = posToTile(p.position);
+    const key = `${p.teamId}:${t.col},${t.row}`;
+    const existing = tileMap.get(key);
+    if (existing) {
+      // Push p to adjacent tile (prefer row-wise offset)
+      const offsets = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+      for (const [dc, dr] of offsets) {
+        const nc = t.col + dc;
+        const nr = t.row + dr;
+        if (nc < 0 || nc > 9 || nr < 0 || nr > 6) continue;
+        const altKey = `${p.teamId}:${nc},${nr}`;
+        if (!tileMap.has(altKey)) {
+          p.position = tileToPos(nc, nr);
+          tileMap.set(altKey, p);
+          break;
+        }
+      }
+    } else {
+      tileMap.set(key, p);
+    }
   }
 
   return { frames, events: allEvents };
@@ -423,6 +472,9 @@ function detectAndResolveEvents(
           ball.ownerId = loser.id;
           ball.velocity = { x: 0, y: 0 };
           loser.state = PlayerState.DRIBBLING;
+          winner.state = PlayerState.RECOVERING;
+          winner.recoveryTimer = 1.0;
+          retreatFrom(winner, loser);
 
           if (passTracker.teamId !== null && passTracker.teamId !== loser.teamId) {
             if (passTracker.type === "shot" && loser.ability === "goalkeeper") {
@@ -441,6 +493,12 @@ function detectAndResolveEvents(
       ball.ownerId = winner.id;
       ball.velocity = { x: 0, y: 0 };
       winner.state = PlayerState.DRIBBLING;
+
+      if (loser && loser.teamId !== winner.teamId) {
+        loser.state = PlayerState.RECOVERING;
+        loser.recoveryTimer = 1.0;
+        retreatFrom(loser, winner);
+      }
 
       if (passTracker.teamId !== null) {
         if (passTracker.teamId === winner.teamId) {
@@ -486,7 +544,8 @@ function detectAndResolveEvents(
           other.command = null;
           other.commandExecuted = false;
           owner.state = PlayerState.RECOVERING;
-          owner.recoveryTimer = 0.4;
+          owner.recoveryTimer = 1.0;
+          retreatFrom(owner, other);
           events.push({ type: GameEventType.TACKLE, tick, playerId: other.id, targetId: owner.id, teamId: other.teamId, message: `${other.name} tackles ${owner.name}!` });
         } else {
           other.state = PlayerState.CONTESTING;

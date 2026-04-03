@@ -51,9 +51,9 @@ export const AI_SHOT_RANGE = 200;
 export const AI_PASS_SAFE_DISTANCE = 120;
 
 // Speed stat → tile range per turn
-// speed 1-2 = 1 tile, 3-4 = 2 tiles, 5-6 = 3 tiles, 7-8 = 4 tiles, 9-10 = 5 tiles
+// speed 1-4 = 1 tile, 5-8 = 2 tiles, 9-10 = 3 tiles (max 3)
 export function speedToTiles(speed: number): number {
-  return Math.ceil(Math.max(1, Math.min(10, speed)) / 2);
+  return Math.min(3, Math.ceil(Math.max(1, Math.min(10, speed)) / 4));
 }
 
 // Compute linear pixel speed so player covers their tile range in ~75% of turn duration
