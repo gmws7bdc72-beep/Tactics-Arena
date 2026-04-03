@@ -43,8 +43,17 @@ function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
     rdr = 0;
   }
 
-  const retreatCol = clamp(lt.col + rdc, 0, 9);
+  let retreatCol = clamp(lt.col + rdc, 0, 9);
   const retreatRow = clamp(lt.row + rdr, 0, 6);
+
+  // GK must stay in their zone even when retreating
+  if (loser.role === "goalkeeper") {
+    if (loser.teamId === "player") {
+      retreatCol = clamp(retreatCol, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+    } else {
+      retreatCol = clamp(retreatCol, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+    }
+  }
 
   loser.position = tileToPos(retreatCol, retreatRow);
   loser.velocity = { x: 0, y: 0 };
@@ -219,6 +228,20 @@ export function runSimulation(
       } else {
         occupied.set(key, p.id);
       }
+    }
+  }
+
+  // Clamp GK positions back to their zone after tile separation (separation can push GK out of zone).
+  for (const p of simPlayers) {
+    if (p.role === "goalkeeper") {
+      const t = posToTile(p.position);
+      let col = t.col;
+      if (p.teamId === "player") {
+        col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+      } else {
+        col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+      }
+      if (col !== t.col) p.position = tileToPos(col, t.row);
     }
   }
 

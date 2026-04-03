@@ -188,7 +188,23 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     return { opponentId: id, opponentName: team.name, played: false, playerGoals: 0, opponentGoals: 0, isHome: idx % 2 === 0 };
   });
 
-  return { teams, schedule, currentMatchIndex: 0 };
+  // Pre-compute all C(9,2)=36 AI-vs-AI pairs and shuffle them.
+  // Processed 4-per-player-match → 9×4=36 so every team plays every other exactly once.
+  const aiIds = AI_TEAMS.map(t => t.id);
+  const allAIPairs: [string, string][] = [];
+  for (let i = 0; i < aiIds.length; i++) {
+    for (let j = i + 1; j < aiIds.length; j++) {
+      allAIPairs.push([aiIds[i], aiIds[j]]);
+    }
+  }
+  // Seeded Fisher-Yates shuffle for reproducibility
+  const rng = seededRng(Date.now() % 999983);
+  for (let i = allAIPairs.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [allAIPairs[i], allAIPairs[j]] = [allAIPairs[j], allAIPairs[i]];
+  }
+
+  return { teams, schedule, currentMatchIndex: 0, aiSchedule: allAIPairs, aiMatchIndex: 0 };
 }
 
 function seededRng(seed: number): () => number {
@@ -263,29 +279,13 @@ export function applyMatchResult(
       : m
   );
 
-  // Simulate a few AI-vs-AI matches from remaining unplayed pairs
-  const aiIds = AI_TEAMS.map(t => t.id);
-  const unplayedPairs: [string, string][] = [];
-  const alreadySimulated = new Set<string>();
-  for (let i = 0; i < aiIds.length; i++) {
-    for (let j = i + 1; j < aiIds.length; j++) {
-      const key = `${aiIds[i]}_${aiIds[j]}`;
-      const rev = `${aiIds[j]}_${aiIds[i]}`;
-      if (!alreadySimulated.has(key) && !alreadySimulated.has(rev)) {
-        const teamA = teams.find(t => t.id === aiIds[i])!;
-        const teamB = teams.find(t => t.id === aiIds[j])!;
-        if (teamA.played < state.schedule.length && teamB.played < state.schedule.length) {
-          unplayedPairs.push([aiIds[i], aiIds[j]]);
-          alreadySimulated.add(key);
-        }
-      }
-    }
-  }
-
-  const rng = seededRng(seed + 7777);
-  const toSimulate = unplayedPairs.sort(() => rng() - 0.5).slice(0, 4);
-  for (const [a, b] of toSimulate) {
-    const { homeGoals: hg, awayGoals: ag } = simulateOneAIMatch(teams, a, b, seed + a.length + b.length);
+  // Process the next 4 pre-computed AI-vs-AI pairs from the schedule.
+  // Using a pre-computed schedule guarantees each pair plays exactly once.
+  const aiSchedule = state.aiSchedule ?? [];
+  const aiMatchIndex = state.aiMatchIndex ?? 0;
+  const batch = aiSchedule.slice(aiMatchIndex, aiMatchIndex + 4);
+  for (const [a, b] of batch) {
+    const { homeGoals: hg, awayGoals: ag } = simulateOneAIMatch(teams, a, b, seed + a.length + b.length + aiMatchIndex);
     updateTeam(a, hg, ag);
     updateTeam(b, ag, hg);
   }
@@ -295,6 +295,7 @@ export function applyMatchResult(
     teams,
     schedule,
     currentMatchIndex: state.currentMatchIndex + 1,
+    aiMatchIndex: aiMatchIndex + batch.length,
   };
 }
 
