@@ -183,9 +183,9 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     ...AI_TEAMS.map(t => ({ id: t.id, name: t.name, tier: t.tier, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 })),
   ];
 
-  const schedule: ScheduledMatch[] = SCHEDULE_ORDER.map(id => {
+  const schedule: ScheduledMatch[] = SCHEDULE_ORDER.map((id, idx) => {
     const team = AI_TEAMS.find(t => t.id === id)!;
-    return { opponentId: id, opponentName: team.name, played: false, playerGoals: 0, opponentGoals: 0 };
+    return { opponentId: id, opponentName: team.name, played: false, playerGoals: 0, opponentGoals: 0, isHome: idx % 2 === 0 };
   });
 
   return { teams, schedule, currentMatchIndex: 0 };

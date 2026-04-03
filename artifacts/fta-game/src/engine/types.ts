@@ -162,6 +162,7 @@ export interface ScheduledMatch {
   played: boolean;
   playerGoals: number;
   opponentGoals: number;
+  isHome?: boolean;
 }
 
 export interface LeagueState {

@@ -64,7 +64,17 @@ export default function Home({ team, league, onStartMatch, onGoToTeamSetup, onGo
             className="rounded-2xl p-4"
             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}
           >
-            <div className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wide">Next Match</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Next Match</div>
+              <div
+                className="text-xs font-bold px-2 py-0.5 rounded-full"
+                style={nextMatch.isHome !== false
+                  ? { background: "rgba(0,230,118,0.15)", color: "#00e676" }
+                  : { background: "rgba(0,180,216,0.15)", color: "#00b4d8" }}
+              >
+                {nextMatch.isHome !== false ? "🏠 Home" : "✈️ Away"}
+              </div>
+            </div>
             <div className="flex items-center gap-4">
               <div className="flex-1 text-center">
                 <div className="text-xl mb-0.5">{team.crestIcon}</div>

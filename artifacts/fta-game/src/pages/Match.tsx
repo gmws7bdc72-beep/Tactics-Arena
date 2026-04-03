@@ -13,6 +13,7 @@ import EventLog from "../components/EventLog";
 interface Props {
   team: TeamConfig;
   opponentTeamDef: AITeamDef;
+  isHome?: boolean;
   onMatchEnd: (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => void;
   onForfeit: () => void;
 }
@@ -73,7 +74,7 @@ function GoalDots({ filled, total }: { filled: number; total: number }) {
   );
 }
 
-export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: Props) {
+export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd, onForfeit }: Props) {
   const playerFormation = getFormationById(team.formationId);
   const aiFormation = getAIFormationById(opponentTeamDef.formationId);
   const aiTier = opponentTeamDef.tier;
@@ -85,7 +86,10 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
     const ai = opponentTeamDef.players.slice(0, 5).map((card, i) =>
       makeSimPlayer(card, "ai", aiFormation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
     );
-    const ball: SimBall = { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
+    const kickoffGK = isHome
+      ? pl.find(p => p.role === "goalkeeper") ?? pl[0]
+      : ai.find(p => p.role === "goalkeeper") ?? ai[0];
+    const ball: SimBall = { position: { ...kickoffGK.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffGK.id };
     return { players: [...pl, ...ai], ball };
   })());
 
@@ -161,9 +165,18 @@ export default function Match({ team, opponentTeamDef, onMatchEnd, onForfeit }: 
       return { ...orig, position: pos, velocity: { x: 0, y: 0 }, state: "IDLE" as SimPlayer["state"], command: null, commandExecuted: false };
     });
 
-    const newBall: SimBall = goalEvent
-      ? { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null }
-      : { ...lastFrame.ball };
+    let newBall: SimBall;
+    if (goalEvent) {
+      const concedingTeamId = goalEvent.teamId === "player" ? "ai" : "player";
+      const concedingGK =
+        newSimPlayers.find(p => p.teamId === concedingTeamId && p.role === "goalkeeper") ??
+        newSimPlayers.find(p => p.teamId === concedingTeamId);
+      newBall = concedingGK
+        ? { position: { ...concedingGK.position }, velocity: { x: 0, y: 0 }, ownerId: concedingGK.id }
+        : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
+    } else {
+      newBall = { ...lastFrame.ball };
+    }
 
     setPlayers(newSimPlayers);
     setBall(newBall);
