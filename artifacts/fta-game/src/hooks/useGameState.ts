@@ -1,20 +1,28 @@
 import { useState, useCallback } from "react";
-import type { TeamConfig, ArenaProgress } from "../engine/types";
-import { loadTeam, saveTeam, loadProgress, saveProgress } from "../game/persistence";
+import type { TeamConfig, LeagueState } from "../engine/types";
+import { loadTeam, saveTeam, loadLeague, saveLeague, resetLeague } from "../game/persistence";
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
-  const [progress, setProgressState] = useState<ArenaProgress>(() => loadProgress());
+  const [league, setLeagueState] = useState<LeagueState>(() => {
+    const t = loadTeam();
+    return loadLeague(t.name);
+  });
 
   const updateTeam = useCallback((t: TeamConfig) => {
     setTeamState(t);
     saveTeam(t);
   }, []);
 
-  const updateProgress = useCallback((p: ArenaProgress) => {
-    setProgressState(p);
-    saveProgress(p);
+  const updateLeague = useCallback((l: LeagueState) => {
+    setLeagueState(l);
+    saveLeague(l);
   }, []);
 
-  return { team, updateTeam, progress, updateProgress };
+  const startNewSeason = useCallback((teamName: string) => {
+    const l = resetLeague(teamName);
+    setLeagueState(l);
+  }, []);
+
+  return { team, updateTeam, league, updateLeague, startNewSeason };
 }

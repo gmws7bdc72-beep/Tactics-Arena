@@ -4,21 +4,21 @@ import { CommandType } from "../engine/types";
 import {
   PITCH_WIDTH, PITCH_HEIGHT,
   GOAL_WIDTH, GOAL_DEPTH,
-  GOAL_TOP_Y, GOAL_LEFT_X, GOAL_RIGHT_X,
+  GOAL_TOP_Y,
   PENALTY_AREA_WIDTH, PENALTY_AREA_HEIGHT,
   PLAYER_RADIUS, BALL_RADIUS,
+  TILE_W, TILE_H, GRID_COLS, GRID_ROWS,
 } from "../engine/constants";
-
-interface PendingCommand {
-  playerId: string;
-  command: Command;
-}
+import { posToTile, getAdjacentTiles, isAdjacentOrSame, tileToPos } from "../engine/grid";
 
 interface Props {
   frame: FrameSnapshot | null;
   playerTeam: TeamConfig;
+  aiTeamColor?: string;
+  aiTeamSecondaryColor?: string;
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
+  selectedAction: "move" | "pass" | "shoot" | null;
   phase: "planning" | "simulating" | "finished";
   onPlayerClick: (playerId: string, pos: Vec2) => void;
   onPitchClick: (pos: Vec2) => void;
@@ -29,8 +29,11 @@ interface Props {
 export default function PitchCanvas({
   frame,
   playerTeam,
+  aiTeamColor = "#e53935",
+  aiTeamSecondaryColor = "#ffffff",
   pendingCommands,
   selectedPlayerId,
+  selectedAction,
   phase,
   onPlayerClick,
   onPitchClick,
@@ -42,33 +45,22 @@ export default function PitchCanvas({
 
   const getScale = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return { sx: 1, sy: 1, ox: 0, oy: 0 };
+    if (!canvas) return { sx: 1, sy: 1 };
     const rect = canvas.getBoundingClientRect();
-    const sx = rect.width / PITCH_WIDTH;
-    const sy = rect.height / PITCH_HEIGHT;
-    return { sx, sy, ox: 0, oy: 0 };
+    return { sx: rect.width / PITCH_WIDTH, sy: rect.height / PITCH_HEIGHT };
   }, []);
-
-  const pitchToCanvas = useCallback((pos: Vec2): Vec2 => {
-    const { sx, sy } = getScale();
-    return { x: pos.x * sx, y: pos.y * sy };
-  }, [getScale]);
 
   const canvasToPitch = useCallback((cx: number, cy: number): Vec2 => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
     const { sx, sy } = getScale();
-    return {
-      x: (cx - rect.left) / sx,
-      y: (cy - rect.top) / sy,
-    };
+    return { x: (cx - rect.left) / sx, y: (cy - rect.top) / sy };
   }, [getScale]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -76,7 +68,6 @@ export default function PitchCanvas({
     const H = canvas.height;
     const sx = W / PITCH_WIDTH;
     const sy = H / PITCH_HEIGHT;
-
     const tp = (p: Vec2) => ({ x: p.x * sx, y: p.y * sy });
     const tr = (r: number) => r * Math.min(sx, sy);
 
@@ -104,26 +95,11 @@ export default function PitchCanvas({
     // Field lines
     ctx.strokeStyle = "rgba(255,255,255,0.6)";
     ctx.lineWidth = 1.5;
-
-    // Outer boundary
     ctx.strokeRect(0, 0, W, H);
-
-    // Center line
-    ctx.beginPath();
-    ctx.moveTo(W / 2, 0);
-    ctx.lineTo(W / 2, H);
-    ctx.stroke();
-
-    // Center circle
-    ctx.beginPath();
-    ctx.arc(W / 2, H / 2, tr(55), 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Center dot
-    ctx.beginPath();
-    ctx.arc(W / 2, H / 2, tr(3), 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.fill();
+    ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(55), 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(3), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fill();
 
     // Penalty areas
     const paW = PENALTY_AREA_WIDTH * sx;
@@ -139,12 +115,10 @@ export default function PitchCanvas({
     ctx.fillStyle = "rgba(255,255,255,0.15)";
     ctx.strokeStyle = "rgba(255,255,255,0.8)";
     ctx.lineWidth = 2;
-    ctx.fillRect(0, goalY, goalD, goalW);
-    ctx.strokeRect(0, goalY, goalD, goalW);
-    ctx.fillRect(W - goalD, goalY, goalD, goalW);
-    ctx.strokeRect(W - goalD, goalY, goalD, goalW);
+    ctx.fillRect(0, goalY, goalD, goalW); ctx.strokeRect(0, goalY, goalD, goalW);
+    ctx.fillRect(W - goalD, goalY, goalD, goalW); ctx.strokeRect(W - goalD, goalY, goalD, goalW);
 
-    // Pressure map overlay
+    // Pressure heatmap
     if (showPressure && aiPositions) {
       for (let ix = 0; ix < W; ix += 12) {
         for (let iy = 0; iy < H; iy += 12) {
@@ -160,6 +134,42 @@ export default function PitchCanvas({
       }
     }
 
+    // TILE GRID — only in move mode
+    const selectedPlayer = selectedPlayerId ? frame.players.find(p => p.id === selectedPlayerId) : null;
+    if (phase === "planning" && selectedAction === "move" && selectedPlayer) {
+      const pt = posToTile(selectedPlayer.position);
+      const adjTiles = getAdjacentTiles(pt.col, pt.row);
+      const adjSet = new Set(adjTiles.map(t => `${t.col},${t.row}`));
+
+      for (let col = 0; col < GRID_COLS; col++) {
+        for (let row = 0; row < GRID_ROWS; row++) {
+          const tx = col * TILE_W * sx;
+          const ty = row * TILE_H * sy;
+          const tw = TILE_W * sx;
+          const th = TILE_H * sy;
+          const key = `${col},${row}`;
+          const isAdj = adjSet.has(key);
+          const isCurrent = col === pt.col && row === pt.row;
+
+          if (isCurrent) {
+            ctx.fillStyle = "rgba(255,220,0,0.25)";
+            ctx.fillRect(tx, ty, tw, th);
+          } else if (isAdj) {
+            ctx.fillStyle = "rgba(0,230,118,0.22)";
+            ctx.fillRect(tx, ty, tw, th);
+          }
+
+          ctx.strokeStyle = isAdj
+            ? "rgba(0,230,118,0.6)"
+            : isCurrent
+            ? "rgba(255,220,0,0.7)"
+            : "rgba(255,255,255,0.08)";
+          ctx.lineWidth = isAdj || isCurrent ? 1.5 : 0.5;
+          ctx.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
+        }
+      }
+    }
+
     // Command arrows & ghost positions
     if (phase === "planning") {
       pendingCommands.forEach((cmd, playerId) => {
@@ -169,33 +179,22 @@ export default function PitchCanvas({
 
         if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
-          ctx.globalAlpha = 0.4;
-          ctx.strokeStyle = playerFrame.teamId === "player" ? "#00e676" : "#ff5252";
-          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.45;
+          ctx.strokeStyle = "#00e676";
+          ctx.lineWidth = 2;
           ctx.setLineDash([5, 4]);
-          ctx.beginPath();
-          ctx.moveTo(from.x, from.y);
-          ctx.lineTo(to.x, to.y);
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
-
-          ctx.globalAlpha = 0.5;
-          ctx.strokeStyle = playerFrame.teamId === "player" ? "#00e676" : "#ff5252";
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.arc(to.x, to.y, tr(PLAYER_RADIUS), 0, Math.PI * 2);
-          ctx.stroke();
+          ctx.globalAlpha = 0.55;
+          ctx.beginPath(); ctx.arc(to.x, to.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
         } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
-          ctx.globalAlpha = 0.6;
+          ctx.globalAlpha = 0.7;
           ctx.strokeStyle = "#ffeb3b";
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 2.5;
           ctx.setLineDash([6, 4]);
-          ctx.beginPath();
-          ctx.moveTo(from.x, from.y);
-          ctx.lineTo(to.x, to.y);
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
         } else if (cmd.type === CommandType.SHOOT) {
@@ -203,10 +202,7 @@ export default function PitchCanvas({
           ctx.strokeStyle = "#ff6b35";
           ctx.lineWidth = 2.5;
           ctx.setLineDash([8, 4]);
-          ctx.beginPath();
-          ctx.moveTo(from.x, from.y);
-          ctx.lineTo(W, H / 2);
-          ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(W, H / 2); ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
         }
@@ -218,33 +214,34 @@ export default function PitchCanvas({
       const pos = tp(p.position);
       const isPlayerTeam = p.teamId === "player";
       const isSelected = p.id === selectedPlayerId;
+      const isGK = p.role === "goalkeeper";
 
-      const baseColor = isPlayerTeam ? playerTeam.jerseyColor : "#e53935";
-      const secondaryColor = isPlayerTeam ? playerTeam.secondaryColor : "#ffffff";
+      const baseColor = isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor;
+      const secColor = isPlayerTeam ? playerTeam.secondaryColor : aiTeamSecondaryColor;
 
-      // Glow for selected
       if (isSelected && phase === "planning") {
         ctx.shadowColor = "#00e676";
-        ctx.shadowBlur = 16;
+        ctx.shadowBlur = 18;
       }
 
-      // Player circle
+      // GK gets a slightly larger circle with a different border
+      const radius = isGK ? tr(PLAYER_RADIUS + 2) : tr(PLAYER_RADIUS);
+
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, tr(PLAYER_RADIUS), 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
       ctx.fillStyle = baseColor;
       ctx.fill();
 
-      // Stroke
-      ctx.strokeStyle = isSelected ? "#00e676" : secondaryColor;
-      ctx.lineWidth = isSelected ? 2.5 : 1.5;
+      ctx.strokeStyle = isSelected ? "#00e676" : isGK ? "#ffd700" : secColor;
+      ctx.lineWidth = isSelected ? 3 : isGK ? 2.5 : 1.5;
       ctx.stroke();
 
       ctx.shadowBlur = 0;
       ctx.shadowColor = "transparent";
 
       // Jersey number
-      ctx.fillStyle = secondaryColor;
-      ctx.font = `bold ${Math.round(tr(8))}px 'Inter', sans-serif`;
+      ctx.fillStyle = secColor;
+      ctx.font = `bold ${Math.round(tr(7.5))}px 'Inter', sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(String(p.jerseyNumber), pos.x, pos.y);
@@ -253,17 +250,17 @@ export default function PitchCanvas({
       ctx.fillStyle = "rgba(0,0,0,0.75)";
       const nameW = tr(28);
       const nameH = tr(9);
-      ctx.fillRect(pos.x - nameW / 2, pos.y + tr(PLAYER_RADIUS) + tr(2), nameW, nameH);
+      ctx.fillRect(pos.x - nameW / 2, pos.y + radius + tr(2), nameW, nameH);
       ctx.fillStyle = "#ffffff";
-      ctx.font = `${Math.round(tr(6))}px 'Inter', sans-serif`;
-      ctx.fillText(p.name, pos.x, pos.y + tr(PLAYER_RADIUS) + tr(2) + nameH / 2);
+      ctx.font = `${Math.round(tr(5.5))}px 'Inter', sans-serif`;
+      ctx.fillText(p.name, pos.x, pos.y + radius + tr(2) + nameH / 2);
 
-      // Ball control indicator
+      // Ball ownership ring
       if (frame.ball.ownerId === p.id) {
         ctx.strokeStyle = "#ffd700";
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, tr(PLAYER_RADIUS + 4), 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, radius + tr(4), 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -282,9 +279,12 @@ export default function PitchCanvas({
     ctx.shadowBlur = 0;
     ctx.shadowColor = "transparent";
 
-    // Ball velocity trail
+    // Ball trail
     if (phase === "simulating" && (Math.abs(frame.ball.velocity.x) > 20 || Math.abs(frame.ball.velocity.y) > 20)) {
-      const trail = tp({ x: frame.ball.position.x - frame.ball.velocity.x * 0.05, y: frame.ball.position.y - frame.ball.velocity.y * 0.05 });
+      const trail = tp({
+        x: frame.ball.position.x - frame.ball.velocity.x * 0.05,
+        y: frame.ball.position.y - frame.ball.velocity.y * 0.05,
+      });
       const grad = ctx.createLinearGradient(trail.x, trail.y, ballPos.x, ballPos.y);
       grad.addColorStop(0, "rgba(255,255,255,0)");
       grad.addColorStop(1, "rgba(255,255,255,0.4)");
@@ -297,24 +297,43 @@ export default function PitchCanvas({
       ctx.stroke();
       ctx.lineCap = "butt";
     }
-  }, [frame, playerTeam, pendingCommands, selectedPlayerId, phase, showPressure, aiPositions, pitchToCanvas]);
+  }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, selectedAction, phase, showPressure, aiPositions]);
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (phase !== "planning") return;
     const pos = canvasToPitch(e.clientX, e.clientY);
 
+    // Player click detection
     if (frame) {
       for (const p of frame.players) {
         if (p.teamId !== "player") continue;
+        const isGK = p.role === "goalkeeper";
+        const hitRadius = PLAYER_RADIUS + (isGK ? 4 : 2);
         const d = Math.sqrt((p.position.x - pos.x) ** 2 + (p.position.y - pos.y) ** 2);
-        if (d < PLAYER_RADIUS + 6) {
+        if (d < hitRadius + 6) {
           onPlayerClick(p.id, pos);
           return;
         }
       }
     }
-    onPitchClick(pos);
-  }, [phase, frame, canvasToPitch, onPlayerClick, onPitchClick]);
+
+    // Move mode: snap to tile
+    if (selectedAction === "move" && selectedPlayerId && frame) {
+      const selPlayer = frame.players.find(p => p.id === selectedPlayerId);
+      if (selPlayer) {
+        const selTile = posToTile(selPlayer.position);
+        const clickedCol = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(pos.x / TILE_W)));
+        const clickedRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(pos.y / TILE_H)));
+        if (isAdjacentOrSame(clickedCol, clickedRow, selTile.col, selTile.row) &&
+            !(clickedCol === selTile.col && clickedRow === selTile.row)) {
+          onPitchClick(tileToPos(clickedCol, clickedRow));
+          return;
+        }
+      }
+    } else {
+      onPitchClick(pos);
+    }
+  }, [phase, frame, selectedAction, selectedPlayerId, canvasToPitch, onPlayerClick, onPitchClick]);
 
   return (
     <div ref={containerRef} className="w-full h-full relative">

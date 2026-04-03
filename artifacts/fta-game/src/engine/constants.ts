@@ -1,6 +1,11 @@
 export const PITCH_WIDTH = 700;
 export const PITCH_HEIGHT = 460;
 
+export const GRID_COLS = 10;
+export const GRID_ROWS = 7;
+export const TILE_W = PITCH_WIDTH / GRID_COLS;
+export const TILE_H = PITCH_HEIGHT / GRID_ROWS;
+
 export const GOAL_WIDTH = 80;
 export const GOAL_DEPTH = 20;
 
@@ -20,8 +25,8 @@ export const BALL_RADIUS = 8;
 export const PLAYER_RADIUS = 14;
 
 export const PLAYER_CONTROL_RADIUS = 20;
-export const INTERCEPTION_RADIUS = 22;
-export const CONTEST_RADIUS = 24;
+export const INTERCEPTION_RADIUS = 24;
+export const CONTEST_RADIUS = 26;
 
 export const BALL_FRICTION = 0.97;
 export const PASS_SPEED = 280;
@@ -37,10 +42,15 @@ export const SPEED_STAT_MULTIPLIER = 4.5;
 export const ACCELERATION = 400;
 export const TURNING_COST = 0.3;
 
-export const AI_SHOT_RANGE = 180;
-export const AI_PASS_SAFE_DISTANCE = 120;
+// GK zone: cols 0-1 for player team, cols 8-9 for AI
+export const GK_ZONE_COLS = 2;
 
-export const MATCH_TURNS = 12;
+export const GOALS_TO_WIN = 3;
+export const MAX_MATCH_TURNS = 30;
+export const PLAYERS_PER_TEAM = 5;
+
+export const AI_SHOT_RANGE = 200;
+export const AI_PASS_SAFE_DISTANCE = 120;
 
 export const ARENAS = ["bronze", "silver", "gold", "elite"] as const;
 export const WINS_TO_PROMOTE = 3;
