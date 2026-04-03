@@ -142,6 +142,7 @@ export function runSimulation(
     updateBallPhysics(simBall, DELTA);
     detectAndResolveEvents(simPlayers, simBall, tick, tickEvents, rng, passTracker);
     constrainToField(simPlayers, simBall);
+    separateOverlapping(simPlayers, simBall);
 
     const goalResult = checkGoal(simBall);
     if (goalResult) {
@@ -221,7 +222,57 @@ export function runSimulation(
     }
   }
 
+  // CRITICAL: Patch the last frame so the next turn inherits post-separation positions.
+  // Without this, finishSimulation() reads pre-separation positions from the last frame
+  // and two players start the next turn on the same tile despite all separation work.
+  if (frames.length > 0) {
+    const lastF = frames[frames.length - 1];
+    frames[frames.length - 1] = {
+      ...lastF,
+      players: lastF.players.map(fp => {
+        const sp = simPlayers.find(p => p.id === fp.id);
+        return sp ? { ...fp, position: { ...sp.position } } : fp;
+      }),
+    };
+  }
+
   return { frames, events: allEvents };
+}
+
+// Push overlapping players apart at the pixel level every tick.
+// Ball owner is never displaced; the other player takes the full push.
+function separateOverlapping(players: SimPlayer[], ball: SimBall): void {
+  const minDist = PLAYER_RADIUS * 2.4;
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      const a = players[i];
+      const b = players[j];
+      const dx = b.position.x - a.position.x;
+      const dy = b.position.y - a.position.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist >= minDist) continue;
+      const aOwns = a.id === ball.ownerId;
+      const bOwns = b.id === ball.ownerId;
+      const overlap = dist > 0.01 ? (minDist - dist) : minDist;
+      const nx = dist > 0.01 ? dx / dist : 0;
+      const ny = dist > 0.01 ? dy / dist : 1;
+      if (aOwns) {
+        // Only push B
+        b.position.x += nx * overlap;
+        b.position.y += ny * overlap;
+      } else if (bOwns) {
+        // Only push A
+        a.position.x -= nx * overlap;
+        a.position.y -= ny * overlap;
+      } else {
+        // Push both equally
+        a.position.x -= nx * overlap * 0.5;
+        a.position.y -= ny * overlap * 0.5;
+        b.position.x += nx * overlap * 0.5;
+        b.position.y += ny * overlap * 0.5;
+      }
+    }
+  }
 }
 
 function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events: GameEvent[]): FrameSnapshot {
