@@ -164,19 +164,6 @@ export const AI_TEAMS: AITeamDef[] = [
   },
 ];
 
-// Order: easiest first, hardest last
-const SCHEDULE_ORDER = [
-  "rooksville_fc",
-  "the_underdogs",
-  "coastal_fc",
-  "northern_wolves",
-  "river_phoenix",
-  "silver_city",
-  "fc_ironforge",
-  "the_vanguard",
-  "titanium_fc",
-];
-
 /**
  * Build a round-robin schedule for an ODD number of teams using the circle/polygon method.
  * With N teams (N odd) there are N rounds, each with (N-1)/2 matches.
@@ -220,12 +207,14 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
 
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
   const seed = Date.now() % 999999;
+  const scheduleSeed = seed ^ 0x5f3759df;
   const teams: LeagueTeamEntry[] = [
     { id: playerTeamId, name: playerTeamName, tier: 2, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     ...AI_TEAMS.map(t => ({ id: t.id, name: t.name, tier: t.tier, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 })),
   ];
 
-  const schedule: ScheduledMatch[] = SCHEDULE_ORDER.map((id, idx) => {
+  const aiOrder = shuffle(AI_TEAMS.map(t => t.id), scheduleSeed);
+  const schedule: ScheduledMatch[] = aiOrder.map((id, idx) => {
     const team = AI_TEAMS.find(t => t.id === id)!;
     return { opponentId: id, opponentName: team.name, played: false, playerGoals: 0, opponentGoals: 0, isHome: idx % 2 === 0 };
   });
@@ -349,7 +338,7 @@ export function migrateLeague(state: LeagueState): LeagueState {
   if (state.aiSchedule && state.aiSchedule.length === 36) return state;
 
   const aiIds = AI_TEAMS.map(t => t.id);
-  const matchdays = buildRoundRobinMatchdays(aiIds, state.currentMatchIndex + state.aiMatchIndex + 1);
+  const matchdays = buildRoundRobinMatchdays(aiIds, (state.aiMatchIndex ?? 0) + state.currentMatchIndex + 1);
   const aiSchedule: [string, string][] = matchdays.flat();
 
   const estimatedDone = Math.min((state.aiMatchIndex ?? state.currentMatchIndex * 4), aiSchedule.length);
