@@ -592,11 +592,11 @@ function tier2Possession(
     // Pass forward if good opportunity (slightly less eager than Tier 1)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 5);
     if (fwdTarget && !hardPressed) {
-      // 25% chance: "pass-to-tile" — coordinate runner + aimed pass
+      // 85% chance: "pass-to-tile" — coordinate runner + aimed pass
       const runnerTile = posToTile(fwdTarget.position);
       const runnerReach = speedToTiles(fwdTarget.stats.speed);
       const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
-      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.75) {
+      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.85) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
       }
@@ -711,7 +711,7 @@ function tier3Possession(
       if (anyTarget) {
         const rTile = posToTile(anyTarget.position);
         const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(anyTarget.stats.speed)), row: rTile.row };
-        if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
+        if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
           planRef.current = { runnerId: anyTarget.id, runTile: fTile };
           return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
         }
@@ -734,7 +734,7 @@ function tier3Possession(
     if (closeTeammate && Math.random() < 0.15) {
       const rTile = posToTile(closeTeammate.position);
       const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
-      if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
+      if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
         planRef.current = { runnerId: closeTeammate.id, runTile: fTile };
         return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
       }
