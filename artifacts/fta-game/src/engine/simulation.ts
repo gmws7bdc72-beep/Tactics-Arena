@@ -540,19 +540,23 @@ function executePass(player: SimPlayer, ball: SimBall, rng: () => number): void 
   const distPx = vec2Dist(ball.position, targetPos);
   const distTiles = distPx / TILE_W;
 
-  const accuracy = computePassAccuracy(player, distTiles);
   let dir = rawDir;
 
-  if (rng() > accuracy) {
-    // Inaccurate pass: deviate the direction by a random angle
-    const maxDeviation = Math.PI * 0.35 * (1 - accuracy);
-    const angle = (rng() * 2 - 1) * maxDeviation;
-    const cos_a = Math.cos(angle);
-    const sin_a = Math.sin(angle);
-    dir = {
-      x: dir.x * cos_a - dir.y * sin_a,
-      y: dir.x * sin_a + dir.y * cos_a,
-    };
+  // Coordinated (pass-to-tile) plays are pre-planned — the ball must arrive at the
+  // exact announced tile, so skip accuracy deviation entirely.
+  if (!cmd.coordinated) {
+    const accuracy = computePassAccuracy(player, distTiles);
+    if (rng() > accuracy) {
+      // Inaccurate pass: deviate the direction by a random angle
+      const maxDeviation = Math.PI * 0.35 * (1 - accuracy);
+      const angle = (rng() * 2 - 1) * maxDeviation;
+      const cos_a = Math.cos(angle);
+      const sin_a = Math.sin(angle);
+      dir = {
+        x: dir.x * cos_a - dir.y * sin_a,
+        y: dir.x * sin_a + dir.y * cos_a,
+      };
+    }
   }
 
   ball.velocity = vec2Scale(dir, passSpd);

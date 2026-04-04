@@ -446,7 +446,7 @@ function tier1Possession(
       };
       if (planRef && runTile.col < runnerTile.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -474,7 +474,7 @@ function tier1Possession(
       const runTile2: TilePos = { col: Math.max(0, runnerTile2.col - speedToTiles(fwdTarget.stats.speed)), row: runnerTile2.row };
       if (planRef && runTile2.col < runnerTile2.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile: runTile2 };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row) };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -598,7 +598,7 @@ function tier2Possession(
       const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
       if (planRef && runTile.col < runnerTile.col && Math.random() < 0.75) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -713,7 +713,7 @@ function tier3Possession(
         const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(anyTarget.stats.speed)), row: rTile.row };
         if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
           planRef.current = { runnerId: anyTarget.id, runTile: fTile };
-          return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: tileToPos(fTile.col, fTile.row) };
+          return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
         }
         return passTo(anyTarget, player.position);
       }
@@ -736,7 +736,7 @@ function tier3Possession(
       const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
       if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
         planRef.current = { runnerId: closeTeammate.id, runTile: fTile };
-        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: tileToPos(fTile.col, fTile.row) };
+        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
       }
       return passTo(closeTeammate, player.position);
     }

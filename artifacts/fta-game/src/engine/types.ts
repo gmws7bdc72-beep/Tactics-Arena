@@ -29,6 +29,9 @@ export interface Command {
   targetPosition?: Vec2;
   targetPlayerId?: string;
   followUp?: Command;
+  /** When true the pass is a planned coordinated play — skip accuracy deviation so
+   *  the ball lands exactly on the announced tile, matching the runner's move target. */
+  coordinated?: boolean;
 }
 
 export interface PlayerStats {
