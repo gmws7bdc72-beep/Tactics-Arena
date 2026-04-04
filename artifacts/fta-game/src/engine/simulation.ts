@@ -4,9 +4,9 @@ import {
   PITCH_WIDTH, PITCH_HEIGHT, DELTA, TICKS_PER_TURN,
   BALL_FRICTION, PASS_SPEED, SHOT_SPEED,
   PASS_WIND_UP, PASS_RECOVERY, SHOT_WIND_UP, SHOT_RECOVERY,
-  INTERCEPTION_RADIUS, CONTEST_RADIUS,
+  INTERCEPTION_RADIUS,
   GOAL_WIDTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, GOAL_LEFT_X, GOAL_RIGHT_X, GOAL_DEPTH,
-  PLAYER_RADIUS, TILE_W,
+  PLAYER_RADIUS, TILE_W, TILE_H,
   GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX,
   getLinearPixelSpeed,
 } from "./constants";
@@ -681,46 +681,43 @@ function detectAndResolveEvents(
     passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
 
     const owner = players.find(p => p.id === ball.ownerId)!;
+    const ownerTileX = Math.floor(owner.position.x / TILE_W);
+    const ownerTileY = Math.floor(owner.position.y / TILE_H);
+
     for (const other of players) {
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
-      const dist = vec2Dist(other.position, ball.position);
-      if (dist < CONTEST_RADIUS && other.state !== PlayerState.RECOVERING && other.state !== PlayerState.CONTESTING) {
-        // Momentum: fast-moving defender charging in is harder to hold off;
-        // ball carrier in full stride shields better.
-        const defMomentum = Math.min(0.1, vec2Len(other.velocity) / 400 * 0.1);
-        const atkMomentum = Math.min(0.1, vec2Len(owner.velocity) / 400 * 0.1);
-        // Center at 0.5 so even a weak defender can tackle a strong carrier ~25% of
-        // the time; each stat point is worth 0.04 and random spread is ±0.38
-        const attackerScore = 0.5 + (owner.stats.attack - 5) * 0.04 + rng() * 0.38 + atkMomentum;
-        let defenderScore = 0.5 + (other.stats.defense - 5) * 0.04 + rng() * 0.38 + defMomentum;
-        if (other.ability === "iron_tackle") defenderScore += 0.2;
-        if (other.ability === "powerhouse") defenderScore += 0.2;
-        if (other.ability === "goalkeeper") defenderScore += 0.12;
-        if (other.ability === "shadow_mark") {
-          defenderScore += 0.1;
-          owner.velocity = vec2Scale(owner.velocity, 0.6);
-        }
-        let effectiveAttacker = attackerScore;
-        if (owner.ability === "powerhouse") effectiveAttacker += 0.2;
-        if (owner.ability === "ghost_run") effectiveAttacker += 0.15;
+      if (other.state === PlayerState.RECOVERING || other.state === PlayerState.CONTESTING) continue;
 
-        if (defenderScore > effectiveAttacker) {
-          ball.ownerId = other.id;
-          ball.velocity = { x: 0, y: 0 };
-          other.state = PlayerState.DRIBBLING;
-          other.command = null;
-          other.commandExecuted = false;
-          owner.state = PlayerState.RECOVERING;
-          owner.recoveryTimer = 1.0;
-          retreatFrom(owner, other);
-          events.push({ type: GameEventType.TACKLE, tick, playerId: other.id, targetId: owner.id, teamId: other.teamId, message: `${other.name} tackles ${owner.name}!` });
-        } else {
-          other.state = PlayerState.CONTESTING;
-          other.stateTimer = 0.3;
-          events.push({ type: GameEventType.LOOSE_BALL, tick, playerId: owner.id, teamId: owner.teamId, message: `${owner.name} holds off ${other.name}` });
-        }
-        break;
+      // Tackle only fires when the defender physically crosses through the carrier's tile
+      const defTileX = Math.floor(other.position.x / TILE_W);
+      const defTileY = Math.floor(other.position.y / TILE_H);
+      if (defTileX !== ownerTileX || defTileY !== ownerTileY) continue;
+      // Must be actively running through — not just standing in the same tile
+      if (vec2Len(other.velocity) < 50) continue;
+
+      // Retention chance: carrier's defense stat vs their own attack stat.
+      // score <= 0 → defender takes ball automatically.
+      // score > 0  → carrier keeps ball with (score × 20%) chance, capped at 100%.
+      const score = owner.stats.defense - owner.stats.attack;
+      const keepChance = score > 0 ? Math.min(1.0, score * 0.20) : 0;
+      const carrierKeepsBall = rng() < keepChance;
+
+      if (carrierKeepsBall) {
+        other.state = PlayerState.CONTESTING;
+        other.stateTimer = 0.3;
+        events.push({ type: GameEventType.LOOSE_BALL, tick, playerId: owner.id, teamId: owner.teamId, message: `${owner.name} holds off ${other.name}` });
+      } else {
+        ball.ownerId = other.id;
+        ball.velocity = { x: 0, y: 0 };
+        other.state = PlayerState.DRIBBLING;
+        other.command = null;
+        other.commandExecuted = false;
+        owner.state = PlayerState.RECOVERING;
+        owner.recoveryTimer = 1.0;
+        retreatFrom(owner, other);
+        events.push({ type: GameEventType.TACKLE, tick, playerId: other.id, targetId: owner.id, teamId: other.teamId, message: `${other.name} tackles ${owner.name}!` });
       }
+      break;
     }
   }
 }
