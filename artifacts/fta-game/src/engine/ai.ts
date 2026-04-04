@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2 } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX } from "./constants";
+import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -129,17 +129,66 @@ function shoot(): Command {
   return { type: CommandType.SHOOT };
 }
 
-function passTo(target: SimPlayer): Command {
-  return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } };
+/**
+ * Lead-pass intercept: find where to aim the ball so it meets a moving receiver.
+ *
+ * We solve for time t > 0 where the ball (starting at ballPos, speed S) reaches
+ * the receiver's predicted position (targetPos + targetVel * t):
+ *
+ *   ||targetPos + targetVel·t − ballPos||² = (S·t)²
+ *
+ * Expanding with d = targetPos − ballPos:
+ *   (|targetVel|² − S²)·t² + 2(d·targetVel)·t + |d|² = 0
+ *
+ * Since S >> |targetVel|, the coefficient a is negative so discriminant is always
+ * positive and one root is always positive. We take the smallest positive root.
+ * Falls back to current position on any degenerate case.
+ */
+function leadPassTarget(ballPos: Vec2, target: SimPlayer): Vec2 {
+  const dx = target.position.x - ballPos.x;
+  const dy = target.position.y - ballPos.y;
+  const vx = target.velocity.x;
+  const vy = target.velocity.y;
+  const S  = PASS_SPEED;
+
+  const a = vx * vx + vy * vy - S * S;
+  const b = 2 * (dx * vx + dy * vy);
+  const c = dx * dx + dy * dy;
+
+  // When target is stationary, skip the quadratic and use current pos
+  if (Math.abs(a + S * S) < 1) return { ...target.position };
+
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return { ...target.position };
+
+  const sqrtDisc = Math.sqrt(disc);
+  const t1 = (-b + sqrtDisc) / (2 * a);
+  const t2 = (-b - sqrtDisc) / (2 * a);
+
+  let t = Infinity;
+  if (t1 > 0.01) t = Math.min(t, t1);
+  if (t2 > 0.01) t = Math.min(t, t2);
+  if (!isFinite(t)) return { ...target.position };
+
+  return {
+    x: Math.max(0, Math.min(PITCH_WIDTH,  target.position.x + vx * t)),
+    y: Math.max(0, Math.min(PITCH_HEIGHT, target.position.y + vy * t)),
+  };
+}
+
+function passTo(target: SimPlayer, ballPos?: Vec2): Command {
+  const aimPos = ballPos ? leadPassTarget(ballPos, target) : { ...target.position };
+  return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: aimPos };
 }
 
 // Pass and immediately run into space after — a "pass and run" combo command.
 // The carrier passes to `target` then moves to `runTile`.
-function passAndRun(target: SimPlayer, runTile: TilePos): Command {
+function passAndRun(target: SimPlayer, runTile: TilePos, ballPos?: Vec2): Command {
+  const aimPos = ballPos ? leadPassTarget(ballPos, target) : { ...target.position };
   return {
     type: CommandType.PASS,
     targetPlayerId: target.id,
-    targetPosition: { ...target.position },
+    targetPosition: aimPos,
     followUp: { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) },
   };
 }
@@ -355,9 +404,9 @@ function tier1Possession(
     if (hasBall) {
       // GK must distribute — always pass out to an outfield player
       const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-      if (fwdTarget) return passTo(fwdTarget);
+      if (fwdTarget) return passTo(fwdTarget, player.position);
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
-      if (anyTarget) return passTo(anyTarget);
+      if (anyTarget) return passTo(anyTarget, player.position);
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
     const gkRow = Math.max(2, Math.min(4, ballTile.row));
@@ -379,9 +428,9 @@ function tier1Possession(
       // 40% chance: pass-and-run — immediately move into space after passing
       if (Math.random() < 0.4) {
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile);
+        return passAndRun(fwdTarget, runTile, player.position);
       }
-      return passTo(fwdTarget);
+      return passTo(fwdTarget, player.position);
     }
 
     // Under pressure: lateral or backward pass (switch play)
@@ -391,23 +440,23 @@ function tier1Possession(
       if (latTarget) {
         if (Math.random() < 0.3) {
           const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-          return passAndRun(latTarget, runTile);
+          return passAndRun(latTarget, runTile, player.position);
         }
-        return passTo(latTarget);
+        return passTo(latTarget, player.position);
       }
 
       // Backward recycle — keep possession
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
-      if (bkTarget) return passTo(bkTarget);
+      if (bkTarget) return passTo(bkTarget, player.position);
     }
 
     // 4. Forward pass even from moderate distance when not blocked
     if (fwdTarget) {
       if (Math.random() < 0.4) {
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile);
+        return passAndRun(fwdTarget, runTile, player.position);
       }
-      return passTo(fwdTarget);
+      return passTo(fwdTarget, player.position);
     }
 
     // 5. Dribble only when route is clear
@@ -420,7 +469,7 @@ function tier1Possession(
 
     // 6. Last resort: any open teammate
     const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
-    if (anyTarget) return passTo(anyTarget);
+    if (anyTarget) return passTo(anyTarget, player.position);
 
     // Sidestep to create angle
     const sideRow = pt.row < 3 ? pt.row + 2 : pt.row - 2;
@@ -505,9 +554,9 @@ function tier2Possession(
   if (player.role === "goalkeeper") {
     if (hasBall) {
       const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-      if (fwdTarget) return passTo(fwdTarget);
+      if (fwdTarget) return passTo(fwdTarget, player.position);
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
-      if (anyTarget) return passTo(anyTarget);
+      if (anyTarget) return passTo(anyTarget, player.position);
     }
     return stayPut({ col: 9, row: 3 });
   }
@@ -525,18 +574,18 @@ function tier2Possession(
       // 20% chance: pass-and-run — move into space after passing
       if (Math.random() < 0.2) {
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile);
+        return passAndRun(fwdTarget, runTile, player.position);
       }
-      return passTo(fwdTarget);
+      return passTo(fwdTarget, player.position);
     }
 
     // If pressed, look for any lateral/forward release
     if (hardPressed) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
-      if (latTarget) return passTo(latTarget);
+      if (latTarget) return passTo(latTarget, player.position);
       // Rarely goes backward — prefers to hold
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 4);
-      if (bkTarget && Math.random() < 0.5) return passTo(bkTarget);
+      if (bkTarget && Math.random() < 0.5) return passTo(bkTarget, player.position);
     }
 
     // Dribble forward if route is clear
@@ -548,9 +597,9 @@ function tier2Possession(
     if (fwdTarget) {
       if (Math.random() < 0.2) {
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile);
+        return passAndRun(fwdTarget, runTile, player.position);
       }
-      return passTo(fwdTarget);
+      return passTo(fwdTarget, player.position);
     }
     const sideRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
@@ -634,7 +683,7 @@ function tier3Possession(
     if (hasBall) {
       // Tier 3 GK just boots it to anyone
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
-      if (anyTarget) return passTo(anyTarget);
+      if (anyTarget) return passTo(anyTarget, player.position);
     }
     return stayPut({ col: 9, row: 3 });
   }
@@ -649,7 +698,7 @@ function tier3Possession(
       p.role !== "goalkeeper" &&
       tileDist(posToTile(p.position), pt) <= 2
     );
-    if (closeTeammate && Math.random() < 0.15) return passTo(closeTeammate);
+    if (closeTeammate && Math.random() < 0.15) return passTo(closeTeammate, player.position);
 
     // Just dribble forward — very predictable
     return moveStep(player, pt, { col: pt.col - 1, row: pt.row }, claimed, friendly);
