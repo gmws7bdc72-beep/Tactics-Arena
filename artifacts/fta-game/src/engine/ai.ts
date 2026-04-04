@@ -133,6 +133,36 @@ function passTo(target: SimPlayer): Command {
   return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } };
 }
 
+// Pass and immediately run into space after — a "pass and run" combo command.
+// The carrier passes to `target` then moves to `runTile`.
+function passAndRun(target: SimPlayer, runTile: TilePos): Command {
+  return {
+    type: CommandType.PASS,
+    targetPlayerId: target.id,
+    targetPosition: { ...target.position },
+    followUp: { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) },
+  };
+}
+
+// Pick a sensible "run into space" tile for the carrier after they pass.
+// Tries to move into a gap 1-2 tiles ahead and to the side for a return pass.
+function pickRunAfterPassTile(_carrier: SimPlayer, pt: TilePos, opponents: SimPlayer[]): TilePos {
+  const candidates: TilePos[] = [
+    { col: pt.col - 1, row: pt.row },
+    { col: pt.col - 1, row: Math.max(0, pt.row - 1) },
+    { col: pt.col - 1, row: Math.min(6, pt.row + 1) },
+    { col: pt.col,     row: Math.max(0, pt.row - 1) },
+    { col: pt.col,     row: Math.min(6, pt.row + 1) },
+    { col: pt.col - 2, row: pt.row },
+  ];
+  // Prefer tiles not near opponents
+  const safe = candidates.filter(t =>
+    t.col >= 0 && t.col <= 9 &&
+    !isThreatened(t, opponents)
+  );
+  return (safe.length > 0 ? safe[0] : candidates[0]) ?? pt;
+}
+
 // ─── Tactical assessment helpers ─────────────────────────────────────────────
 
 // Is this tile directly threatened (opponent within 1 tile)?
@@ -346,6 +376,11 @@ function tier1Possession(
     // Forward pass — primary option (always look for it)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
     if (fwdTarget && !hardPressed) {
+      // 40% chance: pass-and-run — immediately move into space after passing
+      if (Math.random() < 0.4) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, runTile);
+      }
       return passTo(fwdTarget);
     }
 
@@ -353,7 +388,13 @@ function tier1Possession(
     if (hardPressed || fwdBlocked) {
       // Lateral switch — spreads the play
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
-      if (latTarget) return passTo(latTarget);
+      if (latTarget) {
+        if (Math.random() < 0.3) {
+          const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+          return passAndRun(latTarget, runTile);
+        }
+        return passTo(latTarget);
+      }
 
       // Backward recycle — keep possession
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
@@ -361,7 +402,13 @@ function tier1Possession(
     }
 
     // 4. Forward pass even from moderate distance when not blocked
-    if (fwdTarget) return passTo(fwdTarget);
+    if (fwdTarget) {
+      if (Math.random() < 0.4) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, runTile);
+      }
+      return passTo(fwdTarget);
+    }
 
     // 5. Dribble only when route is clear
     if (!fwdBlocked && !hardPressed) {
@@ -474,7 +521,14 @@ function tier2Possession(
 
     // Pass forward if good opportunity (slightly less eager than Tier 1)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 5);
-    if (fwdTarget && !hardPressed) return passTo(fwdTarget);
+    if (fwdTarget && !hardPressed) {
+      // 20% chance: pass-and-run — move into space after passing
+      if (Math.random() < 0.2) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, runTile);
+      }
+      return passTo(fwdTarget);
+    }
 
     // If pressed, look for any lateral/forward release
     if (hardPressed) {
@@ -491,7 +545,13 @@ function tier2Possession(
     }
 
     // Blocked: try to pass or sidestep
-    if (fwdTarget) return passTo(fwdTarget);
+    if (fwdTarget) {
+      if (Math.random() < 0.2) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, runTile);
+      }
+      return passTo(fwdTarget);
+    }
     const sideRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
   }

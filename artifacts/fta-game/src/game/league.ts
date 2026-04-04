@@ -177,6 +177,36 @@ const SCHEDULE_ORDER = [
   "titanium_fc",
 ];
 
+/**
+ * Build a round-robin schedule for an ODD number of teams using the circle/polygon method.
+ * With N teams (N odd) there are N rounds, each with (N-1)/2 matches.
+ * One team has a bye each round; every pair of teams meets exactly once.
+ * Returns an array of rounds; each round is an array of [homeId, awayId] pairs.
+ */
+function buildRoundRobinMatchdays(ids: string[]): [string, string][][] {
+  const n = ids.length; // must be odd (9)
+  // Fix a "dummy" (null) at slot 0; rotate the n real teams.
+  const rounds: [string, string][][] = [];
+  for (let r = 0; r < n; r++) {
+    const round: [string, string][] = [];
+    // Build the 10-slot circle: slot 0 = null, slots 1..n = rotated ids
+    const slots: (string | null)[] = [null];
+    for (let i = 0; i < n; i++) {
+      slots.push(ids[(r + i) % n]);
+    }
+    // Pair slot i with slot (n - i) for i = 0 .. floor(n/2)
+    for (let i = 0; i <= Math.floor(n / 2); i++) {
+      const a = slots[i];
+      const b = slots[n - i];
+      if (a !== null && b !== null) {
+        round.push([a, b]);
+      }
+    }
+    rounds.push(round);
+  }
+  return rounds;
+}
+
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
   const teams: LeagueTeamEntry[] = [
     { id: playerTeamId, name: playerTeamName, tier: 2, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
@@ -188,23 +218,17 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     return { opponentId: id, opponentName: team.name, played: false, playerGoals: 0, opponentGoals: 0, isHome: idx % 2 === 0 };
   });
 
-  // Pre-compute all C(9,2)=36 AI-vs-AI pairs and shuffle them.
-  // Processed 4-per-player-match → 9×4=36 so every team plays every other exactly once.
+  // Build a proper round-robin schedule for the 9 AI teams.
+  // 9 rounds (one per player matchday), 4 games per round.
+  // Each AI team plays exactly once per round (no team gets 2 games in one matchday).
   const aiIds = AI_TEAMS.map(t => t.id);
-  const allAIPairs: [string, string][] = [];
-  for (let i = 0; i < aiIds.length; i++) {
-    for (let j = i + 1; j < aiIds.length; j++) {
-      allAIPairs.push([aiIds[i], aiIds[j]]);
-    }
-  }
-  // Seeded Fisher-Yates shuffle for reproducibility
-  const rng = seededRng(Date.now() % 999983);
-  for (let i = allAIPairs.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [allAIPairs[i], allAIPairs[j]] = [allAIPairs[j], allAIPairs[i]];
-  }
+  const matchdays = buildRoundRobinMatchdays(aiIds);
 
-  return { teams, schedule, currentMatchIndex: 0, aiSchedule: allAIPairs, aiMatchIndex: 0 };
+  // Flatten into [round0_pair0, round0_pair1, ..., round8_pair3] — 36 pairs total.
+  // applyMatchResult slices 4 at a time, so each slice is exactly one round.
+  const aiSchedule: [string, string][] = matchdays.flat();
+
+  return { teams, schedule, currentMatchIndex: 0, aiSchedule, aiMatchIndex: 0 };
 }
 
 function seededRng(seed: number): () => number {
@@ -305,29 +329,20 @@ export function applyMatchResult(
 }
 
 /**
- * Migrates a league saved before aiSchedule was introduced.
- * If aiSchedule is missing, generates all 36 AI-vs-AI pairs and sets
- * aiMatchIndex to estimate how many have already been played.
+ * Migrates a league saved before the round-robin aiSchedule was introduced.
+ * Rebuilds the proper matchday schedule and estimates progress from currentMatchIndex.
  */
 export function migrateLeague(state: LeagueState): LeagueState {
-  if (state.aiSchedule && state.aiSchedule.length > 0) return state;
+  // Already has a valid round-robin schedule (36 pairs, no team doubled per round)
+  if (state.aiSchedule && state.aiSchedule.length === 36) return state;
 
   const aiIds = AI_TEAMS.map(t => t.id);
-  const allAIPairs: [string, string][] = [];
-  for (let i = 0; i < aiIds.length; i++) {
-    for (let j = i + 1; j < aiIds.length; j++) {
-      allAIPairs.push([aiIds[i], aiIds[j]]);
-    }
-  }
-  const rng = seededRng(42);
-  for (let i = allAIPairs.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [allAIPairs[i], allAIPairs[j]] = [allAIPairs[j], allAIPairs[i]];
-  }
+  const matchdays = buildRoundRobinMatchdays(aiIds);
+  const aiSchedule: [string, string][] = matchdays.flat();
 
-  // Estimate how many pairs have already been processed: 4 per player match played
-  const estimatedDone = Math.min(state.currentMatchIndex * 4, allAIPairs.length);
-  return { ...state, aiSchedule: allAIPairs, aiMatchIndex: estimatedDone };
+  // Estimate progress: 4 pairs per completed player match
+  const estimatedDone = Math.min(state.currentMatchIndex * 4, aiSchedule.length);
+  return { ...state, aiSchedule, aiMatchIndex: estimatedDone };
 }
 
 export function getLeagueStandings(teams: LeagueTeamEntry[]): LeagueTeamEntry[] {
