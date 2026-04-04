@@ -6,6 +6,16 @@ import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COL
 
 export type AiTier = 1 | 2 | 3;
 
+/**
+ * Carry the "pass-to-tile" decision from the carrier's tier function back to
+ * the main loop, so the designated runner can be given a MOVE override that
+ * sends them to the exact tile the ball is aimed at.
+ */
+interface PassTilePlan {
+  runnerId: string;
+  runTile: TilePos;
+}
+
 // ─── Adaptive AI ─────────────────────────────────────────────────────────────
 
 // Tracks where the AI has conceded goals so it can adjust its defensive shape.
@@ -398,7 +408,8 @@ function tier1Possession(
   playerPlayers: SimPlayer[],
   ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  planRef?: { current: PassTilePlan | null }
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
@@ -425,10 +436,22 @@ function tier1Possession(
     // Forward pass — primary option (always look for it)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
     if (fwdTarget && !hardPressed) {
-      // 40% chance: pass-and-run — immediately move into space after passing
+      // 50% chance: "pass-to-tile" — aim at the tile the runner is headed to,
+      // and simultaneously move the runner there (coordinated run).
+      const runnerTile = posToTile(fwdTarget.position);
+      const runnerReach = speedToTiles(fwdTarget.stats.speed);
+      const runTile: TilePos = {
+        col: Math.max(0, runnerTile.col - runnerReach),
+        row: runnerTile.row,
+      };
+      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.5) {
+        planRef.current = { runnerId: fwdTarget.id, runTile };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
+      }
+      // 40% chance: pass-and-run — carrier moves into space after passing
       if (Math.random() < 0.4) {
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile, player.position);
+        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -452,9 +475,15 @@ function tier1Possession(
 
     // 4. Forward pass even from moderate distance when not blocked
     if (fwdTarget) {
+      const runnerTile2 = posToTile(fwdTarget.position);
+      const runTile2: TilePos = { col: Math.max(0, runnerTile2.col - speedToTiles(fwdTarget.stats.speed)), row: runnerTile2.row };
+      if (planRef && runTile2.col < runnerTile2.col && Math.random() < 0.5) {
+        planRef.current = { runnerId: fwdTarget.id, runTile: runTile2 };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row) };
+      }
       if (Math.random() < 0.4) {
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile, player.position);
+        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -549,7 +578,8 @@ function tier2Possession(
   playerPlayers: SimPlayer[],
   ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  planRef?: { current: PassTilePlan | null }
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
@@ -571,10 +601,18 @@ function tier2Possession(
     // Pass forward if good opportunity (slightly less eager than Tier 1)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 5);
     if (fwdTarget && !hardPressed) {
-      // 20% chance: pass-and-run — move into space after passing
+      // 25% chance: "pass-to-tile" — coordinate runner + aimed pass
+      const runnerTile = posToTile(fwdTarget.position);
+      const runnerReach = speedToTiles(fwdTarget.stats.speed);
+      const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
+      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.25) {
+        planRef.current = { runnerId: fwdTarget.id, runTile };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
+      }
+      // 20% chance: pass-and-run — carrier moves into space after passing
       if (Math.random() < 0.2) {
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile, player.position);
+        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -773,12 +811,19 @@ export function generateAICommands(
   }
 
   // Process in priority order: GK → defenders → midfielders → attackers
-  const sorted = [
-    ...aiPlayers.filter(p => p.role === "goalkeeper"),
-    ...aiPlayers.filter(p => p.role === "defender"),
-    ...aiPlayers.filter(p => p.role === "midfielder"),
-    ...aiPlayers.filter(p => p.role === "forward" || p.role === "striker"),
-  ];
+  // BUT the ball-carrier always goes first so the pass-to-tile plan is
+  // committed before the designated runner's command is generated.
+  const roleOrder = (p: SimPlayer) =>
+    p.role === "goalkeeper" ? 0
+    : p.role === "defender" ? 1
+    : p.role === "midfielder" ? 2
+    : 3;
+
+  const sorted = [...aiPlayers].sort((a, b) => {
+    if (a.id === ball.ownerId) return -1;
+    if (b.id === ball.ownerId) return 1;
+    return roleOrder(a) - roleOrder(b);
+  });
 
   // Loose ball: all players chase at full speed, closest gets first pick of the ball tile
   if (ballIsLoose) {
@@ -792,16 +837,27 @@ export function generateAICommands(
     return commands;
   }
 
+  // Pass-to-tile plan: carrier tier function fills this; runner gets MOVE override.
+  const planRef: { current: PassTilePlan | null } = { current: null };
+
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
+
+    // Runner override: if this player was designated as the "run-to-tile" receiver,
+    // send them straight to that tile instead of their normal off-ball movement.
+    if (!hasBall && planRef.current?.runnerId === player.id) {
+      const { runTile } = planRef.current;
+      commands.set(player.id, { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) });
+      continue;
+    }
 
     let cmd: Command;
 
     if (aiHasBall) {
       switch (tier) {
-        case 1: cmd = tier1Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
-        case 2: cmd = tier2Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
+        case 1: cmd = tier1Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly, planRef); break;
+        case 2: cmd = tier2Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly, planRef); break;
         default: cmd = tier3Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
       }
     } else if (playerHasBall) {
