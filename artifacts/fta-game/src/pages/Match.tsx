@@ -113,6 +113,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const [turnTimer, setTurnTimer] = useState(TURN_TIME);
   const [showGoalBanner, setShowGoalBanner] = useState<"player" | "ai" | null>(null);
 
+  // Combo move+pass state
+  const [comboMoveFirst, setComboMoveFirst] = useState(true);
+  const [comboActive, setComboActive] = useState(false);
+  const [comboStep, setComboStep] = useState<1 | 2>(1);
+  const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(null);
+  const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(null);
+
   const animRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<"planning" | "simulating" | "finished">("planning");
@@ -136,7 +143,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const clearSelection = useCallback(() => {
     setSelectedPlayerId(null);
     setPassTargetMode(false);
+    setComboActive(false);
+    setComboStep(1);
+    setComboStoredMove(null);
+    setComboStoredPass(null);
   }, []);
+
+  const startCombo = useCallback(() => {
+    if (!selectedPlayerId) return;
+    setComboActive(true);
+    setComboStep(1);
+    setComboStoredMove(null);
+    setComboStoredPass(null);
+    setPassTargetMode(comboMoveFirst ? false : true);
+  }, [selectedPlayerId, comboMoveFirst]);
 
   const finishSimulation = useCallback((lastFrame: FrameSnapshot, allNewEvents: GameEvent[]) => {
     const goalEvent = allNewEvents.find(e => e.type === GameEventType.GOAL);
@@ -293,6 +313,30 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const handlePlayerClick = useCallback((playerId: string, _pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
+    // Combo: handle player click as pass target selection
+    if (comboActive && passTargetMode && selectedPlayerId) {
+      const targetFrame = currentFrame.players.find(p => p.id === playerId);
+      if (!targetFrame) return;
+      const passInfo = { targetPlayerId: playerId, targetPosition: { ...targetFrame.position } };
+      if (comboMoveFirst) {
+        // Step 2 of move-first: player picked as pass destination
+        const cmd: Command = {
+          type: CommandType.MOVE,
+          targetPosition: comboStoredMove!,
+          followUp: { type: CommandType.PASS, ...passInfo },
+        };
+        setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+        clearSelection();
+      } else {
+        // Step 1 of pass-first: picked pass target, now need move destination
+        setComboStoredPass(passInfo);
+        setComboStep(2);
+        setPassTargetMode(false);
+      }
+      return;
+    }
+
+    // Normal pass mode
     if (passTargetMode && selectedPlayerId) {
       const targetFrame = currentFrame.players.find(p => p.id === playerId);
       if (!targetFrame) return;
@@ -307,11 +351,52 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     } else {
       setSelectedPlayerId(playerId);
       setPassTargetMode(false);
+      setComboActive(false);
+      setComboStep(1);
+      setComboStoredMove(null);
+      setComboStoredPass(null);
     }
-  }, [passTargetMode, selectedPlayerId, currentFrame, clearSelection]);
+  }, [passTargetMode, selectedPlayerId, currentFrame, clearSelection, comboActive, comboMoveFirst, comboStoredMove]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
+
+    if (comboActive) {
+      if (comboMoveFirst) {
+        if (comboStep === 1) {
+          // Step 1: pick move destination, then need pass target
+          setComboStoredMove(pos);
+          setComboStep(2);
+          setPassTargetMode(true);
+        } else {
+          // Step 2: pass to tile
+          const cmd: Command = {
+            type: CommandType.MOVE,
+            targetPosition: comboStoredMove!,
+            followUp: { type: CommandType.PASS, targetPosition: pos },
+          };
+          setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+          clearSelection();
+        }
+      } else {
+        if (comboStep === 1) {
+          // Step 1 pass-first: pick pass destination (tile), then need move target
+          setComboStoredPass({ targetPosition: pos });
+          setComboStep(2);
+          setPassTargetMode(false);
+        } else {
+          // Step 2 pass-first: pick move destination
+          const cmd: Command = {
+            type: CommandType.PASS,
+            ...comboStoredPass!,
+            followUp: { type: CommandType.MOVE, targetPosition: pos },
+          };
+          setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+          clearSelection();
+        }
+      }
+      return;
+    }
 
     if (passTargetMode) {
       const cmd: Command = { type: CommandType.PASS, targetPosition: pos };
@@ -321,7 +406,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
     clearSelection();
-  }, [selectedPlayerId, passTargetMode, clearSelection]);
+  }, [selectedPlayerId, passTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection]);
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
@@ -408,7 +493,18 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           onTileClick={handleTileClick}
         />
 
-        {passTargetMode && (
+        {/* Combo hint banner */}
+        {comboActive && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <div className="bg-purple-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center whitespace-nowrap">
+              {comboMoveFirst
+                ? comboStep === 1 ? "Combo: tap move destination" : "Combo: tap pass target"
+                : comboStep === 1 ? "Combo: tap pass target" : "Combo: tap move destination"}
+            </div>
+          </div>
+        )}
+
+        {!comboActive && passTargetMode && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-yellow-400/90 text-black text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg">
             Tap tile or teammate to pass
           </div>
@@ -417,7 +513,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
 
       {/* Controls bottom bar */}
       <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.55)" }}>
-        {selectedPlayerId && phase === "planning" && !passTargetMode && (
+        {/* Normal action buttons (no pass target mode, no combo) */}
+        {selectedPlayerId && phase === "planning" && !passTargetMode && !comboActive && (
           <div className="flex gap-2 px-4 pt-2.5">
             <button
               onClick={cancelAction}
@@ -433,6 +530,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
               Pass
             </button>
             <button
+              onClick={startCombo}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
+              style={{ background: "linear-gradient(135deg, #9c27b0, #6a1b9a)" }}
+            >
+              Move+Pass
+            </button>
+            <button
               onClick={setShoot}
               className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
               style={{ background: "#d32f2f" }}
@@ -442,11 +546,44 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           </div>
         )}
 
+        {/* Combo order toggle + cancel (shown when player selected, not yet in combo) */}
+        {selectedPlayerId && phase === "planning" && !passTargetMode && !comboActive && (
+          <div className="flex items-center gap-2 px-4 pt-1">
+            <span className="text-[10px] text-gray-600">Combo order:</span>
+            <button
+              onClick={() => setComboMoveFirst(v => !v)}
+              className="text-[10px] px-2 py-0.5 rounded-md font-semibold transition-all"
+              style={{ background: "rgba(156,39,176,0.20)", color: "#ce93d8" }}
+            >
+              {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
+            </button>
+          </div>
+        )}
+
+        {/* Combo in-progress: show cancel */}
+        {comboActive && phase === "planning" && (
+          <div className="flex gap-2 px-4 pt-2.5">
+            <button
+              onClick={cancelAction}
+              className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
+            >
+              ✕ Cancel
+            </button>
+            <div className="flex-1 flex items-center justify-center text-xs text-purple-400 font-semibold">
+              Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="flex-1 text-xs text-gray-500">
             {phase === "planning" && !selectedPlayerId && "Tap a player · green tiles = your range"}
-            {phase === "planning" && selectedPlayerId && !passTargetMode && "Tap green tile to move · ⚔ orange = tackle"}
-            {phase === "planning" && passTargetMode && "Tap a tile or player to pass"}
+            {phase === "planning" && selectedPlayerId && !passTargetMode && !comboActive && "Tap green tile to move · ⚔ orange = tackle"}
+            {phase === "planning" && !comboActive && passTargetMode && "Tap a tile or player to pass"}
+            {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
+            {phase === "planning" && comboActive && comboMoveFirst && comboStep === 2 && "Now tap pass target (tile or player)"}
+            {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 1 && "Tap pass target (tile or player)"}
+            {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 2 && "Now tap move destination tile"}
             {phase === "simulating" && "Simulating…"}
             {phase === "finished" && "Match over!"}
           </div>

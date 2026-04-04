@@ -28,6 +28,7 @@ export interface Command {
   type: CommandType;
   targetPosition?: Vec2;
   targetPlayerId?: string;
+  followUp?: Command;
 }
 
 export interface PlayerStats {

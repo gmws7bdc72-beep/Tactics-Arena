@@ -375,8 +375,16 @@ function updatePlayerMovement(
           passTracker.playerId = player.id;
           passTracker.name = player.name;
           executePass(player, ball, rng);
-          player.state = PlayerState.RECOVERING;
-          player.recoveryTimer = PASS_RECOVERY;
+          const passFollowUp = player.command?.followUp;
+          if (passFollowUp) {
+            player.command = passFollowUp;
+            player.commandExecuted = false;
+            player.state = PlayerState.IDLE;
+            player.recoveryTimer = 0;
+          } else {
+            player.state = PlayerState.RECOVERING;
+            player.recoveryTimer = PASS_RECOVERY;
+          }
         } else if (player.state === PlayerState.SHOOTING) {
           passTracker.type = "shot";
           passTracker.teamId = player.teamId;
@@ -456,8 +464,14 @@ function updatePlayerMovement(
       const target = cmd.targetPosition!;
       const arrived = moveLinear(player, target, dt);
       if (arrived) {
-        player.commandExecuted = true;
-        player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
+        if (cmd.followUp) {
+          player.command = cmd.followUp;
+          player.commandExecuted = false;
+          player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
+        } else {
+          player.commandExecuted = true;
+          player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
+        }
       } else {
         player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.MOVING;
       }
@@ -578,10 +592,13 @@ function detectAndResolveEvents(
       winner.commandExecuted = false;
 
       if (loser && loser.teamId !== winner.teamId) {
-        const winnerScore = winner.stats.defense / 10 + rng() * 0.3;
-        const loserScore = loser.stats.defense / 10 + rng() * 0.3;
+        // Momentum bonus: running toward the ball helps claim it
+        const winnerMomentum = Math.min(0.12, vec2Len(winner.velocity) / 350 * 0.12);
+        const loserMomentum  = Math.min(0.12, vec2Len(loser.velocity)  / 350 * 0.12);
+        const winnerScore = winner.stats.defense / 10 + rng() * 0.3 + winnerMomentum;
+        const loserScore  = loser.stats.defense  / 10 + rng() * 0.3 + loserMomentum;
 
-        if (loserScore > winnerScore + 0.1) {
+        if (loserScore > winnerScore) {
           loser.command = null;
           loser.commandExecuted = false;
           ball.ownerId = loser.id;
@@ -639,8 +656,12 @@ function detectAndResolveEvents(
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
       const dist = vec2Dist(other.position, ball.position);
       if (dist < CONTEST_RADIUS && other.state !== PlayerState.RECOVERING && other.state !== PlayerState.CONTESTING) {
-        const attackerScore = owner.stats.attack / 10 + rng() * 0.25;
-        let defenderScore = other.stats.defense / 10 + rng() * 0.25;
+        // Momentum: fast-moving defender charging in is harder to hold off;
+        // ball carrier in full stride shields better.
+        const defMomentum = Math.min(0.1, vec2Len(other.velocity) / 400 * 0.1);
+        const atkMomentum = Math.min(0.1, vec2Len(owner.velocity) / 400 * 0.1);
+        const attackerScore = owner.stats.attack / 10 + rng() * 0.25 + atkMomentum;
+        let defenderScore = other.stats.defense / 10 + rng() * 0.25 + defMomentum;
         if (other.ability === "iron_tackle") defenderScore += 0.2;
         if (other.ability === "powerhouse") defenderScore += 0.2;
         if (other.ability === "goalkeeper") defenderScore += 0.12;
