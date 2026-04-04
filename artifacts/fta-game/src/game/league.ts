@@ -183,8 +183,19 @@ const SCHEDULE_ORDER = [
  * One team has a bye each round; every pair of teams meets exactly once.
  * Returns an array of rounds; each round is an array of [homeId, awayId] pairs.
  */
-function buildRoundRobinMatchdays(ids: string[]): [string, string][][] {
+function shuffle<T>(items: T[], seed: number): T[] {
+  const rng = seededRng(seed);
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string][][] {
   const n = ids.length; // must be odd (9)
+  const orderedIds = shuffle(ids, seed);
   // Fix a "dummy" (null) at slot 0; rotate the n real teams.
   const rounds: [string, string][][] = [];
   for (let r = 0; r < n; r++) {
@@ -192,7 +203,7 @@ function buildRoundRobinMatchdays(ids: string[]): [string, string][][] {
     // Build the 10-slot circle: slot 0 = null, slots 1..n = rotated ids
     const slots: (string | null)[] = [null];
     for (let i = 0; i < n; i++) {
-      slots.push(ids[(r + i) % n]);
+      slots.push(orderedIds[(r + i) % n]);
     }
     // Pair slot i with slot (n - i) for i = 0 .. floor(n/2)
     for (let i = 0; i <= Math.floor(n / 2); i++) {
@@ -208,6 +219,7 @@ function buildRoundRobinMatchdays(ids: string[]): [string, string][][] {
 }
 
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
+  const seed = Date.now() % 999999;
   const teams: LeagueTeamEntry[] = [
     { id: playerTeamId, name: playerTeamName, tier: 2, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 },
     ...AI_TEAMS.map(t => ({ id: t.id, name: t.name, tier: t.tier, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0 })),
@@ -222,7 +234,7 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
   // 9 rounds (one per player matchday), 4 games per round.
   // Each AI team plays exactly once per round (no team gets 2 games in one matchday).
   const aiIds = AI_TEAMS.map(t => t.id);
-  const matchdays = buildRoundRobinMatchdays(aiIds);
+  const matchdays = buildRoundRobinMatchdays(aiIds, seed);
 
   // Flatten into [round0_pair0, round0_pair1, ..., round8_pair3] — 36 pairs total.
   // applyMatchResult slices 4 at a time, so each slice is exactly one round.
@@ -337,11 +349,10 @@ export function migrateLeague(state: LeagueState): LeagueState {
   if (state.aiSchedule && state.aiSchedule.length === 36) return state;
 
   const aiIds = AI_TEAMS.map(t => t.id);
-  const matchdays = buildRoundRobinMatchdays(aiIds);
+  const matchdays = buildRoundRobinMatchdays(aiIds, state.currentMatchIndex + state.aiMatchIndex + 1);
   const aiSchedule: [string, string][] = matchdays.flat();
 
-  // Estimate progress: 4 pairs per completed player match
-  const estimatedDone = Math.min(state.currentMatchIndex * 4, aiSchedule.length);
+  const estimatedDone = Math.min((state.aiMatchIndex ?? state.currentMatchIndex * 4), aiSchedule.length);
   return { ...state, aiSchedule, aiMatchIndex: estimatedDone };
 }
 
