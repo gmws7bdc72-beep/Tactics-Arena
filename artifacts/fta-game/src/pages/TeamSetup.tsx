@@ -34,6 +34,13 @@ export default function TeamSetup({ team, onSave, onBack }: Props) {
     setActiveSlot(null);
   };
 
+  const renamePlayer = (slotIndex: number, newName: string) => {
+    setCurrentTeam(prev => ({
+      ...prev,
+      players: prev.players.map((p, i) => i === slotIndex ? { ...p, name: newName } : p),
+    }));
+  };
+
   const getAvailableForSlot = (slotIndex: number) => {
     const pool = slotIndex === 0
       ? ALL_PLAYERS.filter(p => p.role === "goalkeeper")
@@ -104,7 +111,15 @@ export default function TeamSetup({ team, onSave, onBack }: Props) {
                         {p.jerseyNumber}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-white text-sm font-semibold truncate">{p.name}</div>
+                        <input
+                          type="text"
+                          value={p.name}
+                          onChange={e => renamePlayer(i, e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          maxLength={16}
+                          className="bg-transparent text-white text-sm font-semibold w-full outline-none border-b border-transparent focus:border-white/30 transition-colors"
+                          placeholder="Player name"
+                        />
                         <div className="text-gray-400 text-xs truncate">⚡ {p.ability.replace(/_/g, " ")}</div>
                       </div>
                       <div className="text-xs text-right text-gray-400 flex-shrink-0">

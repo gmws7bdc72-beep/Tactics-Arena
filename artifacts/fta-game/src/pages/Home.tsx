@@ -8,6 +8,7 @@ interface Props {
   onStartMatch: () => void;
   onGoToTeamSetup: () => void;
   onGoToCustomize: () => void;
+  onResetSeason: () => void;
 }
 
 const TIER_LABEL: Record<number, string> = { 1: "Elite", 2: "Mid", 3: "Easy" };
@@ -90,6 +91,7 @@ export default function Home({
   onStartMatch,
   onGoToTeamSetup,
   onGoToCustomize,
+  onResetSeason,
 }: Props) {
   const standings = getLeagueStandings(league.teams);
   const playerEntry = league.teams.find(t => t.id === PLAYER_ID)!;
@@ -426,6 +428,17 @@ export default function Home({
             Customize
           </button>
         </div>
+
+        {/* Restart season */}
+        <button
+          onClick={() => {
+            if (confirm("Restart the season? All current progress will be lost.")) onResetSeason();
+          }}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95"
+          style={{ background: "rgba(255,82,82,0.10)", color: "#ff5252", border: "1px solid rgba(255,82,82,0.20)" }}
+        >
+          ↺ Restart Season
+        </button>
       </div>
     </div>
   );

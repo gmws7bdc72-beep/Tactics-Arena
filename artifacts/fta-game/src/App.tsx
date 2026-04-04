@@ -196,6 +196,7 @@ export default function App() {
           onStartMatch={handleStartMatch}
           onGoToTeamSetup={() => setScreen("team-setup")}
           onGoToCustomize={() => setScreen("customize")}
+          onResetSeason={handleNewSeason}
         />
       </div>
     );
