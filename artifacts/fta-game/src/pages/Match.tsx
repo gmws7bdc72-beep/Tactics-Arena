@@ -568,6 +568,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode}
+          passOriginPos={
+            comboActive && comboMoveFirst && comboStep === 2 && comboStoredMove
+              ? comboStoredMove
+              : undefined
+          }
           phase={phase}
           isVertical={isMobile}
           onPlayerClick={handlePlayerClick}

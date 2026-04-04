@@ -19,6 +19,9 @@ interface Props {
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
   passTargetMode: boolean;
+  /** Where to anchor the pass-range ring. Differs from the player's real position
+   *  when doing a Move→Pass combo (ring should centre on the move destination). */
+  passOriginPos?: Vec2;
   phase: "planning" | "simulating" | "finished";
   isVertical?: boolean;
   onPlayerClick: (playerId: string, pos: Vec2) => void;
@@ -35,6 +38,7 @@ export default function PitchCanvas({
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
+  passOriginPos,
   phase,
   isVertical = false,
   onPlayerClick,
@@ -62,6 +66,8 @@ export default function PitchCanvas({
   const buildTileMap = useCallback((): Map<string, TileState> => {
     const map = new Map<string, TileState>();
     if (!frame || !selectedPlayerId) return map;
+    // In pass-target mode the ring is the visual guide — don't show movement tiles.
+    if (passTargetMode) return map;
 
     const selPlayer = frame.players.find(p => p.id === selectedPlayerId);
     if (!selPlayer) return map;
@@ -93,7 +99,7 @@ export default function PitchCanvas({
     }
 
     return map;
-  }, [frame, selectedPlayerId]);
+  }, [frame, selectedPlayerId, passTargetMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -335,14 +341,15 @@ export default function PitchCanvas({
       }
     }
 
-    // Pass mode: show range ring
+    // Pass mode: show range ring centred on the pass origin (move dest or current pos)
     if (passTargetMode && selPlayer) {
+      const ringOrigin = passOriginPos ?? selPlayer.position;
       ctx.globalAlpha = 0.5;
       ctx.strokeStyle = "#ffeb3b";
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
-      ctx.arc(tp(selPlayer.position).x, tp(selPlayer.position).y, tr(180), 0, Math.PI * 2);
+      ctx.arc(tp(ringOrigin).x, tp(ringOrigin).y, tr(180), 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -476,7 +483,7 @@ export default function PitchCanvas({
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.shadowBlur = 0;
-  }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, passTargetMode, phase, isVertical, buildTileMap]);
+  }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, passTargetMode, passOriginPos, phase, isVertical, buildTileMap]);
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (phase !== "planning") return;
@@ -506,11 +513,15 @@ export default function PitchCanvas({
 
     if (clickedCol === selTile.col && clickedRow === selTile.row) return;
 
-    const isGK = selPlayer.role === "goalkeeper";
-    const range = selPlayer.tileRange;
-    const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, "player");
-    const isReachable = reachable.some(t => t.col === clickedCol && t.row === clickedRow);
-    if (!isReachable) return;
+    // In pass-target mode any tile on the pitch is a valid target — the ring is
+    // informational only. Movement tiles are only gated in normal move mode.
+    if (!passTargetMode) {
+      const isGK = selPlayer.role === "goalkeeper";
+      const range = selPlayer.tileRange;
+      const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, "player");
+      const isReachable = reachable.some(t => t.col === clickedCol && t.row === clickedRow);
+      if (!isReachable) return;
+    }
 
     const occupant = frame.players.find(p => {
       const t = posToTile(p.position);
