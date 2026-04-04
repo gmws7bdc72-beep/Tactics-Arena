@@ -534,7 +534,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
               className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
               style={{ background: "linear-gradient(135deg, #9c27b0, #6a1b9a)" }}
             >
-              Move+Pass
+              {comboMoveFirst ? "Move+Pass" : "Pass+Move"}
             </button>
             <button
               onClick={setShoot}

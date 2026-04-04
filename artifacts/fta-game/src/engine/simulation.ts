@@ -151,7 +151,7 @@ export function runSimulation(
     updateBallPhysics(simBall, DELTA);
     detectAndResolveEvents(simPlayers, simBall, tick, tickEvents, rng, passTracker);
     constrainToField(simPlayers, simBall);
-    separateOverlapping(simPlayers, simBall);
+    separateOverlapping(simPlayers, simBall, rng);
 
     const goalResult = checkGoal(simBall);
     if (goalResult) {
@@ -264,7 +264,8 @@ export function runSimulation(
 
 // Push overlapping players apart at the pixel level every tick.
 // Ball owner is never displaced; the other player takes the full push.
-function separateOverlapping(players: SimPlayer[], ball: SimBall): void {
+// For cross-team non-ball collisions a probabilistic contest determines who yields.
+function separateOverlapping(players: SimPlayer[], ball: SimBall, rng: () => number): void {
   const minDist = PLAYER_RADIUS * 2.4;
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
@@ -280,19 +281,45 @@ function separateOverlapping(players: SimPlayer[], ball: SimBall): void {
       const nx = dist > 0.01 ? dx / dist : 0;
       const ny = dist > 0.01 ? dy / dist : 1;
       if (aOwns) {
-        // Only push B
+        // Ball carrier always pushes non-carrier aside
         b.position.x += nx * overlap;
         b.position.y += ny * overlap;
       } else if (bOwns) {
-        // Only push A
         a.position.x -= nx * overlap;
         a.position.y -= ny * overlap;
-      } else {
-        // Push both equally
+      } else if (a.teamId === b.teamId) {
+        // Same team: share equally, no contest needed
         a.position.x -= nx * overlap * 0.5;
         a.position.y -= ny * overlap * 0.5;
         b.position.x += nx * overlap * 0.5;
         b.position.y += ny * overlap * 0.5;
+      } else {
+        // Cross-team physical contest — faster mover is "the pusher"
+        const aSpeed = Math.sqrt(a.velocity.x ** 2 + a.velocity.y ** 2);
+        const bSpeed = Math.sqrt(b.velocity.x ** 2 + b.velocity.y ** 2);
+        const isPusherA = aSpeed >= bSpeed;
+        const pusher  = isPusherA ? a : b;
+        const blocker = isPusherA ? b : a;
+        // Attacker stat for the pusher (trying to force through), defense for blocker
+        let pusherScore  = pusher.stats.attack  / 10 + rng() * 0.35;
+        let blockerScore = blocker.stats.defense / 10 + rng() * 0.35;
+        if (blocker.ability === "iron_tackle")  blockerScore += 0.25;
+        if (blocker.ability === "powerhouse")   blockerScore += 0.15;
+        if (pusher.ability  === "ghost_run")    pusherScore  += 0.2;
+        if (pusher.ability  === "powerhouse")   pusherScore  += 0.15;
+        if (pusherScore > blockerScore) {
+          // Pusher wins: mostly pushes blocker aside, small self slowdown
+          a.position.x -= nx * overlap * (isPusherA ? 0.2 : 0.8);
+          a.position.y -= ny * overlap * (isPusherA ? 0.2 : 0.8);
+          b.position.x += nx * overlap * (isPusherA ? 0.8 : 0.2);
+          b.position.y += ny * overlap * (isPusherA ? 0.8 : 0.2);
+        } else {
+          // Blocker wins: pusher bounces back, blocker barely moves
+          a.position.x -= nx * overlap * (isPusherA ? 0.8 : 0.2);
+          a.position.y -= ny * overlap * (isPusherA ? 0.8 : 0.2);
+          b.position.x += nx * overlap * (isPusherA ? 0.2 : 0.8);
+          b.position.y += ny * overlap * (isPusherA ? 0.2 : 0.8);
+        }
       }
     }
   }

@@ -4,7 +4,7 @@ import { FORMATIONS } from "./formations";
 import { createLeague } from "./league";
 
 const TEAM_KEY = "fta_team_v2";
-const LEAGUE_KEY = "fta_league_v2";
+const LEAGUE_KEY = "fta_league_v3";
 
 const PLAYER_TEAM_ID = "player_team";
 
