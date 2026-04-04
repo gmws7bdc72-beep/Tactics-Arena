@@ -406,8 +406,10 @@ function updatePlayerMovement(
           if (passFollowUp) {
             player.command = passFollowUp;
             player.commandExecuted = false;
-            player.state = PlayerState.IDLE;
-            player.recoveryTimer = 0;
+            // Brief recovery so the ball travels past interception radius before
+            // the player is eligible to re-intercept it (would wipe their followUp)
+            player.state = PlayerState.RECOVERING;
+            player.recoveryTimer = 0.15;
           } else {
             player.state = PlayerState.RECOVERING;
             player.recoveryTimer = PASS_RECOVERY;
