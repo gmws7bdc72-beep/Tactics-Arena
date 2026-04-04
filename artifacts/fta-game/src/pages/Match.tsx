@@ -406,37 +406,30 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     };
   }, [phase, turn]);
 
-  const handlePlayerClick = useCallback((playerId: string, _pos: Vec2) => {
+  const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
-    // Combo: handle player click as pass target selection
-    if (comboActive && passTargetMode && selectedPlayerId) {
-      const targetFrame = currentFrame.players.find(p => p.id === playerId);
-      if (!targetFrame) return;
-      const passInfo = { targetPlayerId: playerId, targetPosition: { ...targetFrame.position } };
-      if (comboMoveFirst) {
-        // Step 2 of move-first: player picked as pass destination
+    if (comboActive && selectedPlayerId) {
+      if (comboMoveFirst && comboStep === 2) {
         const cmd: Command = {
           type: CommandType.MOVE,
           targetPosition: comboStoredMove!,
-          followUp: { type: CommandType.PASS, ...passInfo },
+          followUp: { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...pos } },
         };
         setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
         clearSelection();
-      } else {
-        // Step 1 of pass-first: picked pass target, now need move destination
-        setComboStoredPass(passInfo);
+        return;
+      }
+      if (!comboMoveFirst && comboStep === 1) {
+        setComboStoredPass({ targetPlayerId: playerId, targetPosition: { ...pos } });
         setComboStep(2);
         setPassTargetMode(false);
+        return;
       }
-      return;
     }
 
-    // Normal pass mode
     if (passTargetMode && selectedPlayerId) {
-      const targetFrame = currentFrame.players.find(p => p.id === playerId);
-      if (!targetFrame) return;
-      const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...targetFrame.position } };
+      const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...pos } };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
       clearSelection();
       return;
@@ -452,7 +445,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       setComboStoredMove(null);
       setComboStoredPass(null);
     }
-  }, [passTargetMode, selectedPlayerId, currentFrame, clearSelection, comboActive, comboMoveFirst, comboStoredMove]);
+  }, [passTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
@@ -460,36 +453,22 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     if (comboActive) {
       if (comboMoveFirst) {
         if (comboStep === 1) {
-          // Step 1: pick move destination, then need pass target
           setComboStoredMove(pos);
           setComboStep(2);
           setPassTargetMode(true);
-        } else {
-          // Step 2: pass to tile
-          const cmd: Command = {
-            type: CommandType.MOVE,
-            targetPosition: comboStoredMove!,
-            followUp: { type: CommandType.PASS, targetPosition: pos },
-          };
-          setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
-          clearSelection();
         }
+      } else if (comboStep === 1) {
+        setComboStoredPass({ targetPosition: pos });
+        setComboStep(2);
+        setPassTargetMode(true);
       } else {
-        if (comboStep === 1) {
-          // Step 1 pass-first: pick pass destination (tile), then need move target
-          setComboStoredPass({ targetPosition: pos });
-          setComboStep(2);
-          setPassTargetMode(false);
-        } else {
-          // Step 2 pass-first: pick move destination
-          const cmd: Command = {
-            type: CommandType.PASS,
-            ...comboStoredPass!,
-            followUp: { type: CommandType.MOVE, targetPosition: pos },
-          };
-          setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
-          clearSelection();
-        }
+        const cmd: Command = {
+          type: CommandType.PASS,
+          ...comboStoredPass!,
+          followUp: { type: CommandType.MOVE, targetPosition: pos },
+        };
+        setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+        clearSelection();
       }
       return;
     }
