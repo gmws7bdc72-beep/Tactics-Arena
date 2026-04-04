@@ -688,18 +688,30 @@ function detectAndResolveEvents(
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
       if (other.state === PlayerState.RECOVERING || other.state === PlayerState.CONTESTING) continue;
 
-      // Tackle only fires when the defender physically crosses through the carrier's tile
+      // Tackle fires when either player physically crosses through the other's tile
       const defTileX = Math.floor(other.position.x / TILE_W);
       const defTileY = Math.floor(other.position.y / TILE_H);
       if (defTileX !== ownerTileX || defTileY !== ownerTileY) continue;
-      // Must be actively running through — not just standing in the same tile
-      if (vec2Len(other.velocity) < 50) continue;
 
-      // Retention chance: carrier's attack vs their own defense stat.
-      // score <= 0 (defense ≥ attack) → defender takes ball automatically.
-      // score > 0  (attack > defense)  → carrier keeps ball with (score × 20%) chance, capped at 100%.
-      const score = owner.stats.attack - owner.stats.defense;
-      const keepChance = score > 0 ? Math.min(1.0, score * 0.20) : 0;
+      const defSpeed    = vec2Len(other.velocity);
+      const carrierSpeed = vec2Len(owner.velocity);
+
+      let keepChance: number;
+
+      if (defSpeed >= 50) {
+        // Defender runs through the carrier's tile.
+        // score = carrier.attack − carrier.defense; each +1 → +20% keep chance.
+        const score = owner.stats.attack - owner.stats.defense;
+        keepChance = score > 0 ? Math.min(1.0, score * 0.20) : 0;
+      } else if (carrierSpeed >= 50) {
+        // Carrier deliberately runs through the defender's tile.
+        // score = carrier.attack − defender.defense; each +1 → +10% escape chance.
+        const score = owner.stats.attack - other.stats.defense;
+        keepChance = score > 0 ? Math.min(1.0, score * 0.10) : 0;
+      } else {
+        continue; // neither is moving fast enough to trigger
+      }
+
       const carrierKeepsBall = rng() < keepChance;
 
       if (carrierKeepsBall) {
