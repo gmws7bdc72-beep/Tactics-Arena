@@ -477,7 +477,7 @@ function tier1Possession(
 
     // 3. Elite: pass-first philosophy
     // Forward pass — primary option (always look for it)
-    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
+    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
     if (fwdTarget && !hardPressed) {
       // 50% chance: "pass-to-tile" — aim at the tile the runner is headed to,
       // and simultaneously move the runner there (coordinated run).
@@ -634,7 +634,7 @@ function tier2Possession(
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
     // Pass forward if good opportunity (slightly less eager than Tier 1)
-    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 5);
+    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
     if (fwdTarget && !hardPressed) {
       // 85% chance: "pass-to-tile" — coordinate runner + aimed pass
       const runnerTile = posToTile(fwdTarget.position);
@@ -770,20 +770,16 @@ function tier3Possession(
     // Shoot from close range (slightly less trigger-happy than before)
     if (pt.col <= 3) return shoot();
 
-    // Rarely pass — only to very close teammate
-    const closeTeammate = aiPlayers.find(p =>
-      p.id !== player.id &&
-      p.role !== "goalkeeper" &&
-      tileDist(posToTile(p.position), pt) <= 2
-    );
-    if (closeTeammate && Math.random() < 0.28) {
-      const rTile = posToTile(closeTeammate.position);
-      const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
+    // Rarely pass — 28% chance, picks best forward target anywhere on pitch
+    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
+    if (fwdTarget && Math.random() < 0.28) {
+      const rTile = posToTile(fwdTarget.position);
+      const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(fwdTarget.stats.speed)), row: rTile.row };
       if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
-        planRef.current = { runnerId: closeTeammate.id, runTile: fTile };
-        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: throughBallTarget(player.position, closeTeammate, fTile), coordinated: true };
+        planRef.current = { runnerId: fwdTarget.id, runTile: fTile };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, fTile), coordinated: true };
       }
-      return passTo(closeTeammate, player.position);
+      return passTo(fwdTarget, player.position);
     }
 
     // Just dribble forward — very predictable; still uses player's speed range
