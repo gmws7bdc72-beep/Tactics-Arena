@@ -10,6 +10,7 @@ import { getAIFormationById, getFormationById } from "../game/formations";
 import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
+import { useIsMobile } from "../hooks/use-mobile";
 
 interface Props {
   team: TeamConfig;
@@ -79,6 +80,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const playerFormation = getFormationById(team.formationId);
   const aiFormation = getAIFormationById(opponentTeamDef.formationId);
   const aiTier = opponentTeamDef.tier;
+  const isMobile = useIsMobile();
 
   const initState = useRef((() => {
     const pl = team.players.slice(0, 5).map((card, i) =>
@@ -480,6 +482,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
 
       {/* Pitch */}
       <div className="flex-1 relative" style={{ minHeight: 0, padding: "4px 4px 0" }}>
+        {isMobile && (
+          <div className="absolute top-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <span className="text-[10px] text-white/40 font-semibold tracking-wide">▲ Attacking</span>
+          </div>
+        )}
         <PitchCanvas
           frame={currentFrame}
           playerTeam={team}
@@ -489,9 +496,15 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode}
           phase={phase}
+          isVertical={isMobile}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
         />
+        {isMobile && (
+          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <span className="text-[10px] text-white/40 font-semibold tracking-wide">▼ Your Goal</span>
+          </div>
+        )}
 
         {/* Combo hint banner */}
         {comboActive && (

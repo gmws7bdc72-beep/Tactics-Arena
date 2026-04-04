@@ -20,6 +20,7 @@ interface Props {
   selectedPlayerId: string | null;
   passTargetMode: boolean;
   phase: "planning" | "simulating" | "finished";
+  isVertical?: boolean;
   onPlayerClick: (playerId: string, pos: Vec2) => void;
   onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
 }
@@ -35,6 +36,7 @@ export default function PitchCanvas({
   selectedPlayerId,
   passTargetMode,
   phase,
+  isVertical = false,
   onPlayerClick,
   onTileClick,
 }: Props) {
@@ -44,12 +46,19 @@ export default function PitchCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
+    if (isVertical) {
+      const nx = (cx - rect.left) / rect.width;
+      const ny = (cy - rect.top) / rect.height;
+      return {
+        x: (1 - ny) * PITCH_WIDTH,
+        y: nx * PITCH_HEIGHT,
+      };
+    }
     const sx = PITCH_WIDTH / rect.width;
     const sy = PITCH_HEIGHT / rect.height;
     return { x: (cx - rect.left) * sx, y: (cy - rect.top) * sy };
-  }, []);
+  }, [isVertical]);
 
-  // Build tile state map for the selected player
   const buildTileMap = useCallback((): Map<string, TileState> => {
     const map = new Map<string, TileState>();
     if (!frame || !selectedPlayerId) return map;
@@ -61,10 +70,8 @@ export default function PitchCanvas({
     const isGK = selPlayer.role === "goalkeeper";
     const range = selPlayer.tileRange;
 
-    // Mark current tile
     map.set(`${pt.col},${pt.row}`, "current");
 
-    // Build occupancy for other players
     const occupancy = new Map<string, "friendly" | "enemy">();
     for (const p of frame.players) {
       if (p.id === selectedPlayerId) continue;
@@ -72,7 +79,6 @@ export default function PitchCanvas({
       occupancy.set(`${t.col},${t.row}`, p.teamId === "player" ? "friendly" : "enemy");
     }
 
-    // Get all reachable tiles
     const reachable = getReachableTiles(pt.col, pt.row, range, isGK, "player");
     for (const t of reachable) {
       const key = `${t.col},${t.row}`;
@@ -97,10 +103,21 @@ export default function PitchCanvas({
 
     const W = canvas.width;
     const H = canvas.height;
-    const sx = W / PITCH_WIDTH;
-    const sy = H / PITCH_HEIGHT;
-    const tp = (p: Vec2) => ({ x: p.x * sx, y: p.y * sy });
-    const tr = (r: number) => r * Math.min(sx, sy);
+
+    let tp: (p: Vec2) => { x: number; y: number };
+    let tr: (r: number) => number;
+
+    if (isVertical) {
+      const scx = W / PITCH_HEIGHT;
+      const scy = H / PITCH_WIDTH;
+      tp = (p: Vec2) => ({ x: p.y * scx, y: (1 - p.x / PITCH_WIDTH) * H });
+      tr = (r: number) => r * Math.min(scx, scy);
+    } else {
+      const scx = W / PITCH_WIDTH;
+      const scy = H / PITCH_HEIGHT;
+      tp = (p: Vec2) => ({ x: p.x * scx, y: p.y * scy });
+      tr = (r: number) => r * Math.min(scx, scy);
+    }
 
     ctx.clearRect(0, 0, W, H);
 
@@ -114,10 +131,13 @@ export default function PitchCanvas({
 
     // Stripes
     ctx.globalAlpha = 0.04;
-    const stripeW = W / 8;
-    for (let i = 0; i < 8; i += 2) {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(i * stripeW, 0, stripeW, H);
+    ctx.fillStyle = "#ffffff";
+    if (isVertical) {
+      const stripeH = H / 8;
+      for (let i = 0; i < 8; i += 2) ctx.fillRect(0, i * stripeH, W, stripeH);
+    } else {
+      const stripeW = W / 8;
+      for (let i = 0; i < 8; i += 2) ctx.fillRect(i * stripeW, 0, stripeW, H);
     }
     ctx.globalAlpha = 1;
 
@@ -125,89 +145,192 @@ export default function PitchCanvas({
     ctx.strokeStyle = "rgba(255,255,255,0.55)";
     ctx.lineWidth = 1.5;
     ctx.strokeRect(1, 1, W - 2, H - 2);
-    ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
-    ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(55), 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(3), 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fill();
 
-    const paW = PENALTY_AREA_WIDTH * sx;
-    const paH = PENALTY_AREA_HEIGHT * sy;
-    const paY = (H - paH) / 2;
-    ctx.strokeRect(0, paY, paW, paH);
-    ctx.strokeRect(W - paW, paY, paW, paH);
+    if (isVertical) {
+      const scx = W / PITCH_HEIGHT;
+      const scy = H / PITCH_WIDTH;
 
-    // Goals
-    const goalW = GOAL_WIDTH * sy;
-    const goalD = GOAL_DEPTH * sx;
-    const goalY = GOAL_TOP_Y * sy;
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.strokeStyle = "rgba(255,255,255,0.75)";
-    ctx.lineWidth = 2;
-    ctx.fillRect(0, goalY, goalD, goalW); ctx.strokeRect(0, goalY, goalD, goalW);
-    ctx.fillRect(W - goalD, goalY, goalD, goalW); ctx.strokeRect(W - goalD, goalY, goalD, goalW);
+      // Halfway line: horizontal
+      ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(55), 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(3), 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fill();
+
+      // Penalty areas: horizontal bands at top (AI) and bottom (player)
+      const paDepth = PENALTY_AREA_WIDTH * scy;
+      const paWidth = PENALTY_AREA_HEIGHT * scx;
+      const paX = (W - paWidth) / 2;
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(paX, 0, paWidth, paDepth);
+      ctx.strokeRect(paX, H - paDepth, paWidth, paDepth);
+
+      // Goals: at top (AI) and bottom (player)
+      const gWidth = GOAL_WIDTH * scx;
+      const gDepth = GOAL_DEPTH * scy;
+      const gX = (W - gWidth) / 2;
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 2;
+      ctx.fillRect(gX, 0, gWidth, gDepth); ctx.strokeRect(gX, 0, gWidth, gDepth);
+      ctx.fillRect(gX, H - gDepth, gWidth, gDepth); ctx.strokeRect(gX, H - gDepth, gWidth, gDepth);
+    } else {
+      const scx = W / PITCH_WIDTH;
+      const scy = H / PITCH_HEIGHT;
+
+      // Halfway line: vertical
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(55), 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, tr(3), 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fill();
+
+      const paW = PENALTY_AREA_WIDTH * scx;
+      const paH = PENALTY_AREA_HEIGHT * scy;
+      const paY = (H - paH) / 2;
+      ctx.strokeRect(0, paY, paW, paH);
+      ctx.strokeRect(W - paW, paY, paW, paH);
+
+      const goalW = GOAL_WIDTH * scy;
+      const goalD = GOAL_DEPTH * scx;
+      const goalY = GOAL_TOP_Y * scy;
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.lineWidth = 2;
+      ctx.fillRect(0, goalY, goalD, goalW); ctx.strokeRect(0, goalY, goalD, goalW);
+      ctx.fillRect(W - goalD, goalY, goalD, goalW); ctx.strokeRect(W - goalD, goalY, goalD, goalW);
+    }
 
     // Tile grid
     const selPlayer = selectedPlayerId ? frame.players.find(p => p.id === selectedPlayerId) : null;
-    if (phase === "planning" && selPlayer) {
-      const tileMap = buildTileMap();
 
-      for (let col = 0; col < GRID_COLS; col++) {
-        for (let row = 0; row < GRID_ROWS; row++) {
-          const tx = col * TILE_W * sx;
-          const ty = row * TILE_H * sy;
-          const tw = TILE_W * sx;
-          const th = TILE_H * sy;
-          const key = `${col},${row}`;
-          const state = tileMap.get(key) ?? "none";
+    if (isVertical) {
+      const tw_v = W / GRID_ROWS;
+      const th_v = H / GRID_COLS;
 
-          if (state === "current") {
-            ctx.fillStyle = "rgba(255,220,0,0.22)";
-            ctx.fillRect(tx, ty, tw, th);
-            ctx.strokeStyle = "rgba(255,220,0,0.7)";
-            ctx.lineWidth = 1.5;
-          } else if (state === "reachable") {
-            ctx.fillStyle = "rgba(0,230,118,0.18)";
-            ctx.fillRect(tx, ty, tw, th);
-            ctx.strokeStyle = "rgba(0,230,118,0.65)";
-            ctx.lineWidth = 1.5;
-          } else if (state === "reachable-enemy") {
-            ctx.fillStyle = "rgba(255,100,0,0.22)";
-            ctx.fillRect(tx, ty, tw, th);
-            ctx.strokeStyle = "rgba(255,100,0,0.7)";
-            ctx.lineWidth = 1.5;
-          } else if (state === "reachable-friendly") {
-            ctx.fillStyle = "rgba(120,120,120,0.12)";
-            ctx.fillRect(tx, ty, tw, th);
-            ctx.strokeStyle = "rgba(120,120,120,0.4)";
-            ctx.lineWidth = 1.5;
-          } else {
-            ctx.strokeStyle = "rgba(255,255,255,0.06)";
-            ctx.lineWidth = 0.5;
+      if (phase === "planning" && selPlayer) {
+        const tileMap = buildTileMap();
+        for (let col = 0; col < GRID_COLS; col++) {
+          for (let row = 0; row < GRID_ROWS; row++) {
+            const tx = row * tw_v;
+            const ty = (GRID_COLS - 1 - col) * th_v;
+            const key = `${col},${row}`;
+            const state = tileMap.get(key) ?? "none";
+
+            if (state === "current") {
+              ctx.fillStyle = "rgba(255,220,0,0.22)";
+              ctx.fillRect(tx, ty, tw_v, th_v);
+              ctx.strokeStyle = "rgba(255,220,0,0.7)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable") {
+              ctx.fillStyle = "rgba(0,230,118,0.18)";
+              ctx.fillRect(tx, ty, tw_v, th_v);
+              ctx.strokeStyle = "rgba(0,230,118,0.65)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable-enemy") {
+              ctx.fillStyle = "rgba(255,100,0,0.22)";
+              ctx.fillRect(tx, ty, tw_v, th_v);
+              ctx.strokeStyle = "rgba(255,100,0,0.7)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable-friendly") {
+              ctx.fillStyle = "rgba(120,120,120,0.12)";
+              ctx.fillRect(tx, ty, tw_v, th_v);
+              ctx.strokeStyle = "rgba(120,120,120,0.4)";
+              ctx.lineWidth = 1.5;
+            } else {
+              ctx.strokeStyle = "rgba(255,255,255,0.06)";
+              ctx.lineWidth = 0.5;
+            }
+            ctx.strokeRect(tx + 0.5, ty + 0.5, tw_v - 1, th_v - 1);
+
+            if (state === "reachable-enemy") {
+              ctx.fillStyle = "rgba(255,100,0,0.9)";
+              ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText("⚔", tx + tw_v / 2, ty + 3);
+            }
+            if (state === "reachable-friendly") {
+              ctx.fillStyle = "rgba(160,160,160,0.9)";
+              ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText("✕", tx + tw_v / 2, ty + 3);
+            }
           }
-          ctx.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
-
-          if (state === "reachable-enemy") {
-            ctx.fillStyle = "rgba(255,100,0,0.9)";
-            ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "top";
-            ctx.fillText("⚔", tx + tw / 2, ty + 3);
-          }
-          if (state === "reachable-friendly") {
-            ctx.fillStyle = "rgba(160,160,160,0.9)";
-            ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "top";
-            ctx.fillText("✕", tx + tw / 2, ty + 3);
+        }
+      } else if (phase === "planning" && !selPlayer) {
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+        ctx.lineWidth = 0.5;
+        for (let col = 0; col < GRID_COLS; col++) {
+          for (let row = 0; row < GRID_ROWS; row++) {
+            ctx.strokeRect(row * tw_v + 0.5, (GRID_COLS - 1 - col) * th_v + 0.5, tw_v - 1, th_v - 1);
           }
         }
       }
-    } else if (phase === "planning" && !selPlayer) {
-      ctx.strokeStyle = "rgba(255,255,255,0.05)";
-      ctx.lineWidth = 0.5;
-      for (let col = 0; col < GRID_COLS; col++) {
-        for (let row = 0; row < GRID_ROWS; row++) {
-          ctx.strokeRect(col * TILE_W * sx + 0.5, row * TILE_H * sy + 0.5, TILE_W * sx - 1, TILE_H * sy - 1);
+    } else {
+      const scx = W / PITCH_WIDTH;
+      const scy = H / PITCH_HEIGHT;
+
+      if (phase === "planning" && selPlayer) {
+        const tileMap = buildTileMap();
+        for (let col = 0; col < GRID_COLS; col++) {
+          for (let row = 0; row < GRID_ROWS; row++) {
+            const tx = col * TILE_W * scx;
+            const ty = row * TILE_H * scy;
+            const tw = TILE_W * scx;
+            const th = TILE_H * scy;
+            const key = `${col},${row}`;
+            const state = tileMap.get(key) ?? "none";
+
+            if (state === "current") {
+              ctx.fillStyle = "rgba(255,220,0,0.22)";
+              ctx.fillRect(tx, ty, tw, th);
+              ctx.strokeStyle = "rgba(255,220,0,0.7)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable") {
+              ctx.fillStyle = "rgba(0,230,118,0.18)";
+              ctx.fillRect(tx, ty, tw, th);
+              ctx.strokeStyle = "rgba(0,230,118,0.65)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable-enemy") {
+              ctx.fillStyle = "rgba(255,100,0,0.22)";
+              ctx.fillRect(tx, ty, tw, th);
+              ctx.strokeStyle = "rgba(255,100,0,0.7)";
+              ctx.lineWidth = 1.5;
+            } else if (state === "reachable-friendly") {
+              ctx.fillStyle = "rgba(120,120,120,0.12)";
+              ctx.fillRect(tx, ty, tw, th);
+              ctx.strokeStyle = "rgba(120,120,120,0.4)";
+              ctx.lineWidth = 1.5;
+            } else {
+              ctx.strokeStyle = "rgba(255,255,255,0.06)";
+              ctx.lineWidth = 0.5;
+            }
+            ctx.strokeRect(tx + 0.5, ty + 0.5, tw - 1, th - 1);
+
+            if (state === "reachable-enemy") {
+              ctx.fillStyle = "rgba(255,100,0,0.9)";
+              ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText("⚔", tx + tw / 2, ty + 3);
+            }
+            if (state === "reachable-friendly") {
+              ctx.fillStyle = "rgba(160,160,160,0.9)";
+              ctx.font = `bold ${Math.round(tr(6))}px sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText("✕", tx + tw / 2, ty + 3);
+            }
+          }
+        }
+      } else if (phase === "planning" && !selPlayer) {
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+        ctx.lineWidth = 0.5;
+        for (let col = 0; col < GRID_COLS; col++) {
+          for (let row = 0; row < GRID_ROWS; row++) {
+            ctx.strokeRect(col * TILE_W * scx + 0.5, row * TILE_H * scy + 0.5, TILE_W * scx - 1, TILE_H * scy - 1);
+          }
         }
       }
     }
@@ -253,12 +376,18 @@ export default function PitchCanvas({
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
         } else if (cmd.type === CommandType.SHOOT) {
-          const goalX = W;
           ctx.globalAlpha = 0.7;
           ctx.strokeStyle = "#ff6b35";
           ctx.lineWidth = 2.5;
           ctx.setLineDash([8, 4]);
-          ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(goalX, H / 2); ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          if (isVertical) {
+            ctx.lineTo(W / 2, 0);
+          } else {
+            ctx.lineTo(W, H / 2);
+          }
+          ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
         }
@@ -347,13 +476,12 @@ export default function PitchCanvas({
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.shadowBlur = 0;
-  }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, passTargetMode, phase, buildTileMap]);
+  }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, passTargetMode, phase, isVertical, buildTileMap]);
 
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (phase !== "planning") return;
     const pos = canvasToPitch(e.clientX, e.clientY);
 
-    // Check player clicks first
     if (frame) {
       for (const p of frame.players) {
         const isGK = p.role === "goalkeeper";
@@ -376,23 +504,19 @@ export default function PitchCanvas({
     const clickedRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(pos.y / TILE_H)));
     const selTile = posToTile(selPlayer.position);
 
-    // Same tile — deselect
     if (clickedCol === selTile.col && clickedRow === selTile.row) return;
 
-    // Check if tile is reachable
     const isGK = selPlayer.role === "goalkeeper";
     const range = selPlayer.tileRange;
     const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, "player");
     const isReachable = reachable.some(t => t.col === clickedCol && t.row === clickedRow);
     if (!isReachable) return;
 
-    // Check occupant
     const occupant = frame.players.find(p => {
       const t = posToTile(p.position);
       return t.col === clickedCol && t.row === clickedRow;
     });
 
-    // Can't move to a friendly tile
     if (occupant?.teamId === "player" && occupant.id !== selectedPlayerId) return;
 
     const isEnemy = occupant?.teamId === "ai";
@@ -404,8 +528,8 @@ export default function PitchCanvas({
   return (
     <canvas
       ref={canvasRef}
-      width={PITCH_WIDTH}
-      height={PITCH_HEIGHT}
+      width={isVertical ? PITCH_HEIGHT : PITCH_WIDTH}
+      height={isVertical ? PITCH_WIDTH : PITCH_HEIGHT}
       className="w-full h-full cursor-pointer rounded-lg"
       style={{ imageRendering: "crisp-edges" }}
       onClick={handleClick}
