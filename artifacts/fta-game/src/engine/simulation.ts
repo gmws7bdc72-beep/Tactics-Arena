@@ -695,10 +695,10 @@ function detectAndResolveEvents(
       // Must be actively running through — not just standing in the same tile
       if (vec2Len(other.velocity) < 50) continue;
 
-      // Retention chance: carrier's defense stat vs their own attack stat.
-      // score <= 0 → defender takes ball automatically.
-      // score > 0  → carrier keeps ball with (score × 20%) chance, capped at 100%.
-      const score = owner.stats.defense - owner.stats.attack;
+      // Retention chance: carrier's attack vs their own defense stat.
+      // score <= 0 (defense ≥ attack) → defender takes ball automatically.
+      // score > 0  (attack > defense)  → carrier keeps ball with (score × 20%) chance, capped at 100%.
+      const score = owner.stats.attack - owner.stats.defense;
       const keepChance = score > 0 ? Math.min(1.0, score * 0.20) : 0;
       const carrierKeepsBall = rng() < keepChance;
 
