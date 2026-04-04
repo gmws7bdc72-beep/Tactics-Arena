@@ -29,7 +29,7 @@ export const INTERCEPTION_RADIUS = 24;
 export const CONTEST_RADIUS = 26;
 
 export const BALL_FRICTION = 0.97;
-export const PASS_SPEED = 280;
+export const PASS_SPEED = 160;
 export const SHOT_SPEED = 380;
 
 export const PASS_WIND_UP = 0.25;
