@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2 } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, speedToTiles, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import { GRID_COLS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -189,6 +189,49 @@ function leadPassTarget(ballPos: Vec2, target: SimPlayer): Vec2 {
 function passTo(target: SimPlayer, ballPos?: Vec2): Command {
   const aimPos = ballPos ? leadPassTarget(ballPos, target) : { ...target.position };
   return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: aimPos };
+}
+
+/**
+ * Compute the intercept point for a through-ball where the runner will move from
+ * their current tile toward `runTile` this turn.
+ *
+ * At planning time all velocities are zero (they were reset after the previous
+ * simulation), so we can't use `leadPassTarget` directly. Instead we build a
+ * synthetic velocity for the runner — the direction and speed they *will* move —
+ * and solve the intercept equation with that, then clamp to the run tile.
+ */
+function throughBallTarget(ballPos: Vec2, runner: SimPlayer, runTile: TilePos): Vec2 {
+  const fromPos = tileToPos(posToTile(runner.position).col, posToTile(runner.position).row);
+  const toPos   = tileToPos(runTile.col, runTile.row);
+
+  const dx = toPos.x - fromPos.x;
+  const dy = toPos.y - fromPos.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+
+  // Runner is already at the destination — just aim there directly.
+  if (dist < 1) return toPos;
+
+  const runSpd = getLinearPixelSpeed(runner.stats.speed);
+  const unitX  = dx / dist;
+  const unitY  = dy / dist;
+
+  // Synthetic runner: current tile centre with expected move velocity.
+  const syntheticRunner: SimPlayer = {
+    ...runner,
+    position: fromPos,
+    velocity: { x: unitX * runSpd, y: unitY * runSpd },
+  };
+
+  const intercept = leadPassTarget(ballPos, syntheticRunner);
+
+  // Clamp the intercept so it does not overshoot the run tile.
+  // Project the intercept onto the run direction and cap at t = 1.
+  const ix = intercept.x - fromPos.x;
+  const iy = intercept.y - fromPos.y;
+  const t = (ix * dx + iy * dy) / (dx * dx + dy * dy);
+  if (t >= 1) return toPos;
+
+  return intercept;
 }
 
 // Pass and immediately run into space after — a "pass and run" combo command.
@@ -446,7 +489,7 @@ function tier1Possession(
       };
       if (planRef && runTile.col < runnerTile.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, runTile), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -474,7 +517,7 @@ function tier1Possession(
       const runTile2: TilePos = { col: Math.max(0, runnerTile2.col - speedToTiles(fwdTarget.stats.speed)), row: runnerTile2.row };
       if (planRef && runTile2.col < runnerTile2.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile: runTile2 };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row), coordinated: true };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, runTile2), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -598,7 +641,7 @@ function tier2Possession(
       const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
       if (planRef && runTile.col < runnerTile.col && Math.random() < 0.85) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, runTile), coordinated: true };
       }
       return passTo(fwdTarget, player.position);
     }
@@ -713,7 +756,7 @@ function tier3Possession(
         const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(anyTarget.stats.speed)), row: rTile.row };
         if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
           planRef.current = { runnerId: anyTarget.id, runTile: fTile };
-          return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
+          return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: throughBallTarget(player.position, anyTarget, fTile), coordinated: true };
         }
         return passTo(anyTarget, player.position);
       }
@@ -736,7 +779,7 @@ function tier3Possession(
       const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
       if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
         planRef.current = { runnerId: closeTeammate.id, runTile: fTile };
-        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: tileToPos(fTile.col, fTile.row), coordinated: true };
+        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: throughBallTarget(player.position, closeTeammate, fTile), coordinated: true };
       }
       return passTo(closeTeammate, player.position);
     }
