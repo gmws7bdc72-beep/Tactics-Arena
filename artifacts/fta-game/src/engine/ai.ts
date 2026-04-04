@@ -444,14 +444,9 @@ function tier1Possession(
         col: Math.max(0, runnerTile.col - runnerReach),
         row: runnerTile.row,
       };
-      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.5) {
+      if (planRef && runTile.col < runnerTile.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
-      }
-      // 40% chance: pass-and-run — carrier moves into space after passing
-      if (Math.random() < 0.4) {
-        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -477,13 +472,9 @@ function tier1Possession(
     if (fwdTarget) {
       const runnerTile2 = posToTile(fwdTarget.position);
       const runTile2: TilePos = { col: Math.max(0, runnerTile2.col - speedToTiles(fwdTarget.stats.speed)), row: runnerTile2.row };
-      if (planRef && runTile2.col < runnerTile2.col && Math.random() < 0.5) {
+      if (planRef && runTile2.col < runnerTile2.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile: runTile2 };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row) };
-      }
-      if (Math.random() < 0.4) {
-        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -605,14 +596,9 @@ function tier2Possession(
       const runnerTile = posToTile(fwdTarget.position);
       const runnerReach = speedToTiles(fwdTarget.stats.speed);
       const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
-      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.25) {
+      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.75) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row) };
-      }
-      // 20% chance: pass-and-run — carrier moves into space after passing
-      if (Math.random() < 0.2) {
-        const carrierRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, carrierRunTile, player.position);
       }
       return passTo(fwdTarget, player.position);
     }
@@ -715,13 +701,22 @@ function tier3Possession(
   playerPlayers: SimPlayer[],
   _ballTile: TilePos,
   claimed: Set<string>,
-  friendly: Set<string>
+  friendly: Set<string>,
+  planRef?: { current: PassTilePlan | null }
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
-      // Tier 3 GK just boots it to anyone
+      // Tier 3 GK boots it to anyone, 50% pass-to-tile
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
-      if (anyTarget) return passTo(anyTarget, player.position);
+      if (anyTarget) {
+        const rTile = posToTile(anyTarget.position);
+        const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(anyTarget.stats.speed)), row: rTile.row };
+        if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
+          planRef.current = { runnerId: anyTarget.id, runTile: fTile };
+          return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: tileToPos(fTile.col, fTile.row) };
+        }
+        return passTo(anyTarget, player.position);
+      }
     }
     return stayPut({ col: 9, row: 3 });
   }
@@ -736,7 +731,15 @@ function tier3Possession(
       p.role !== "goalkeeper" &&
       tileDist(posToTile(p.position), pt) <= 2
     );
-    if (closeTeammate && Math.random() < 0.15) return passTo(closeTeammate, player.position);
+    if (closeTeammate && Math.random() < 0.15) {
+      const rTile = posToTile(closeTeammate.position);
+      const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
+      if (planRef && fTile.col < rTile.col && Math.random() < 0.5) {
+        planRef.current = { runnerId: closeTeammate.id, runTile: fTile };
+        return { type: CommandType.PASS, targetPlayerId: closeTeammate.id, targetPosition: tileToPos(fTile.col, fTile.row) };
+      }
+      return passTo(closeTeammate, player.position);
+    }
 
     // Just dribble forward — very predictable
     return moveStep(player, pt, { col: pt.col - 1, row: pt.row }, claimed, friendly);
@@ -858,7 +861,7 @@ export function generateAICommands(
       switch (tier) {
         case 1: cmd = tier1Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly, planRef); break;
         case 2: cmd = tier2Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly, planRef); break;
-        default: cmd = tier3Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly); break;
+        default: cmd = tier3Possession(player, pt, hasBall, aiPlayers, playerPlayers, ballTile, claimed, friendly, planRef); break;
       }
     } else if (playerHasBall) {
       switch (tier) {
