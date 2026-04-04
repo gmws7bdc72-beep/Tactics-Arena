@@ -689,8 +689,10 @@ function detectAndResolveEvents(
         // ball carrier in full stride shields better.
         const defMomentum = Math.min(0.1, vec2Len(other.velocity) / 400 * 0.1);
         const atkMomentum = Math.min(0.1, vec2Len(owner.velocity) / 400 * 0.1);
-        const attackerScore = owner.stats.attack / 10 + rng() * 0.25 + atkMomentum;
-        let defenderScore = other.stats.defense / 10 + rng() * 0.25 + defMomentum;
+        // Center at 0.5 so even a weak defender can tackle a strong carrier ~25% of
+        // the time; each stat point is worth 0.04 and random spread is ±0.38
+        const attackerScore = 0.5 + (owner.stats.attack - 5) * 0.04 + rng() * 0.38 + atkMomentum;
+        let defenderScore = 0.5 + (other.stats.defense - 5) * 0.04 + rng() * 0.38 + defMomentum;
         if (other.ability === "iron_tackle") defenderScore += 0.2;
         if (other.ability === "powerhouse") defenderScore += 0.2;
         if (other.ability === "goalkeeper") defenderScore += 0.12;

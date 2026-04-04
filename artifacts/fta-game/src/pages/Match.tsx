@@ -131,6 +131,17 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   // Tracks where the AI conceded goals this match so it can adapt its defensive shape
   const adaptiveAIRef = useRef<AdaptiveAIState>({ concededRows: [] });
 
+  // Replay
+  const allMatchFramesRef = useRef<FrameSnapshot[]>([]);
+  const [matchEndResult, setMatchEndResult] = useState<{ playerScore: number; aiScore: number } | null>(null);
+  const [replayMode, setReplayMode] = useState(false);
+  const [replayIdx, setReplayIdx] = useState(0);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const replayAnimRef = useRef<number | null>(null);
+  const replayIdxRef = useRef(0);
+  const replaySpeedRef = useRef<1 | 2 | 4>(1);
+
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { ballRef.current = ball; }, [ball]);
   useEffect(() => { pendingCommandsRef.current = pendingCommands; }, [pendingCommands]);
@@ -220,7 +231,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       phaseRef.current = "finished";
       setPhase("finished");
       setTimeout(() => {
-        onMatchEnd({ playerScore: newScore.player, aiScore: newScore.ai, events: allEventsRef.current });
+        setMatchEndResult({ playerScore: newScore.player, aiScore: newScore.ai });
       }, goalEvent ? 2400 : 1200);
     } else {
       turnRef.current = nextTurn;
@@ -258,6 +269,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       animRef.current = requestAnimationFrame(animate);
     };
 
+    // Accumulate all frames so the full-match replay can play them back
+    allMatchFramesRef.current.push(...frames);
     stopAnim();
     animRef.current = requestAnimationFrame(animate);
   }, [finishSimulation]);
@@ -292,6 +305,87 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     setPendingCommands(new Map());
     runTurn();
   }, [runTurn, clearSelection]);
+
+  // ── Replay handlers ───────────────────────────────────────────────────────
+  const stopReplayAnim = useCallback(() => {
+    if (replayAnimRef.current !== null) {
+      cancelAnimationFrame(replayAnimRef.current);
+      replayAnimRef.current = null;
+    }
+  }, []);
+
+  const startReplayAnimation = useCallback((startIdx: number) => {
+    const allFrames = allMatchFramesRef.current;
+    let idx = startIdx;
+    let last = 0;
+    const loop = (time: number) => {
+      if (last === 0) last = time;
+      const frameMs = 1000 / (30 * replaySpeedRef.current);
+      if (time - last >= frameMs) {
+        if (idx < allFrames.length) {
+          setCurrentFrame(allFrames[idx]);
+          setReplayIdx(idx);
+          replayIdxRef.current = idx;
+          idx++;
+          last = time;
+        } else {
+          setReplayPlaying(false);
+          return;
+        }
+      }
+      replayAnimRef.current = requestAnimationFrame(loop);
+    };
+    stopReplayAnim();
+    replayAnimRef.current = requestAnimationFrame(loop);
+  }, [stopReplayAnim]);
+
+  const handleWatchReplay = useCallback(() => {
+    replayIdxRef.current = 0;
+    setReplayIdx(0);
+    setReplayPlaying(true);
+    setReplayMode(true);
+    startReplayAnimation(0);
+  }, [startReplayAnimation]);
+
+  const handleContinue = useCallback(() => {
+    if (matchEndResult) {
+      onMatchEnd({ playerScore: matchEndResult.playerScore, aiScore: matchEndResult.aiScore, events: allEventsRef.current });
+    }
+  }, [matchEndResult, onMatchEnd]);
+
+  const handleExitReplay = useCallback(() => {
+    stopReplayAnim();
+    setReplayPlaying(false);
+    setReplayMode(false);
+  }, [stopReplayAnim]);
+
+  const handleToggleReplayPlay = useCallback(() => {
+    if (replayPlaying) {
+      stopReplayAnim();
+      setReplayPlaying(false);
+    } else {
+      setReplayPlaying(true);
+      startReplayAnimation(replayIdxRef.current);
+    }
+  }, [replayPlaying, stopReplayAnim, startReplayAnimation]);
+
+  const handleReplaySpeed = useCallback(() => {
+    const next: 1 | 2 | 4 = replaySpeed === 1 ? 2 : replaySpeed === 2 ? 4 : 1;
+    setReplaySpeed(next);
+    replaySpeedRef.current = next;
+  }, [replaySpeed]);
+
+  const handleReplayScrub = useCallback((idx: number) => {
+    const allFrames = allMatchFramesRef.current;
+    if (idx >= 0 && idx < allFrames.length) {
+      stopReplayAnim();
+      setReplayPlaying(false);
+      setReplayIdx(idx);
+      replayIdxRef.current = idx;
+      setCurrentFrame(allFrames[idx]);
+    }
+  }, [stopReplayAnim]);
+  // ─────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (phase !== "planning") return;
@@ -427,7 +521,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   }, [clearSelection]);
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#070b14" }}>
+    <div className="relative min-h-screen flex flex-col" style={{ background: "#070b14" }}>
       {/* Top bar */}
       <div
         className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
@@ -618,6 +712,84 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           <EventLog events={allEvents} />
         </div>
       </div>
+
+      {/* Match-end overlay */}
+      {matchEndResult && !replayMode && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.72)" }}>
+          <div className="text-center px-8 py-7 rounded-2xl mx-4" style={{ background: "rgba(7,11,20,0.97)", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <div className="text-gray-400 text-xs tracking-widest uppercase mb-1">Full Time</div>
+            <div className="text-white font-black text-5xl mb-1">
+              {matchEndResult.playerScore} – {matchEndResult.aiScore}
+            </div>
+            <div
+              className="text-base font-bold mb-6"
+              style={{ color: matchEndResult.playerScore > matchEndResult.aiScore ? "#00e676" : matchEndResult.playerScore < matchEndResult.aiScore ? "#ff5252" : "#ffd700" }}
+            >
+              {matchEndResult.playerScore > matchEndResult.aiScore ? "Victory!" : matchEndResult.playerScore < matchEndResult.aiScore ? "Defeat" : "Draw"}
+            </div>
+            <div className="flex gap-3">
+              {allMatchFramesRef.current.length > 0 && (
+                <button
+                  onClick={handleWatchReplay}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
+                  style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#ccc" }}
+                >
+                  ▶ Replay
+                </button>
+              )}
+              <button
+                onClick={handleContinue}
+                className="flex-1 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95"
+                style={{ background: "linear-gradient(135deg, #00e676, #00b288)" }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replay controls overlay */}
+      {replayMode && (
+        <div
+          className="absolute bottom-0 left-0 right-0 z-40 flex flex-col gap-2 px-4 py-3"
+          style={{ background: "rgba(7,11,20,0.92)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(255,255,255,0.08)" }}
+        >
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, allMatchFramesRef.current.length - 1)}
+            value={replayIdx}
+            onChange={e => handleReplayScrub(Number(e.target.value))}
+            className="w-full h-1 accent-green-400 cursor-pointer"
+            style={{ accentColor: "#00e676" }}
+          />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleToggleReplayPlay}
+              className="text-white text-xl w-8 text-center"
+            >
+              {replayPlaying ? "⏸" : "▶"}
+            </button>
+            <button
+              onClick={handleReplaySpeed}
+              className="text-xs font-black px-2.5 py-1 rounded-lg"
+              style={{ background: "rgba(255,215,0,0.15)", color: "#ffd700", border: "1px solid rgba(255,215,0,0.3)" }}
+            >
+              {replaySpeed}×
+            </button>
+            <div className="flex-1 text-center text-xs text-gray-500">
+              {replayPlaying ? "Playing…" : "Paused"} · {allMatchFramesRef.current.length > 0 ? Math.round(replayIdx / allMatchFramesRef.current.length * 100) : 0}%
+            </div>
+            <button
+              onClick={handleExitReplay}
+              className="text-gray-400 hover:text-white text-sm font-medium px-2 py-1 transition-colors"
+            >
+              ✕ Exit
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
