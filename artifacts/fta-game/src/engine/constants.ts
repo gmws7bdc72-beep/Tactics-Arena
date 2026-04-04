@@ -28,7 +28,7 @@ export const PLAYER_CONTROL_RADIUS = 20;
 export const INTERCEPTION_RADIUS = 24;
 export const CONTEST_RADIUS = 26;
 
-export const BALL_FRICTION = 0.97;
+export const BALL_FRICTION = 0.983;
 export const PASS_SPEED = 160;
 export const SHOT_SPEED = 380;
 

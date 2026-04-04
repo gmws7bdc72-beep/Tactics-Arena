@@ -524,9 +524,10 @@ function tier1Possession(
 
     // 5. Dribble only when route is clear
     if (!fwdBlocked && !hardPressed) {
-      // Slightly diagonal run to avoid defenders
+      // Slightly diagonal run to avoid defenders; distance scales with player speed
       const dribRow = pt.row < 3 ? pt.row + 1 : pt.row - 1; // move into space
-      const dribTarget = { col: pt.col - 1, row: Math.max(0, Math.min(6, dribRow)) };
+      const dribRange = speedToTiles(player.stats.speed);
+      const dribTarget = { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(6, dribRow)) };
       return moveStep(player, pt, dribTarget, claimed, friendly);
     }
 
@@ -655,9 +656,10 @@ function tier2Possession(
       if (bkTarget && Math.random() < 0.5) return passTo(bkTarget, player.position);
     }
 
-    // Dribble forward if route is clear
+    // Dribble forward if route is clear; distance scales with player speed
     if (!fwdBlocked) {
-      return moveStep(player, pt, { col: pt.col - 1, row: pt.row }, claimed, friendly);
+      const dribRange = speedToTiles(player.stats.speed);
+      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
     }
 
     // Blocked: try to pass or sidestep
@@ -765,8 +767,8 @@ function tier3Possession(
   }
 
   if (hasBall) {
-    // Shoot from very early (they are not sophisticated)
-    if (pt.col <= 4) return shoot();
+    // Shoot from close range (slightly less trigger-happy than before)
+    if (pt.col <= 3) return shoot();
 
     // Rarely pass — only to very close teammate
     const closeTeammate = aiPlayers.find(p =>
@@ -774,7 +776,7 @@ function tier3Possession(
       p.role !== "goalkeeper" &&
       tileDist(posToTile(p.position), pt) <= 2
     );
-    if (closeTeammate && Math.random() < 0.15) {
+    if (closeTeammate && Math.random() < 0.28) {
       const rTile = posToTile(closeTeammate.position);
       const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(closeTeammate.stats.speed)), row: rTile.row };
       if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
@@ -784,8 +786,9 @@ function tier3Possession(
       return passTo(closeTeammate, player.position);
     }
 
-    // Just dribble forward — very predictable
-    return moveStep(player, pt, { col: pt.col - 1, row: pt.row }, claimed, friendly);
+    // Just dribble forward — very predictable; still uses player's speed range
+    const dribRange = speedToTiles(player.stats.speed);
+    return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
   // Off-ball: barely move, loose shape
@@ -818,12 +821,12 @@ function tier3Defense(
   // Passive: sit in own half, only press if ball is very close.
   // After concessions, press threshold and shape row shift toward danger.
   const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const compactCol: Record<string, number> = { defender: 8, midfielder: 7, forward: 6, striker: 6 };
-  const col = compactCol[player.role] ?? 7;
+  const compactCol: Record<string, number> = { defender: 7, midfielder: 6, forward: 5, striker: 5 };
+  const col = compactCol[player.role] ?? 6;
 
   const ballRow = roleIdx === 0 ? Math.max(1, ballTile.row - 1) : Math.min(5, ballTile.row + 1);
   const compactRow = adaptRow(ballRow, adapt);
-  const pressThreshold = Math.min(4, 2 + adapt.urgency);
+  const pressThreshold = Math.min(5, 3 + adapt.urgency);
 
   if (tileDist(pt, ballTile) <= pressThreshold) {
     return moveStep(player, pt, ballTile, claimed, friendly);
