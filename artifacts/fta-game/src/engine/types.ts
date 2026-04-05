@@ -88,6 +88,9 @@ export interface SimBall {
   position: Vec2;
   velocity: Vec2;
   ownerId: string | null;
+  /** If set, ball is in a "pass animation" and will snap to this position
+   *  when it reaches the closest point or slows to a stop. */
+  passTarget?: Vec2;
 }
 
 export enum GameEventType {

@@ -528,7 +528,7 @@ function computePassAccuracy(player: SimPlayer, distTiles: number): number {
   return Math.max(0.05, Math.min(1.0, base - penalty));
 }
 
-function executePass(player: SimPlayer, ball: SimBall, rng: () => number): void {
+function executePass(player: SimPlayer, ball: SimBall, _rng: () => number): void {
   const cmd = player.command;
   if (!cmd || cmd.type !== CommandType.PASS) return;
   const targetPos = cmd.targetPosition ?? { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
@@ -536,30 +536,11 @@ function executePass(player: SimPlayer, ball: SimBall, rng: () => number): void 
   let passSpd = PASS_SPEED;
   if (player.ability === "bullet_pass") passSpd *= 1.5;
 
-  const rawDir = vec2Normalize(vec2Sub(targetPos, ball.position));
-  const distPx = vec2Dist(ball.position, targetPos);
-  const distTiles = distPx / TILE_W;
-
-  let dir = rawDir;
-
-  // Coordinated (pass-to-tile) plays are pre-planned — the ball must arrive at the
-  // exact announced tile, so skip accuracy deviation entirely.
-  if (!cmd.coordinated) {
-    const accuracy = computePassAccuracy(player, distTiles);
-    if (rng() > accuracy) {
-      // Inaccurate pass: deviate the direction by a random angle
-      const maxDeviation = Math.PI * 0.35 * (1 - accuracy);
-      const angle = (rng() * 2 - 1) * maxDeviation;
-      const cos_a = Math.cos(angle);
-      const sin_a = Math.sin(angle);
-      dir = {
-        x: dir.x * cos_a - dir.y * sin_a,
-        y: dir.x * sin_a + dir.y * cos_a,
-      };
-    }
-  }
-
+  // Ball travels as an animation toward the target tile and snaps there
+  // deterministically — no accuracy deviation, no overshoot.
+  const dir = vec2Normalize(vec2Sub(targetPos, ball.position));
   ball.velocity = vec2Scale(dir, passSpd);
+  ball.passTarget = { ...targetPos };
   ball.ownerId = null;
 }
 
@@ -582,9 +563,25 @@ function executeShot(player: SimPlayer, ball: SimBall, rng: () => number): void 
 
 function updateBallPhysics(ball: SimBall, dt: number): void {
   if (ball.ownerId !== null) return;
-  ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
-  ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
-  if (vec2Len(ball.velocity) < 2) ball.velocity = { x: 0, y: 0 };
+
+  if (ball.passTarget) {
+    // Pass animation: decelerate with friction but guarantee arrival at passTarget.
+    const distBefore = vec2Dist(ball.position, ball.passTarget);
+    ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
+    ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+    const distAfter = vec2Dist(ball.position, ball.passTarget);
+
+    // Snap when: overshot (distance increased), very close, or nearly stopped.
+    if (distAfter >= distBefore || distAfter < 4 || vec2Len(ball.velocity) < 2) {
+      ball.position = { ...ball.passTarget };
+      ball.velocity = { x: 0, y: 0 };
+      ball.passTarget = undefined;
+    }
+  } else {
+    ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
+    ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+    if (vec2Len(ball.velocity) < 2) ball.velocity = { x: 0, y: 0 };
+  }
 }
 
 function detectAndResolveEvents(
@@ -636,6 +633,7 @@ function detectAndResolveEvents(
           loser.commandExecuted = false;
           ball.ownerId = loser.id;
           ball.velocity = { x: 0, y: 0 };
+          ball.passTarget = undefined;
           loser.state = PlayerState.DRIBBLING;
           winner.state = PlayerState.RECOVERING;
           winner.recoveryTimer = 1.0;
@@ -657,6 +655,7 @@ function detectAndResolveEvents(
 
       ball.ownerId = winner.id;
       ball.velocity = { x: 0, y: 0 };
+      ball.passTarget = undefined;
       winner.state = PlayerState.DRIBBLING;
 
       if (loser && loser.teamId !== winner.teamId) {

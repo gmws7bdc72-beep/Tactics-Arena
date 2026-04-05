@@ -187,20 +187,17 @@ function leadPassTarget(ballPos: Vec2, target: SimPlayer): Vec2 {
   };
 }
 
-function passTo(target: SimPlayer, ballPos?: Vec2): Command {
-  const aimPos = ballPos ? leadPassTarget(ballPos, target) : { ...target.position };
-  return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: aimPos };
+function passTo(target: SimPlayer, _ballPos?: Vec2): Command {
+  return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } };
 }
-
 
 // Pass and immediately run into space after — a "pass and run" combo command.
 // The carrier passes to `target` then moves to `runTile`.
-function passAndRun(target: SimPlayer, runTile: TilePos, ballPos?: Vec2): Command {
-  const aimPos = ballPos ? leadPassTarget(ballPos, target) : { ...target.position };
+function passAndRun(target: SimPlayer, runTile: TilePos, _ballPos?: Vec2): Command {
   return {
     type: CommandType.PASS,
     targetPlayerId: target.id,
-    targetPosition: aimPos,
+    targetPosition: { ...target.position },
     followUp: { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) },
   };
 }
@@ -441,15 +438,10 @@ function tier1Possession(
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // 3. Elite: pass-first philosophy
-    // Forward pass — primary option (always look for it).
-    // Pass forward if target exists and EITHER: carrier isn't pressed, OR target is open.
-    // Both being threatened simultaneously is the only case we hold off.
+    // 3. Forward pass — ONLY if the receiver's tile is genuinely open.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6);
     const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
-    if (fwdTarget && (!hardPressed || fwdTargetOpen)) {
-      // fwdTarget.position is already the runner's projected destination.
-      // Aim ball straight there; the runner gets a MOVE override to the same tile.
+    if (fwdTargetOpen) {
       const runTile = posToTile(fwdTarget.position);
       if (planRef) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
@@ -458,9 +450,8 @@ function tier1Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // Under pressure: lateral or backward pass (switch play)
+    // 4. Under pressure or forward blocked: escape with lateral or backward pass.
     if (hardPressed || fwdBlocked) {
-      // Lateral switch — spreads the play
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
         if (Math.random() < 0.3) {
@@ -469,36 +460,22 @@ function tier1Possession(
         }
         return passTo(latTarget, player.position);
       }
-
-      // Backward recycle — keep possession
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
       if (bkTarget) return passTo(bkTarget, player.position);
     }
 
-    // 4. Forward pass even from moderate distance when not blocked
-    if (fwdTarget) {
-      const runTile2 = posToTile(fwdTarget.position);
-      if (planRef) {
-        planRef.current = { runnerId: fwdTarget.id, runTile: runTile2 };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile2.col, runTile2.row), coordinated: true };
-      }
-      return passTo(fwdTarget, player.position);
-    }
-
-    // 5. Dribble only when route is clear
-    if (!fwdBlocked && !hardPressed) {
-      // Slightly diagonal run to avoid defenders; distance scales with player speed
-      const dribRow = pt.row < 3 ? pt.row + 1 : pt.row - 1; // move into space
+    // 5. No open receiver and not pressed: dribble forward.
+    if (!fwdBlocked) {
+      const dribRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
       const dribRange = speedToTiles(player.stats.speed);
-      const dribTarget = { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(6, dribRow)) };
-      return moveStep(player, pt, dribTarget, claimed, friendly);
+      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(6, dribRow)) }, claimed, friendly);
     }
 
-    // 6. Last resort: any open teammate
+    // 6. Truly stuck: any open teammate in any direction.
     const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
     if (anyTarget) return passTo(anyTarget, player.position);
 
-    // Sidestep to create angle
+    // Sidestep to create a new passing angle.
     const sideRow = pt.row < 3 ? pt.row + 2 : pt.row - 2;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
   }
@@ -562,6 +539,9 @@ function tier1Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
+  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
+  claimed.add(tileKey(ballTile.col, ballTile.row));
+
   if (player.role === "goalkeeper") {
     // Track ball row, stay in col 9, central 3 rows so corners remain scorable
     const ballRow = Math.max(2, Math.min(4, ballTile.row));
@@ -676,11 +656,10 @@ function tier2Possession(
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // Pass forward if good opportunity.
-    // Same rule as Tier 1: press doesn't block a forward pass if the target is open.
+    // Pass forward only if the receiver's tile is genuinely open.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6);
     const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
-    if (fwdTarget && (!hardPressed || fwdTargetOpen)) {
+    if (fwdTargetOpen) {
       const runTile = posToTile(fwdTarget.position);
       if (planRef) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
@@ -689,29 +668,23 @@ function tier2Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // If pressed, look for any lateral/forward release
+    // Under pressure: lateral or backward escape.
     if (hardPressed) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (latTarget) return passTo(latTarget, player.position);
-      // Rarely goes backward — prefers to hold
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 4);
       if (bkTarget && Math.random() < 0.5) return passTo(bkTarget, player.position);
     }
 
-    // Dribble forward if route is clear; distance scales with player speed
+    // Dribble forward if route is clear.
     if (!fwdBlocked) {
       const dribRange = speedToTiles(player.stats.speed);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
     }
 
-    // Blocked: try to pass or sidestep
-    if (fwdTarget) {
-      if (Math.random() < 0.2) {
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        return passAndRun(fwdTarget, runTile, player.position);
-      }
-      return passTo(fwdTarget, player.position);
-    }
+    // Truly blocked: find any open teammate rather than forcing pass to covered receiver.
+    const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 5);
+    if (anyTarget) return passTo(anyTarget, player.position);
     const sideRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
   }
@@ -732,6 +705,9 @@ function tier2Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
+  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
+  claimed.add(tileKey(ballTile.col, ballTile.row));
+
   const adapt = computeAdaptation(adaptiveState);
 
   if (player.role === "goalkeeper") {
@@ -842,6 +818,9 @@ function tier3Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
+  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
+  claimed.add(tileKey(ballTile.col, ballTile.row));
+
   const adapt = computeAdaptation(adaptiveState);
 
   if (player.role === "goalkeeper") {
