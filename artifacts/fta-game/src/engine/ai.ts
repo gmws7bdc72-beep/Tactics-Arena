@@ -456,9 +456,17 @@ function tier1Possession(
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
-      // GK must distribute — always pass out to an outfield player
+      // GK distributes with pass-to-tile
       const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-      if (fwdTarget) return passTo(fwdTarget, player.position);
+      if (fwdTarget) {
+        const rTile = posToTile(fwdTarget.position);
+        const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(fwdTarget.stats.speed)), row: rTile.row };
+        if (planRef && fTile.col < rTile.col) {
+          planRef.current = { runnerId: fwdTarget.id, runTile: fTile };
+          return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, fTile), coordinated: true };
+        }
+        return passTo(fwdTarget, player.position);
+      }
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
       if (anyTarget) return passTo(anyTarget, player.position);
     }
@@ -619,7 +627,15 @@ function tier2Possession(
   if (player.role === "goalkeeper") {
     if (hasBall) {
       const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-      if (fwdTarget) return passTo(fwdTarget, player.position);
+      if (fwdTarget) {
+        const rTile = posToTile(fwdTarget.position);
+        const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(fwdTarget.stats.speed)), row: rTile.row };
+        if (planRef && fTile.col < rTile.col) {
+          planRef.current = { runnerId: fwdTarget.id, runTile: fTile };
+          return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, fTile), coordinated: true };
+        }
+        return passTo(fwdTarget, player.position);
+      }
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
       if (anyTarget) return passTo(anyTarget, player.position);
     }
@@ -636,11 +652,11 @@ function tier2Possession(
     // Pass forward if good opportunity (slightly less eager than Tier 1)
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
     if (fwdTarget && !hardPressed) {
-      // 85% chance: "pass-to-tile" — coordinate runner + aimed pass
+      // Always pass-to-tile — coordinate runner + aimed pass
       const runnerTile = posToTile(fwdTarget.position);
       const runnerReach = speedToTiles(fwdTarget.stats.speed);
       const runTile: TilePos = { col: Math.max(0, runnerTile.col - runnerReach), row: runnerTile.row };
-      if (planRef && runTile.col < runnerTile.col && Math.random() < 0.85) {
+      if (planRef && runTile.col < runnerTile.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, runTile), coordinated: true };
       }
@@ -751,12 +767,12 @@ function tier3Possession(
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
-      // Tier 3 GK boots it to anyone, 50% pass-to-tile
+      // Tier 3 GK boots it forward — always pass-to-tile
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 9);
       if (anyTarget) {
         const rTile = posToTile(anyTarget.position);
         const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(anyTarget.stats.speed)), row: rTile.row };
-        if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
+        if (planRef && fTile.col < rTile.col) {
           planRef.current = { runnerId: anyTarget.id, runTile: fTile };
           return { type: CommandType.PASS, targetPlayerId: anyTarget.id, targetPosition: throughBallTarget(player.position, anyTarget, fTile), coordinated: true };
         }
@@ -770,12 +786,12 @@ function tier3Possession(
     // Shoot from close range (slightly less trigger-happy than before)
     if (pt.col <= 3) return shoot();
 
-    // Rarely pass — 28% chance, picks best forward target anywhere on pitch
+    // Rarely pass — 28% chance; when passing always use pass-to-tile
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
     if (fwdTarget && Math.random() < 0.28) {
       const rTile = posToTile(fwdTarget.position);
       const fTile: TilePos = { col: Math.max(0, rTile.col - speedToTiles(fwdTarget.stats.speed)), row: rTile.row };
-      if (planRef && fTile.col < rTile.col && Math.random() < 0.75) {
+      if (planRef && fTile.col < rTile.col) {
         planRef.current = { runnerId: fwdTarget.id, runTile: fTile };
         return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: throughBallTarget(player.position, fwdTarget, fTile), coordinated: true };
       }
