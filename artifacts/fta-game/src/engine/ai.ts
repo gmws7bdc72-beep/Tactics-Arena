@@ -247,8 +247,35 @@ function isForwardBlocked(pt: TilePos, opponents: SimPlayer[]): boolean {
   });
 }
 
-// Best teammate for a forward pass (more advanced = lower col).
-// Prefers un-threatened targets but does NOT exclude threatened ones.
+/**
+ * Returns true if any opponent tile lies on an intermediate tile of the pass
+ * lane from `fromTile` to `toTile` (endpoints excluded). Uses linear
+ * interpolation (approximates Bresenham's line) so the check is purely
+ * tile-based and scales naturally with pass distance.
+ */
+function isLaneBlocked(fromTile: TilePos, toTile: TilePos, opponents: SimPlayer[]): boolean {
+  const steps = Math.max(
+    Math.abs(toTile.col - fromTile.col),
+    Math.abs(toTile.row - fromTile.row)
+  );
+  if (steps <= 1) return false; // Adjacent pass — no intermediate tiles to block
+
+  const oppTiles = new Set(
+    opponents.map(o => {
+      const t = posToTile(o.position);
+      return tileKey(t.col, t.row);
+    })
+  );
+
+  for (let i = 1; i < steps; i++) {
+    const frac = i / steps;
+    const col = Math.round(fromTile.col + frac * (toTile.col - fromTile.col));
+    const row = Math.round(fromTile.row + frac * (toTile.row - fromTile.row));
+    if (oppTiles.has(tileKey(col, row))) return true;
+  }
+  return false;
+}
+
 function bestForwardPass(
   carrier: SimPlayer,
   aiPlayers: SimPlayer[],
@@ -261,6 +288,7 @@ function bestForwardPass(
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => t.col < ct.col)
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
@@ -283,6 +311,7 @@ function bestLateralPass(
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => Math.abs(t.col - ct.col) <= 1)
     .filter(({ t }) => tileDist(t, ct) >= 1 && tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
@@ -305,6 +334,7 @@ function bestBackwardPass(
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => t.col > ct.col)
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
@@ -326,6 +356,7 @@ function bestAnyPass(
     .filter(p => p.id !== carrier.id)
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
