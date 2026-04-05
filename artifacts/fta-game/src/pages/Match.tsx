@@ -219,7 +219,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
         ? { position: { ...concedingGK.position }, velocity: { x: 0, y: 0 }, ownerId: concedingGK.id }
         : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
     } else {
-      newBall = { ...lastFrame.ball };
+      // Zero velocity so the planning phase always starts with a stationary ball.
+      // If the simulation ended with the ball still rolling (an unowned pass that
+      // didn't reach its target in 60 ticks), we freeze it at its final position
+      // rather than carrying the live velocity into the next turn's state.
+      newBall = { ...lastFrame.ball, velocity: { x: 0, y: 0 } };
     }
 
     setPlayers(newSimPlayers);

@@ -485,9 +485,12 @@ function tier1Possession(
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
     // 3. Elite: pass-first philosophy
-    // Forward pass — primary option (always look for it)
+    // Forward pass — primary option (always look for it).
+    // Pass forward if target exists and EITHER: carrier isn't pressed, OR target is open.
+    // Both being threatened simultaneously is the only case we hold off.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-    if (fwdTarget && !hardPressed) {
+    const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
+    if (fwdTarget && (!hardPressed || fwdTargetOpen)) {
       // 50% chance: "pass-to-tile" — aim at the tile the runner is headed to,
       // and simultaneously move the runner there (coordinated run).
       const runnerTile = posToTile(fwdTarget.position);
@@ -723,9 +726,11 @@ function tier2Possession(
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // Pass forward if good opportunity (slightly less eager than Tier 1)
+    // Pass forward if good opportunity.
+    // Same rule as Tier 1: press doesn't block a forward pass if the target is open.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 9);
-    if (fwdTarget && !hardPressed) {
+    const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
+    if (fwdTarget && (!hardPressed || fwdTargetOpen)) {
       // Always pass-to-tile — coordinate runner + aimed pass
       const runnerTile = posToTile(fwdTarget.position);
       const runnerReach = speedToTiles(fwdTarget.stats.speed);
