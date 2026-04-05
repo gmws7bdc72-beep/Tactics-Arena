@@ -632,14 +632,41 @@ function tier1Defense(
   const oppTile = posToTile(assignedOpponent.position);
   const oppDistFromBall = chebDist(oppTile, ballTile);
 
-  // Always press hard when opponent is on or next to the ball
-  if (oppDistFromBall <= 1) {
+  // ── Ball carrier (opponent HAS the ball) ──────────────────────────────────
+  // Never crowd their current tile. Instead, cut their most likely exit:
+  // find their most advanced outfield teammate and intercept ~60% along that lane.
+  if (oppDistFromBall === 0) {
+    const teammates = playerPlayers.filter(
+      p => p.role !== "goalkeeper" && p.id !== assignedOpponent.id
+    );
+    if (teammates.length > 0) {
+      const danger = teammates.reduce((best, p) =>
+        posToTile(p.position).col > posToTile(best.position).col ? p : best
+      );
+      const tgt = posToTile(danger.position);
+      const laneCol = Math.max(0, Math.min(GRID_COLS - 1,
+        Math.round(oppTile.col * 0.4 + tgt.col * 0.6)
+      ));
+      const laneRow = Math.max(0, Math.min(6,
+        Math.round(oppTile.row * 0.4 + tgt.row * 0.6)
+      ));
+      return moveStep(player, pt, { col: laneCol, row: laneRow }, claimed, friendly);
+    }
+    // No outfield target: step 1 tile goal-side to cut the dribble path
+    return moveStep(player, pt,
+      { col: Math.min(GRID_COLS - 1, oppTile.col + 1), row: oppTile.row },
+      claimed, friendly
+    );
+  }
+
+  // ── Adjacent to ball (likely imminent receiver) ───────────────────────────
+  // Press their tile directly — fine to target since they don't have possession.
+  if (oppDistFromBall === 1) {
     return moveStep(player, pt, oppTile, claimed, friendly);
   }
 
-  // Loose marking: when opponent is safely away from the ball, attacking roles
-  // occasionally drop into a zonal hold rather than tight tracking.
-  // Defenders/midfielders do this rarely; forwards/strikers more often.
+  // ── Loose marking: off-ball opponent safely away from play ────────────────
+  // Attacking roles drift into a zonal hold more often than defensive roles.
   const looseRole = player.role === "forward" || player.role === "striker";
   const isLoose = oppDistFromBall >= 3 && Math.random() < (looseRole ? 0.45 : 0.18);
 
@@ -650,9 +677,9 @@ function tier1Defense(
     return moveStep(player, pt, { col: looseCol, row: looseRow }, claimed, friendly);
   }
 
-  // Tight shadow: intercept the pass lane — position on the line between opponent
-  // and ball, shifted 1 tile goal-side. Targets where the pass would arrive,
-  // not where the opponent currently stands, eliminating the one-turn lag.
+  // ── Tight shadow: intercept the pass lane ────────────────────────────────
+  // Position on the line between opponent and ball, shifted 1 tile goal-side.
+  // Targets where a pass would arrive, not where the opponent currently is.
   const interceptCol = Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2) + 1);
   const interceptRow = Math.max(0, Math.min(6, Math.round((oppTile.row + ballTile.row) / 2)));
   return moveStep(player, pt, { col: interceptCol, row: interceptRow }, claimed, friendly);
