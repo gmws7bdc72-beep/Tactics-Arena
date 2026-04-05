@@ -21,6 +21,7 @@ interface PassTilePlan {
 // Tracks where the AI has conceded goals so it can adjust its defensive shape.
 export interface AdaptiveAIState {
   concededRows: number[]; // pitch rows (0-6) where each goal was conceded, oldest first
+  tier1Markings?: Record<string, string>; // aiPlayerId → playerPlayerId, set once at kickoff
 }
 
 interface Adaptation {
@@ -555,6 +556,48 @@ function tier1Possession(
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
+// Builds a fixed 1-to-1 man-marking map for Tier 1 at game start.
+// Defensive roles (defender, midfielder) greedily claim the closest unassigned
+// player opponent (who are most advanced at kickoff = most dangerous).
+// Attacking roles (forward, striker) randomly claim whoever remains —
+// ensuring no two AI players ever shadow the same opponent.
+function computeTier1Markings(
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[]
+): Record<string, string> {
+  const markings: Record<string, string> = {};
+  const roleOrder: Record<string, number> = { defender: 0, midfielder: 1, forward: 2, striker: 3 };
+
+  const aiOutfield = [...aiPlayers]
+    .filter(p => p.role !== "goalkeeper")
+    .sort((a, b) => (roleOrder[a.role] ?? 2) - (roleOrder[b.role] ?? 2));
+
+  const unassigned = [...playerPlayers].filter(p => p.role !== "goalkeeper");
+
+  for (const aiPlayer of aiOutfield) {
+    if (unassigned.length === 0) break;
+
+    let pickIdx: number;
+    if (aiPlayer.role === "forward" || aiPlayer.role === "striker") {
+      // Attacking roles: random pick from whatever opponents are left
+      pickIdx = Math.floor(Math.random() * unassigned.length);
+    } else {
+      // Defensive roles: greedy — claim the closest unassigned opponent
+      pickIdx = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < unassigned.length; i++) {
+        const d = eucDist(aiPlayer.position, unassigned[i].position);
+        if (d < bestDist) { bestDist = d; pickIdx = i; }
+      }
+    }
+
+    markings[aiPlayer.id] = unassigned[pickIdx].id;
+    unassigned.splice(pickIdx, 1);
+  }
+
+  return markings;
+}
+
 function tier1Defense(
   player: SimPlayer,
   pt: TilePos,
@@ -565,50 +608,38 @@ function tier1Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
-  const adapt = computeAdaptation(adaptiveState);
   if (player.role === "goalkeeper") {
-    // Track ball row, stay in central 3 rows so corners remain scorable
+    // Track ball row, stay in col 9, central 3 rows so corners remain scorable
     const ballRow = Math.max(2, Math.min(4, ballTile.row));
-    const targetRow = adaptRow(ballRow, adapt);
-    return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
+    return moveStep(player, pt, { col: 9, row: ballRow }, claimed, friendly);
   }
 
-  // Elite defense: high press + man-marking
-  // Sort opponents by threat (proximity to AI goal = higher col)
-  const playerOutfield = playerPlayers
-    .filter(p => p.role !== "goalkeeper")
-    .sort((a, b) => eucDist(b.position, { x: 700, y: 230 }) - eucDist(a.position, { x: 700, y: 230 }));
-    // NOTE: sorted descending by distance from AI goal — most threatening first
+  // Initialise marking assignments once at game start
+  if (adaptiveState && !adaptiveState.tier1Markings) {
+    adaptiveState.tier1Markings = computeTier1Markings(aiPlayers, playerPlayers);
+  }
 
-  const aiOutfield = aiPlayers
-    .filter(p => p.role !== "goalkeeper")
-    .sort((a, b) => {
-      const roleOrder: Record<string, number> = { defender: 0, midfielder: 1, forward: 2, striker: 3 };
-      return (roleOrder[a.role] ?? 2) - (roleOrder[b.role] ?? 2);
-    });
+  const assignedId = adaptiveState?.tier1Markings?.[player.id];
+  const assignedOpponent = assignedId
+    ? (playerPlayers.find(p => p.id === assignedId) ?? null)
+    : null;
 
-  const myIdx = aiOutfield.findIndex(p => p.id === player.id);
-  const assignedOpponent = playerOutfield[myIdx] ?? playerOutfield[0];
-
-  if (!assignedOpponent) return stayPut(pt);
+  // Fallback: no mark assigned (e.g. more AI players than opponents) — press ball
+  if (!assignedOpponent) {
+    return moveStep(player, pt, ballTile, claimed, friendly);
+  }
 
   const oppTile = posToTile(assignedOpponent.position);
 
-  // High press: move directly onto the ball carrier, intercept passing lanes otherwise
-  const ballCarrier = playerPlayers.find(p => p.id !== undefined && chebDist(posToTile(p.position), ballTile) === 0);
-  if (assignedOpponent === ballCarrier || chebDist(oppTile, ballTile) <= 1) {
-    // Press the ball directly
+  // Press directly if assigned opponent is on or next to the ball
+  if (chebDist(oppTile, ballTile) <= 1) {
     return moveStep(player, pt, oppTile, claimed, friendly);
   }
 
-  // Cover the intercept position between assigned opponent and ball,
-  // biasing the row toward the danger zone when the AI has been punished there.
-  const interceptRow = adaptRow(Math.max(0, Math.min(6, oppTile.row)), adapt);
-  const interceptTile: TilePos = {
-    col: Math.max(0, Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2))),
-    row: interceptRow,
-  };
-  return moveStep(player, pt, interceptTile, claimed, friendly);
+  // Shadow mark: sit 1 tile goal-side of the assigned opponent on their row,
+  // cutting off the pass lane and forcing them wide
+  const shadowCol = Math.min(GRID_COLS - 1, oppTile.col + 1);
+  return moveStep(player, pt, { col: shadowCol, row: oppTile.row }, claimed, friendly);
 }
 
 // ─── Tier 2 — Mid: Balanced attack, pass when easy, dribble when open ────────
