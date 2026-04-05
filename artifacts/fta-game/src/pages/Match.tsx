@@ -183,6 +183,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       // Record the row where the AI was beaten so it can adapt its defensive shape
       const concededRow = Math.max(0, Math.min(6, Math.floor(lastFrame.ball.position.y / TILE_H)));
       adaptiveAIRef.current = {
+        ...adaptiveAIRef.current,
         concededRows: [...adaptiveAIRef.current.concededRows, concededRow],
       };
     } else if (goalEvent?.teamId === "ai") {
