@@ -454,7 +454,11 @@ function tier1Possession(
         return passTo(fwdTarget, player.position);
       }
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 4);
-      if (anyTarget) return passTo(anyTarget, player.position);
+      if (anyTarget) {
+        const anyTile = posToTile(anyTarget.position);
+        if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+        return passTo(anyTarget, player.position);
+      }
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
     const gkRow = Math.max(2, Math.min(4, ballTile.row));
@@ -489,10 +493,16 @@ function tier1Possession(
           const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
           return passAndRun(latTarget, runTile, player.position);
         }
+        const latTile = posToTile(latTarget.position);
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
         return passTo(latTarget, player.position);
       }
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
-      if (bkTarget) return passTo(bkTarget, player.position);
+      if (bkTarget) {
+        const bkTile = posToTile(bkTarget.position);
+        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: bkTile };
+        return passTo(bkTarget, player.position);
+      }
     }
 
     // 5. No open receiver and not pressed: dribble forward.
@@ -504,7 +514,11 @@ function tier1Possession(
 
     // 6. Truly stuck: any open teammate in any direction.
     const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
-    if (anyTarget) return passTo(anyTarget, player.position);
+    if (anyTarget) {
+      const anyTile = posToTile(anyTarget.position);
+      if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+      return passTo(anyTarget, player.position);
+    }
 
     // Sidestep to create a new passing angle.
     const sideRow = pt.row < 3 ? pt.row + 2 : pt.row - 2;
@@ -675,7 +689,11 @@ function tier2Possession(
         return passTo(fwdTarget, player.position);
       }
       const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 4);
-      if (anyTarget) return passTo(anyTarget, player.position);
+      if (anyTarget) {
+        const anyTile = posToTile(anyTarget.position);
+        if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+        return passTo(anyTarget, player.position);
+      }
     }
     return stayPut({ col: 9, row: 3 });
   }
@@ -702,9 +720,17 @@ function tier2Possession(
     // Under pressure: lateral or backward escape.
     if (hardPressed) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
-      if (latTarget) return passTo(latTarget, player.position);
+      if (latTarget) {
+        const latTile = posToTile(latTarget.position);
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
+        return passTo(latTarget, player.position);
+      }
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 4);
-      if (bkTarget && Math.random() < 0.5) return passTo(bkTarget, player.position);
+      if (bkTarget && Math.random() < 0.5) {
+        const bkTile = posToTile(bkTarget.position);
+        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: bkTile };
+        return passTo(bkTarget, player.position);
+      }
     }
 
     // Dribble forward if route is clear.
@@ -715,7 +741,11 @@ function tier2Possession(
 
     // Truly blocked: find any open teammate rather than forcing pass to covered receiver.
     const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 5);
-    if (anyTarget) return passTo(anyTarget, player.position);
+    if (anyTarget) {
+      const anyTile = posToTile(anyTarget.position);
+      if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+      return passTo(anyTarget, player.position);
+    }
     const sideRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
   }
