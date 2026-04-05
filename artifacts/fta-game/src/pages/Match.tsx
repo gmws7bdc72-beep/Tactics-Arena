@@ -114,6 +114,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const allEventsRef = useRef<GameEvent[]>([]);
   const [turnTimer, setTurnTimer] = useState(TURN_TIME);
   const [showGoalBanner, setShowGoalBanner] = useState<"player" | "ai" | null>(null);
+  const pendingTurnRef = useRef(false);
 
   // Combo move+pass state
   const [comboMoveFirst, setComboMoveFirst] = useState(true);
@@ -307,6 +308,14 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     runTurn();
   }, [runTurn, clearSelection]);
 
+  useEffect(() => {
+    if (!pendingTurnRef.current) return;
+    if (phaseRef.current !== "planning") return;
+    if (Math.hypot(ballRef.current.velocity.x, ballRef.current.velocity.y) > 0.01) return;
+    pendingTurnRef.current = false;
+    confirmTurn();
+  }, [ball, confirmTurn]);
+
   // ── Replay handlers ───────────────────────────────────────────────────────
   const stopReplayAnim = useCallback(() => {
     if (replayAnimRef.current !== null) {
@@ -396,7 +405,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
         if (prev <= 1) {
           clearInterval(timerRef.current!);
           timerRef.current = null;
-          confirmTurn();
+          pendingTurnRef.current = true;
+          if (Math.hypot(ballRef.current.velocity.x, ballRef.current.velocity.y) <= 0.01) {
+            pendingTurnRef.current = false;
+            confirmTurn();
+          }
           return 0;
         }
         return prev - 1;
