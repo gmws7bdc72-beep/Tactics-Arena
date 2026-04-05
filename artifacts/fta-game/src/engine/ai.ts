@@ -630,16 +630,32 @@ function tier1Defense(
   }
 
   const oppTile = posToTile(assignedOpponent.position);
+  const oppDistFromBall = chebDist(oppTile, ballTile);
 
-  // Press directly if assigned opponent is on or next to the ball
-  if (chebDist(oppTile, ballTile) <= 1) {
+  // Always press hard when opponent is on or next to the ball
+  if (oppDistFromBall <= 1) {
     return moveStep(player, pt, oppTile, claimed, friendly);
   }
 
-  // Shadow mark: sit 1 tile goal-side of the assigned opponent on their row,
-  // cutting off the pass lane and forcing them wide
-  const shadowCol = Math.min(GRID_COLS - 1, oppTile.col + 1);
-  return moveStep(player, pt, { col: shadowCol, row: oppTile.row }, claimed, friendly);
+  // Loose marking: when opponent is safely away from the ball, attacking roles
+  // occasionally drop into a zonal hold rather than tight tracking.
+  // Defenders/midfielders do this rarely; forwards/strikers more often.
+  const looseRole = player.role === "forward" || player.role === "striker";
+  const isLoose = oppDistFromBall >= 3 && Math.random() < (looseRole ? 0.45 : 0.18);
+
+  if (isLoose) {
+    // Zonal hold: 2 tiles goal-side of opponent, row blended toward ball row
+    const looseCol = Math.min(GRID_COLS - 1, oppTile.col + 2);
+    const looseRow = Math.max(0, Math.min(6, Math.round((oppTile.row + ballTile.row) / 2)));
+    return moveStep(player, pt, { col: looseCol, row: looseRow }, claimed, friendly);
+  }
+
+  // Tight shadow: intercept the pass lane — position on the line between opponent
+  // and ball, shifted 1 tile goal-side. Targets where the pass would arrive,
+  // not where the opponent currently stands, eliminating the one-turn lag.
+  const interceptCol = Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2) + 1);
+  const interceptRow = Math.max(0, Math.min(6, Math.round((oppTile.row + ballTile.row) / 2)));
+  return moveStep(player, pt, { col: interceptCol, row: interceptRow }, claimed, friendly);
 }
 
 // ─── Tier 2 — Mid: Balanced attack, pass when easy, dribble when open ────────
