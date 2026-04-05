@@ -137,11 +137,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const [matchEndResult, setMatchEndResult] = useState<{ playerScore: number; aiScore: number } | null>(null);
   const [replayMode, setReplayMode] = useState(false);
   const [replayIdx, setReplayIdx] = useState(0);
-  const [replaySpeed, setReplaySpeed] = useState<1 | 2 | 4>(1);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 6 | 8 | 10>(1);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const replayAnimRef = useRef<number | null>(null);
   const replayIdxRef = useRef(0);
-  const replaySpeedRef = useRef<1 | 2 | 4>(1);
+  const replaySpeedRef = useRef<1 | 6 | 8 | 10>(1);
 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { ballRef.current = ball; }, [ball]);
@@ -384,7 +384,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   }, [replayPlaying, stopReplayAnim, startReplayAnimation]);
 
   const handleReplaySpeed = useCallback(() => {
-    const next: 1 | 2 | 4 = replaySpeed === 1 ? 2 : replaySpeed === 2 ? 4 : 1;
+    const next: 1 | 6 | 8 | 10 = replaySpeed === 1 ? 6 : replaySpeed === 6 ? 8 : replaySpeed === 8 ? 10 : 1;
     setReplaySpeed(next);
     replaySpeedRef.current = next;
   }, [replaySpeed]);
