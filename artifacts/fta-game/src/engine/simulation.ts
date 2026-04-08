@@ -677,7 +677,8 @@ function detectAndResolveEvents(
       } else if (candidates.length > 1 && candidates[1].player.teamId !== winner.teamId) {
         events.push({ type: GameEventType.TACKLE, tick, playerId: winner.id, teamId: winner.teamId, message: `${winner.name} picks up the ball!` });
       }
-      return;
+      // No return — fall through to the tackle block so a player already in
+      // contact range can immediately contest the freshly-received ball.
     }
   }
 
@@ -685,36 +686,31 @@ function detectAndResolveEvents(
     passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
 
     const owner = players.find(p => p.id === ball.ownerId)!;
-    const ownerTileX = Math.floor(owner.position.x / TILE_W);
-    const ownerTileY = Math.floor(owner.position.y / TILE_H);
+    // Tackle fires when any opponent moves through / into contact range.
+    // Uses pixel distance so it works regardless of tile boundary alignment.
+    const TACKLE_DIST = PLAYER_RADIUS * 2.5; // ~35 px — contact range
 
     for (const other of players) {
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
       if (other.state === PlayerState.RECOVERING || other.state === PlayerState.CONTESTING) continue;
 
-      // Tackle fires when either player physically crosses through the other's tile
-      const defTileX = Math.floor(other.position.x / TILE_W);
-      const defTileY = Math.floor(other.position.y / TILE_H);
-      if (defTileX !== ownerTileX || defTileY !== ownerTileY) continue;
+      if (vec2Dist(other.position, owner.position) > TACKLE_DIST) continue;
 
-      const defSpeed    = vec2Len(other.velocity);
+      const defSpeed     = vec2Len(other.velocity);
       const carrierSpeed = vec2Len(owner.velocity);
 
-      let keepChance: number;
+      // At least one player must be in motion to trigger (rules out purely incidental adjacency)
+      if (defSpeed < 15 && carrierSpeed < 15) continue;
 
-      if (defSpeed >= 50) {
-        // Defender runs through the carrier's tile.
-        // score = carrier.attack − carrier.defense; each +1 → +20% keep chance.
-        const score = owner.stats.attack - owner.stats.defense;
-        keepChance = score > 0 ? Math.min(1.0, score * 0.20) : 0;
-      } else if (carrierSpeed >= 50) {
-        // Carrier deliberately runs through the defender's tile.
-        // score = carrier.attack − defender.defense; each +1 → +10% escape chance.
-        const score = owner.stats.attack - other.stats.defense;
-        keepChance = score > 0 ? Math.min(1.0, score * 0.10) : 0;
-      } else {
-        continue; // neither is moving fast enough to trigger
-      }
+      // keepChance: carrier's attack vs defender's defense; abilities shift the balance.
+      // Base 30% keep chance so even a weak carrier survives some duels.
+      let keepScore = (owner.stats.attack / 10) - (other.stats.defense / 10); // -1 … +1
+      if (owner.ability  === "ghost_run"    || owner.ability  === "powerhouse") keepScore += 0.20;
+      if (other.ability  === "iron_tackle"  || other.ability  === "powerhouse") keepScore -= 0.20;
+      // Carrier has a small initiative bonus when they're the one actively dribbling through
+      if (carrierSpeed > defSpeed) keepScore += 0.10;
+
+      const keepChance = Math.max(0.05, Math.min(0.90, 0.30 + keepScore * 0.40));
 
       const carrierKeepsBall = rng() < keepChance;
 
