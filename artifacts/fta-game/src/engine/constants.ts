@@ -37,11 +37,11 @@ export const PASS_RECOVERY = 0.4;
 export const SHOT_WIND_UP = 0.35;
 export const SHOT_RECOVERY = 0.6;
 
-// GK zone: cols 0-2 for player team GK, cols 7-9 for AI GK
+// GK zone: cols 0-2 for player team GK, cols 13-15 for AI GK
 export const GK_COLS_PLAYER_MIN = 0;
 export const GK_COLS_PLAYER_MAX = 2;
-export const GK_COLS_AI_MIN = 7;
-export const GK_COLS_AI_MAX = 9;
+export const GK_COLS_AI_MIN = GRID_COLS - 3;   // 13
+export const GK_COLS_AI_MAX = GRID_COLS - 1;   // 15
 
 export const GOALS_TO_WIN = 3;
 export const MAX_MATCH_TURNS = 30;

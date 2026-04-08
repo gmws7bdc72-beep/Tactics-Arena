@@ -365,33 +365,33 @@ export function getAITeamDef(id: string): AITeamDef | undefined {
   return AI_TEAMS.find(t => t.id === id);
 }
 
-// Starting positions on the grid for AI team (attacking left, GK on right)
+// Starting positions on the grid for AI team (attacking left, GK at col 15)
 export function getAIFormationPositions(formationId: string): { col: number; row: number }[] {
   switch (formationId) {
     case "1-1-2":
       return [
-        { col: 9, row: 3 },
-        { col: 7, row: 3 },
-        { col: 5, row: 3 },
-        { col: 3, row: 2 },
-        { col: 3, row: 4 },
+        { col: 15, row: 4 },
+        { col: 12, row: 4 },
+        { col: 8,  row: 4 },
+        { col: 4,  row: 2 },
+        { col: 4,  row: 6 },
       ];
     case "2-1-1":
       return [
-        { col: 9, row: 3 },
-        { col: 7, row: 2 },
-        { col: 7, row: 4 },
-        { col: 5, row: 3 },
-        { col: 3, row: 3 },
+        { col: 15, row: 4 },
+        { col: 12, row: 2 },
+        { col: 12, row: 6 },
+        { col: 8,  row: 4 },
+        { col: 4,  row: 4 },
       ];
     case "1-2-1":
     default:
       return [
-        { col: 9, row: 3 },
-        { col: 7, row: 3 },
-        { col: 5, row: 2 },
-        { col: 5, row: 4 },
-        { col: 3, row: 3 },
+        { col: 15, row: 4 },
+        { col: 12, row: 4 },
+        { col: 8,  row: 2 },
+        { col: 8,  row: 6 },
+        { col: 4,  row: 4 },
       ];
   }
 }

@@ -7,7 +7,7 @@ import { generateAICommands } from "../engine/ai";
 import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
@@ -182,7 +182,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       setShowGoalBanner("player");
       setTimeout(() => setShowGoalBanner(null), 2200);
       // Record the row where the AI was beaten so it can adapt its defensive shape
-      const concededRow = Math.max(0, Math.min(6, Math.floor(lastFrame.ball.position.y / TILE_H)));
+      const concededRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(lastFrame.ball.position.y / TILE_H)));
       adaptiveAIRef.current = {
         ...adaptiveAIRef.current,
         concededRows: [...adaptiveAIRef.current.concededRows, concededRow],

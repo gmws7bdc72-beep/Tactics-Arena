@@ -8,6 +8,7 @@ import {
   GOAL_WIDTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, GOAL_LEFT_X, GOAL_RIGHT_X, GOAL_DEPTH,
   PLAYER_RADIUS, TILE_W, TILE_H,
   GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX,
+  GRID_COLS, GRID_ROWS,
   getLinearPixelSpeed,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
@@ -43,8 +44,8 @@ function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
     rdr = 0;
   }
 
-  let retreatCol = clamp(lt.col + rdc, 0, 9);
-  const retreatRow = clamp(lt.row + rdr, 0, 6);
+  let retreatCol = clamp(lt.col + rdc, 0, GRID_COLS - 1);
+  const retreatRow = clamp(lt.row + rdr, 0, GRID_ROWS - 1);
 
   // GK must stay in their zone even when retreating
   if (loser.role === "goalkeeper") {
@@ -214,8 +215,8 @@ export function runSimulation(
         let pushed = false;
         for (const [dc, dr] of retreatOffsets) {
           if (dc === 0 && dr === 0) continue;
-          const nc = clamp(t.col + dc, 0, 9);
-          const nr = clamp(t.row + dr, 0, 6);
+          const nc = clamp(t.col + dc, 0, GRID_COLS - 1);
+          const nr = clamp(t.row + dr, 0, GRID_ROWS - 1);
           const ak = `${nc},${nr}`;
           if (!occupied.has(ak)) {
             p.position = tileToPos(nc, nr);

@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2 } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -20,7 +20,7 @@ interface PassTilePlan {
 
 // Tracks where the AI has conceded goals so it can adjust its defensive shape.
 export interface AdaptiveAIState {
-  concededRows: number[]; // pitch rows (0-6) where each goal was conceded, oldest first
+  concededRows: number[]; // pitch rows (0-8) where each goal was conceded, oldest first
   tier1Markings?: Record<string, string>; // aiPlayerId → playerPlayerId, set once at kickoff
 }
 
@@ -121,7 +121,7 @@ function chaseLooseBall(
   const gkMin = player.teamId === "ai" ? GK_COLS_AI_MIN : GK_COLS_PLAYER_MIN;
   const gkMax = player.teamId === "ai" ? GK_COLS_AI_MAX : GK_COLS_PLAYER_MAX;
   const target: TilePos = isGK
-    ? { col: Math.max(gkMin, Math.min(gkMax, ballTile.col)), row: Math.max(0, Math.min(6, ballTile.row)) }
+    ? { col: Math.max(gkMin, Math.min(gkMax, ballTile.col)), row: Math.max(0, Math.min(GRID_ROWS - 1, ballTile.row)) }
     : ballTile;
 
   let best: TilePos = pt;
@@ -208,14 +208,14 @@ function pickRunAfterPassTile(_carrier: SimPlayer, pt: TilePos, opponents: SimPl
   const candidates: TilePos[] = [
     { col: pt.col - 1, row: pt.row },
     { col: pt.col - 1, row: Math.max(0, pt.row - 1) },
-    { col: pt.col - 1, row: Math.min(6, pt.row + 1) },
+    { col: pt.col - 1, row: Math.min(GRID_ROWS - 1, pt.row + 1) },
     { col: pt.col,     row: Math.max(0, pt.row - 1) },
-    { col: pt.col,     row: Math.min(6, pt.row + 1) },
+    { col: pt.col,     row: Math.min(GRID_ROWS - 1, pt.row + 1) },
     { col: pt.col - 2, row: pt.row },
   ];
   // Prefer tiles not near opponents
   const safe = candidates.filter(t =>
-    t.col >= 0 && t.col <= 9 &&
+    t.col >= 0 && t.col < GRID_COLS &&
     !isThreatened(t, opponents)
   );
   return (safe.length > 0 ? safe[0] : candidates[0]) ?? pt;
@@ -390,14 +390,14 @@ function computeRunTarget(
     // Striker makes a direct run toward goal, staying in the danger zone
     return {
       col: Math.max(1, ballCarrierTile.col - fwdOffset),
-      row: 3,
+      row: Math.floor(GRID_ROWS / 2),
     };
   }
   if (role === "forward") {
     // Forwards run into channels (wide)
     const runRow = roleIdx === 0
       ? Math.max(0, ballCarrierTile.row - 2)
-      : Math.min(6, ballCarrierTile.row + 2);
+      : Math.min(GRID_ROWS - 1, ballCarrierTile.row + 2);
     return {
       col: Math.max(1, ballCarrierTile.col - fwdOffset),
       row: runRow,
@@ -408,7 +408,7 @@ function computeRunTarget(
     const fwdOffset = tier === 1 ? 2 : tier === 2 ? 1 : 0;
     const supportRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
-      : Math.min(5, ballCarrierTile.row + 1);
+      : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
     return {
       col: Math.max(2, ballCarrierTile.col - fwdOffset),
       row: supportRow,
@@ -419,7 +419,7 @@ function computeRunTarget(
     const coverOffset = tier === 1 ? 2 : 3;
     const coverRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
-      : Math.min(5, ballCarrierTile.row + 1);
+      : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
     return {
       col: Math.min(GRID_COLS - 2, ballCarrierTile.col + coverOffset),
       row: coverRow,
@@ -461,8 +461,8 @@ function tier1Possession(
       }
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
-    const gkRow = Math.max(2, Math.min(4, ballTile.row));
-    return moveStep(player, pt, { col: 9, row: gkRow }, claimed, friendly);
+    const gkRow = Math.max(3, Math.min(5, ballTile.row));
+    return moveStep(player, pt, { col: GRID_COLS - 1, row: gkRow }, claimed, friendly);
   }
 
   if (hasBall) {
@@ -507,9 +507,9 @@ function tier1Possession(
 
     // 5. No open receiver and not pressed: dribble forward.
     if (!fwdBlocked) {
-      const dribRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
+      const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
       const dribRange = speedToTiles(player.stats.speed);
-      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(6, dribRow)) }, claimed, friendly);
+      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
     // 6. Truly stuck: any open teammate in any direction.
@@ -521,8 +521,8 @@ function tier1Possession(
     }
 
     // Sidestep to create a new passing angle.
-    const sideRow = pt.row < 3 ? pt.row + 2 : pt.row - 2;
-    return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
+    const sideRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 2 : pt.row - 2;
+    return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
   // Off-ball: elite positioning — create triangles and passing lanes
@@ -588,9 +588,9 @@ function tier1Defense(
   claimed.add(tileKey(ballTile.col, ballTile.row));
 
   if (player.role === "goalkeeper") {
-    // Track ball row, stay in col 9, central 3 rows so corners remain scorable
-    const ballRow = Math.max(2, Math.min(4, ballTile.row));
-    return moveStep(player, pt, { col: 9, row: ballRow }, claimed, friendly);
+    // Track ball row, stay at AI goal col, central 3 rows so corners remain scorable
+    const ballRow = Math.max(3, Math.min(5, ballTile.row));
+    return moveStep(player, pt, { col: GRID_COLS - 1, row: ballRow }, claimed, friendly);
   }
 
   // Initialise marking assignments once at game start
@@ -626,7 +626,7 @@ function tier1Defense(
       const laneCol = Math.max(0, Math.min(GRID_COLS - 1,
         Math.round(oppTile.col * 0.4 + tgt.col * 0.6)
       ));
-      const laneRow = Math.max(0, Math.min(6,
+      const laneRow = Math.max(0, Math.min(GRID_ROWS - 1,
         Math.round(oppTile.row * 0.4 + tgt.row * 0.6)
       ));
       return moveStep(player, pt, { col: laneCol, row: laneRow }, claimed, friendly);
@@ -652,7 +652,7 @@ function tier1Defense(
   if (isLoose) {
     // Zonal hold: 2 tiles goal-side of opponent, row blended toward ball row
     const looseCol = Math.min(GRID_COLS - 1, oppTile.col + 2);
-    const looseRow = Math.max(0, Math.min(6, Math.round((oppTile.row + ballTile.row) / 2)));
+    const looseRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.round((oppTile.row + ballTile.row) / 2)));
     return moveStep(player, pt, { col: looseCol, row: looseRow }, claimed, friendly);
   }
 
@@ -660,7 +660,7 @@ function tier1Defense(
   // Position on the line between opponent and ball, shifted 1 tile goal-side.
   // Targets where a pass would arrive, not where the opponent currently is.
   const interceptCol = Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2) + 1);
-  const interceptRow = Math.max(0, Math.min(6, Math.round((oppTile.row + ballTile.row) / 2)));
+  const interceptRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.round((oppTile.row + ballTile.row) / 2)));
   return moveStep(player, pt, { col: interceptCol, row: interceptRow }, claimed, friendly);
 }
 
@@ -695,7 +695,7 @@ function tier2Possession(
         return passTo(anyTarget, player.position);
       }
     }
-    return stayPut({ col: 9, row: 3 });
+    return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
   }
 
   if (hasBall) {
@@ -746,8 +746,8 @@ function tier2Possession(
       if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
       return passTo(anyTarget, player.position);
     }
-    const sideRow = pt.row < 3 ? pt.row + 1 : pt.row - 1;
-    return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(6, sideRow)) }, claimed, friendly);
+    const sideRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
+    return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
   // Off-ball: moderate positioning
@@ -773,9 +773,9 @@ function tier2Defense(
 
   if (player.role === "goalkeeper") {
     // Track ball row, stay in central 3 rows so corners remain scorable
-    const ballRow = Math.max(2, Math.min(4, ballTile.row));
+    const ballRow = Math.max(3, Math.min(5, ballTile.row));
     const targetRow = adaptRow(ballRow, adapt);
-    return moveStep(player, pt, { col: 9, row: targetRow }, claimed, friendly);
+    return moveStep(player, pt, { col: GRID_COLS - 1, row: targetRow }, claimed, friendly);
   }
 
   // Zonal mid-block: defend column bands, press if ball enters zone.
@@ -840,7 +840,7 @@ function tier3Possession(
         return passTo(anyTarget, player.position);
       }
     }
-    return stayPut({ col: 9, row: 3 });
+    return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
   }
 
   if (hasBall) {
@@ -887,10 +887,10 @@ function tier3Defense(
   if (player.role === "goalkeeper") {
     // Tier 3 GK normally stays fixed — but after conceding, starts tracking the danger row
     if (adapt.urgency > 0 && adapt.dangerRow !== null) {
-      const gkRow = Math.max(1, Math.min(5, adapt.dangerRow));
-      return moveStep(player, pt, { col: 9, row: gkRow }, claimed, friendly);
+      const gkRow = Math.max(1, Math.min(GRID_ROWS - 2, adapt.dangerRow));
+      return moveStep(player, pt, { col: GRID_COLS - 1, row: gkRow }, claimed, friendly);
     }
-    return stayPut({ col: 9, row: 3 });
+    return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
   }
 
   // Passive: sit in own half, only press if ball is very close.
