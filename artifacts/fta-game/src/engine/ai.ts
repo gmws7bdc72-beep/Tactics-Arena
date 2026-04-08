@@ -584,9 +584,6 @@ function tier1Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
-  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
-  claimed.add(tileKey(ballTile.col, ballTile.row));
-
   if (player.role === "goalkeeper") {
     // Track ball row, stay at AI goal col, central 3 rows so corners remain scorable
     const ballRow = Math.max(3, Math.min(5, ballTile.row));
@@ -766,9 +763,6 @@ function tier2Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
-  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
-  claimed.add(tileKey(ballTile.col, ballTile.row));
-
   const adapt = computeAdaptation(adaptiveState);
 
   if (player.role === "goalkeeper") {
@@ -879,9 +873,6 @@ function tier3Defense(
   friendly: Set<string>,
   adaptiveState?: AdaptiveAIState
 ): Command {
-  // Never step onto the ball carrier's current tile — approach it, don't occupy it.
-  claimed.add(tileKey(ballTile.col, ballTile.row));
-
   const adapt = computeAdaptation(adaptiveState);
 
   if (player.role === "goalkeeper") {
