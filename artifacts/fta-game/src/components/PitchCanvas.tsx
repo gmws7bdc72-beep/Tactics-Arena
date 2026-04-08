@@ -24,6 +24,8 @@ interface Props {
   passOriginPos?: Vec2;
   phase: "planning" | "simulating" | "finished";
   isVertical?: boolean;
+  /** In 2-player mode: which team is currently allowed to plan. Undefined = 1P (player only). */
+  activePlanningTeam?: "player" | "ai";
   onPlayerClick: (playerId: string, pos: Vec2) => void;
   onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
 }
@@ -41,6 +43,7 @@ export default function PitchCanvas({
   passOriginPos,
   phase,
   isVertical = false,
+  activePlanningTeam,
   onPlayerClick,
   onTileClick,
 }: Props) {
@@ -82,10 +85,10 @@ export default function PitchCanvas({
     for (const p of frame.players) {
       if (p.id === selectedPlayerId) continue;
       const t = posToTile(p.position);
-      occupancy.set(`${t.col},${t.row}`, p.teamId === "player" ? "friendly" : "enemy");
+      occupancy.set(`${t.col},${t.row}`, p.teamId === selPlayer.teamId ? "friendly" : "enemy");
     }
 
-    const reachable = getReachableTiles(pt.col, pt.row, range, isGK, "player");
+    const reachable = getReachableTiles(pt.col, pt.row, range, isGK, selPlayer.teamId);
     for (const t of reachable) {
       const key = `${t.col},${t.row}`;
       const occ = occupancy.get(key);
@@ -489,13 +492,16 @@ export default function PitchCanvas({
     if (phase !== "planning") return;
     const pos = canvasToPitch(e.clientX, e.clientY);
 
+    // Which team is selectable: in 2P mode use activePlanningTeam, otherwise "player" only
+    const selectableTeam = activePlanningTeam ?? "player";
+
     if (frame) {
       for (const p of frame.players) {
         const isGK = p.role === "goalkeeper";
         const hitR = PLAYER_RADIUS + (isGK ? 4 : 2) + 6;
         const d = Math.sqrt((p.position.x - pos.x) ** 2 + (p.position.y - pos.y) ** 2);
         if (d < hitR) {
-          if (p.teamId === "player") {
+          if (p.teamId === selectableTeam) {
             onPlayerClick(p.id, pos);
             return;
           }
@@ -506,6 +512,9 @@ export default function PitchCanvas({
     if (!selectedPlayerId || !frame) return;
     const selPlayer = frame.players.find(p => p.id === selectedPlayerId);
     if (!selPlayer) return;
+
+    // Make sure the selected player belongs to the active planning team
+    if (selPlayer.teamId !== selectableTeam) return;
 
     const clickedCol = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(pos.x / TILE_W)));
     const clickedRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(pos.y / TILE_H)));
@@ -518,7 +527,8 @@ export default function PitchCanvas({
     if (!passTargetMode) {
       const isGK = selPlayer.role === "goalkeeper";
       const range = selPlayer.tileRange;
-      const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, "player");
+      // Use the selected player's actual team for movement range calculation
+      const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, selPlayer.teamId);
       const isReachable = reachable.some(t => t.col === clickedCol && t.row === clickedRow);
       if (!isReachable) return;
     }
@@ -528,13 +538,13 @@ export default function PitchCanvas({
       return t.col === clickedCol && t.row === clickedRow;
     });
 
-    if (occupant?.teamId === "player" && occupant.id !== selectedPlayerId) return;
+    if (occupant?.teamId === selectableTeam && occupant.id !== selectedPlayerId) return;
 
     const isEnemy = occupant?.teamId === "ai";
     const tileCenter = tileToPos(clickedCol, clickedRow);
 
     onTileClick(tileCenter, isEnemy);
-  }, [phase, frame, selectedPlayerId, canvasToPitch, onPlayerClick, onTileClick, passTargetMode]);
+  }, [phase, frame, selectedPlayerId, canvasToPitch, onPlayerClick, onTileClick, passTargetMode, activePlanningTeam]);
 
   return (
     <canvas

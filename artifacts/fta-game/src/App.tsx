@@ -14,9 +14,10 @@ import {
   autoSimPlayoffStage,
   getPlayerPlayoffMatch,
 } from "./game/league";
+import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
 
-type Screen = "home" | "team-setup" | "customize" | "match" | "post-match";
+type Screen = "home" | "team-setup" | "customize" | "match" | "post-match" | "two-player-match";
 
 interface MatchResult {
   playerScore: number;
@@ -197,6 +198,23 @@ export default function App() {
           onGoToTeamSetup={() => setScreen("team-setup")}
           onGoToCustomize={() => setScreen("customize")}
           onResetSeason={handleNewSeason}
+          onTwoPlayer={() => setScreen("two-player-match")}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "two-player-match") {
+    return (
+      <div className="max-w-2xl mx-auto min-h-screen" style={{ maxWidth: "min(100vw, 760px)" }}>
+        <Match
+          team={team}
+          opponentTeamDef={TWO_PLAYER_TEAM_B}
+          isHome={true}
+          twoPlayer={true}
+          p1TeamDef={TWO_PLAYER_TEAM_A}
+          onMatchEnd={() => setScreen("home")}
+          onForfeit={() => setScreen("home")}
         />
       </div>
     );
@@ -286,6 +304,8 @@ export default function App() {
         onStartMatch={handleStartMatch}
         onGoToTeamSetup={() => setScreen("team-setup")}
         onGoToCustomize={() => setScreen("customize")}
+        onResetSeason={handleNewSeason}
+        onTwoPlayer={() => setScreen("two-player-match")}
       />
     </div>
   );

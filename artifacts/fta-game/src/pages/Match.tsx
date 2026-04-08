@@ -16,6 +16,8 @@ interface Props {
   team: TeamConfig;
   opponentTeamDef: AITeamDef;
   isHome?: boolean;
+  twoPlayer?: boolean;
+  p1TeamDef?: AITeamDef;
   onMatchEnd: (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => void;
   onForfeit: () => void;
 }
@@ -76,14 +78,16 @@ function GoalDots({ filled, total }: { filled: number; total: number }) {
   );
 }
 
-export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd, onForfeit }: Props) {
-  const playerFormation = getFormationById(team.formationId);
+export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer = false, p1TeamDef, onMatchEnd, onForfeit }: Props) {
+  const p1Source = twoPlayer && p1TeamDef ? p1TeamDef : null;
+  const playerFormation = p1Source ? getFormationById(p1Source.formationId) : getFormationById(team.formationId);
   const aiFormation = getAIFormationById(opponentTeamDef.formationId);
   const aiTier = opponentTeamDef.tier;
   const isMobile = useIsMobile();
 
   const initState = useRef((() => {
-    const pl = team.players.slice(0, 5).map((card, i) =>
+    const p1Players = p1Source ? p1Source.players : team.players;
+    const pl = p1Players.slice(0, 5).map((card, i) =>
       makeSimPlayer(card, "player", playerFormation.positions[i] ?? { x: PITCH_WIDTH * 0.2, y: PITCH_HEIGHT / 2 })
     );
     const ai = opponentTeamDef.players.slice(0, 5).map((card, i) =>
@@ -122,6 +126,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
   const [comboStep, setComboStep] = useState<1 | 2>(1);
   const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(null);
   const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(null);
+
+  // 2-player sequential planning state
+  const [twoPlayerTurn, setTwoPlayerTurn] = useState<"p1" | "p2">("p1");
+  const twoPlayerTurnRef = useRef<"p1" | "p2">("p1");
+  const p1StoredCommandsRef = useRef<Map<string, Command>>(new Map());
 
   const animRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -244,6 +253,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
       setTurn(nextTurn);
       phaseRef.current = "planning";
       setPhase("planning");
+      // Reset 2P turn to P1 for the new planning phase
+      twoPlayerTurnRef.current = "p1";
+      setTwoPlayerTurn("p1");
     }
   }, [onMatchEnd, playerFormation, aiFormation]);
 
@@ -281,36 +293,68 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     animRef.current = requestAnimationFrame(animate);
   }, [finishSimulation]);
 
-  const runTurn = useCallback(() => {
+  const runTurn = useCallback((combinedCommands?: Map<string, Command>) => {
     const currentPlayers = playersRef.current;
     const currentBall = ballRef.current;
-    const currentPending = pendingCommandsRef.current;
+    const currentPending = combinedCommands ?? pendingCommandsRef.current;
 
-    const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
-    const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
-    const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current);
-
-    const withCommands = currentPlayers.map(p => {
-      const cmd = p.teamId === "player"
-        ? currentPending.get(p.id) ?? null
-        : aiCommands.get(p.id) ?? { type: CommandType.MOVE, targetPosition: { ...p.position } };
-      return { ...p, command: cmd, commandExecuted: false };
-    });
+    let withCommands: SimPlayer[];
+    if (twoPlayer) {
+      withCommands = currentPlayers.map(p => ({
+        ...p,
+        command: currentPending.get(p.id) ?? null,
+        commandExecuted: false,
+      }));
+    } else {
+      const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
+      const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
+      const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current);
+      withCommands = currentPlayers.map(p => {
+        const cmd = p.teamId === "player"
+          ? currentPending.get(p.id) ?? null
+          : aiCommands.get(p.id) ?? { type: CommandType.MOVE, targetPosition: { ...p.position } };
+        return { ...p, command: cmd, commandExecuted: false };
+      });
+    }
 
     const seed = Date.now() % 99999;
     const { frames, events } = runSimulation(withCommands, currentBall, seed);
     playbackFrames(frames, events);
-  }, [playbackFrames, aiTier]);
+  }, [playbackFrames, aiTier, twoPlayer]);
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;
+
+    // 2P sequential flow: P1 confirms first, then P2 confirms to run
+    if (twoPlayer) {
+      if (twoPlayerTurnRef.current === "p1") {
+        p1StoredCommandsRef.current = new Map(pendingCommandsRef.current);
+        setPendingCommands(new Map());
+        clearSelection();
+        twoPlayerTurnRef.current = "p2";
+        setTwoPlayerTurn("p2");
+        return;
+      } else {
+        const combined = new Map([...p1StoredCommandsRef.current, ...pendingCommandsRef.current]);
+        p1StoredCommandsRef.current = new Map();
+        twoPlayerTurnRef.current = "p1";
+        setTwoPlayerTurn("p1");
+        phaseRef.current = "simulating";
+        setPhase("simulating");
+        clearSelection();
+        setPendingCommands(new Map());
+        runTurn(combined);
+        return;
+      }
+    }
+
     if (timerRef.current) clearInterval(timerRef.current);
     phaseRef.current = "simulating";
     setPhase("simulating");
     clearSelection();
     setPendingCommands(new Map());
     runTurn();
-  }, [runTurn, clearSelection]);
+  }, [runTurn, clearSelection, twoPlayer]);
 
   useEffect(() => {
     if (!pendingTurnRef.current) return;
@@ -403,6 +447,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
 
   useEffect(() => {
     if (phase !== "planning") return;
+    if (twoPlayer) return; // No timer in 2P mode
     setTurnTimer(TURN_TIME);
     timerRef.current = setInterval(() => {
       setTurnTimer(prev => {
@@ -422,7 +467,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     };
-  }, [phase, turn]);
+  }, [phase, turn, twoPlayer]);
 
   const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
@@ -529,13 +574,25 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
         </button>
         <div className="flex items-center gap-5">
           <div className="text-center min-w-20">
-            <div className="text-xs text-gray-400 truncate">{team.crestIcon} {team.name}</div>
+            {twoPlayer ? (
+              <div className="text-xs font-black" style={{ color: "#60a5fa" }}>🔵 P1</div>
+            ) : (
+              <div className="text-xs text-gray-400 truncate">{team.crestIcon} {team.name}</div>
+            )}
             <div className="text-white font-black text-3xl leading-none">{score.player}</div>
             <GoalDots filled={score.player} total={GOALS_TO_WIN} />
           </div>
           <div className="text-center">
             <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
-            {phase === "planning" && (
+            {twoPlayer && phase === "planning" && (
+              <div
+                className="text-[10px] font-black px-1.5 py-0.5 rounded-md leading-tight"
+                style={{ background: twoPlayerTurn === "p1" ? "rgba(96,165,250,0.2)" : "rgba(248,113,113,0.2)", color: twoPlayerTurn === "p1" ? "#60a5fa" : "#f87171" }}
+              >
+                {twoPlayerTurn === "p1" ? "P1" : "P2"}
+              </div>
+            )}
+            {!twoPlayer && phase === "planning" && (
               <div className="text-sm font-bold leading-tight" style={{ color: turnTimer <= 5 ? "#ff5252" : "#ffd700" }}>
                 {turnTimer}s
               </div>
@@ -545,7 +602,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
             <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
           </div>
           <div className="text-center min-w-20">
-            <div className="text-xs text-gray-400 truncate">{opponentTeamDef.crestIcon} {opponentTeamDef.name}</div>
+            {twoPlayer ? (
+              <div className="text-xs font-black" style={{ color: "#f87171" }}>🔴 P2</div>
+            ) : (
+              <div className="text-xs text-gray-400 truncate">{opponentTeamDef.crestIcon} {opponentTeamDef.name}</div>
+            )}
             <div className="text-white font-black text-3xl leading-none">{score.ai}</div>
             <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
           </div>
@@ -565,7 +626,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           >
             <div className="text-4xl font-black text-white">⚽ GOAL!</div>
             <div className="text-white text-lg font-bold mt-1">
-              {showGoalBanner === "player" ? team.name : opponentTeamDef.name}
+              {showGoalBanner === "player"
+                ? (twoPlayer ? "Player 1" : team.name)
+                : (twoPlayer ? "Player 2" : opponentTeamDef.name)}
             </div>
           </div>
         </div>
@@ -580,7 +643,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
         )}
         <PitchCanvas
           frame={currentFrame}
-          playerTeam={team}
+          playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
           aiTeamColor={opponentTeamDef.jerseyColor}
           aiTeamSecondaryColor={opponentTeamDef.secondaryColor}
           pendingCommands={pendingCommands}
@@ -593,6 +656,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           }
           phase={phase}
           isVertical={isMobile}
+          activePlanningTeam={twoPlayer ? (twoPlayerTurn === "p1" ? "player" : "ai") : undefined}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
         />
@@ -684,9 +748,23 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
           </div>
         )}
 
+        {/* 2P turn banner */}
+        {twoPlayer && phase === "planning" && (
+          <div
+            className="mx-4 mt-2 px-3 py-1.5 rounded-xl text-center text-xs font-black"
+            style={{
+              background: twoPlayerTurn === "p1" ? "rgba(96,165,250,0.12)" : "rgba(248,113,113,0.12)",
+              border: `1px solid ${twoPlayerTurn === "p1" ? "rgba(96,165,250,0.3)" : "rgba(248,113,113,0.3)"}`,
+              color: twoPlayerTurn === "p1" ? "#93c5fd" : "#fca5a5",
+            }}
+          >
+            {twoPlayerTurn === "p1" ? "🔵 Player 1 — plan your moves, then confirm" : "🔴 Player 2 — plan your moves, then confirm"}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="flex-1 text-xs text-gray-500">
-            {phase === "planning" && !selectedPlayerId && "Tap a player · green tiles = your range"}
+            {phase === "planning" && !selectedPlayerId && (twoPlayer ? `Tap a ${twoPlayerTurn === "p1" ? "blue" : "red"} player` : "Tap a player · green tiles = your range")}
             {phase === "planning" && selectedPlayerId && !passTargetMode && !comboActive && "Tap green tile to move · ⚔ orange = tackle"}
             {phase === "planning" && !comboActive && passTargetMode && "Tap a tile or player to pass"}
             {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
@@ -702,11 +780,15 @@ export default function Match({ team, opponentTeamDef, isHome = true, onMatchEnd
             className="px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
             style={{
               background: phase === "planning"
-                ? "linear-gradient(135deg, #00e676, #00b288)"
+                ? twoPlayer
+                  ? twoPlayerTurn === "p1"
+                    ? "linear-gradient(135deg, #1d4ed8, #2563eb)"
+                    : "linear-gradient(135deg, #b91c1c, #dc2626)"
+                  : "linear-gradient(135deg, #00e676, #00b288)"
                 : "rgba(255,255,255,0.08)",
             }}
           >
-            Confirm
+            {twoPlayer ? (twoPlayerTurn === "p1" ? "P1 Done →" : "P2 Done ▶") : "Confirm"}
           </button>
         </div>
 
