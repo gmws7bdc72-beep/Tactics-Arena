@@ -1,8 +1,8 @@
 export const PITCH_WIDTH = 700;
 export const PITCH_HEIGHT = 460;
 
-export const GRID_COLS = 10;
-export const GRID_ROWS = 7;
+export const GRID_COLS = 16;
+export const GRID_ROWS = 9;
 export const TILE_W = PITCH_WIDTH / GRID_COLS;
 export const TILE_H = PITCH_HEIGHT / GRID_ROWS;
 
