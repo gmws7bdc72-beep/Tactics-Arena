@@ -705,10 +705,9 @@ function tier2Possession(
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // Pass forward only if the receiver's tile is genuinely open.
+    // Forward pass — bestForwardPass already ranks by least threatened, so trust it.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6);
-    const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
-    if (fwdTargetOpen) {
+    if (fwdTarget) {
       const runTile = posToTile(fwdTarget.position);
       if (planRef) {
         planRef.current = { runnerId: fwdTarget.id, runTile };
@@ -717,8 +716,8 @@ function tier2Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // Under pressure: lateral or backward escape.
-    if (hardPressed) {
+    // Under pressure or forward lane blocked: lateral or backward escape.
+    if (hardPressed || fwdBlocked) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (latTarget) {
         const latTile = posToTile(latTarget.position);
@@ -733,13 +732,14 @@ function tier2Possession(
       }
     }
 
-    // Dribble forward if route is clear.
+    // Dribble forward with a row juke to sidestep defenders.
     if (!fwdBlocked) {
+      const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
       const dribRange = speedToTiles(player.stats.speed);
-      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
+      return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
-    // Truly blocked: find any open teammate rather than forcing pass to covered receiver.
+    // Truly blocked: any open teammate.
     const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 5);
     if (anyTarget) {
       const anyTile = posToTile(anyTarget.position);
