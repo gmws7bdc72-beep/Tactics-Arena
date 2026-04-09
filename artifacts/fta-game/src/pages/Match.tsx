@@ -196,6 +196,54 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     });
   }, [twoPlayer, isHome, currentFrame, matchEndResult, selectedPlayerId, passTargetMode, comboMoveFirst, comboActive, comboStep, comboStoredMove, comboStoredPass, replayMode, replayIdx, replaySpeed, replayPlaying]);
 
+  useEffect(() => {
+    if (!savedMatch) return;
+    setPlayers(savedMatch.players);
+    setBall(savedMatch.ball);
+    setScore(savedMatch.score);
+    scoreRef.current = savedMatch.score;
+    setTurn(savedMatch.turn);
+    turnRef.current = savedMatch.turn;
+    setPhase(savedMatch.phase);
+    phaseRef.current = savedMatch.phase;
+    setPendingCommands(new Map(savedMatch.pendingCommands));
+    pendingCommandsRef.current = new Map(savedMatch.pendingCommands);
+    setSelectedPlayerId(savedMatch.selectedPlayerId);
+    setPassTargetMode(savedMatch.passTargetMode);
+    setTwoPlayerTurn(savedMatch.twoPlayerTurn);
+    twoPlayerTurnRef.current = savedMatch.twoPlayerTurn;
+    p1StoredCommandsRef.current = new Map(savedMatch.p1StoredCommands);
+    setComboMoveFirst(savedMatch.comboMoveFirst);
+    setComboActive(savedMatch.comboActive);
+    setComboStep(savedMatch.comboStep);
+    setComboStoredMove(savedMatch.comboStoredMove);
+    setComboStoredPass(savedMatch.comboStoredPass);
+    setReplayMode(savedMatch.replayMode);
+    setReplayIdx(savedMatch.replayIdx);
+    setReplaySpeed(savedMatch.replaySpeed);
+    setReplayPlaying(savedMatch.replayPlaying);
+    setCurrentFrame(savedMatch.currentFrame);
+    setAllEvents(savedMatch.allEvents);
+    allEventsRef.current = savedMatch.allEvents;
+    turnSaveCountRef.current = savedMatch.turnSaveCount;
+  }, []);
+
+  useEffect(() => {
+    const saved = turnSaveCountRef.current + 1;
+    turnSaveCountRef.current = saved;
+    if (saved % 3 === 0) persistMatch();
+  }, [turn, persistMatch]);
+
+  useEffect(() => {
+    const onBeforeUnload = () => persistMatch();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      persistMatch();
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      saveMatch(null);
+    };
+  }, [persistMatch]);
+
   const stopAnim = () => {
     if (animRef.current !== null) {
       cancelAnimationFrame(animRef.current);
