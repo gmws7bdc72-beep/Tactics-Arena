@@ -344,19 +344,6 @@ export default function PitchCanvas({
       }
     }
 
-    // Pass mode: show range ring centred on the pass origin (move dest or current pos)
-    if (passTargetMode && selPlayer) {
-      const ringOrigin = passOriginPos ?? selPlayer.position;
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = "#ffeb3b";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 5]);
-      ctx.beginPath();
-      ctx.arc(tp(ringOrigin).x, tp(ringOrigin).y, tr(180), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
-    }
 
     // Pending command arrows
     if (phase === "planning") {
@@ -386,6 +373,8 @@ export default function PitchCanvas({
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
         } else if (cmd.type === CommandType.SHOOT) {
+          // "player" team attacks right; "ai" team attacks left
+          const attacksRight = pf.teamId === "player";
           ctx.globalAlpha = 0.7;
           ctx.strokeStyle = "#ff6b35";
           ctx.lineWidth = 2.5;
@@ -393,9 +382,10 @@ export default function PitchCanvas({
           ctx.beginPath();
           ctx.moveTo(from.x, from.y);
           if (isVertical) {
-            ctx.lineTo(W / 2, 0);
+            // vertical: right=top (y=0), left=bottom (y=H)
+            ctx.lineTo(W / 2, attacksRight ? 0 : H);
           } else {
-            ctx.lineTo(W, H / 2);
+            ctx.lineTo(attacksRight ? W : 0, H / 2);
           }
           ctx.stroke();
           ctx.setLineDash([]);
