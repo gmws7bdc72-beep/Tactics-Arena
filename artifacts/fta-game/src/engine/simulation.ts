@@ -699,8 +699,17 @@ function detectAndResolveEvents(
       const defSpeed     = vec2Len(other.velocity);
       const carrierSpeed = vec2Len(owner.velocity);
 
-      // At least one player must be in motion to trigger (rules out purely incidental adjacency)
-      if (defSpeed < 15 && carrierSpeed < 15) continue;
+      // Checkers-style rule: a tackle only fires when the tackler's movement
+      // passes THROUGH the carrier's tile, or the carrier dribbles through the
+      // defender.  We enforce this by requiring that whoever is moving has a
+      // velocity vector directed toward (or through) the other player.
+      // dot > 0.3 ≈ within ~72 ° of straight-on — generous enough for diagonal
+      // tiles but tight enough to rule out "standing next to" adjacency.
+      const toOwner  = vec2Normalize(vec2Sub(owner.position, other.position));
+      const toOther  = vec2Normalize(vec2Sub(other.position, owner.position));
+      const defThroughCarrier     = defSpeed     > 15 && vec2Dot(vec2Normalize(other.velocity), toOwner) > 0.30;
+      const carrierThroughDef     = carrierSpeed > 15 && vec2Dot(vec2Normalize(owner.velocity),  toOther) > 0.30;
+      if (!defThroughCarrier && !carrierThroughDef) continue;
 
       // keepChance: carrier's attack vs defender's defense; abilities shift the balance.
       // Base 30% keep chance so even a weak carrier survives some duels.
