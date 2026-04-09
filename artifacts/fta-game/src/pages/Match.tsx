@@ -11,6 +11,7 @@ import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles,
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
+import { loadMatch, saveMatch } from "../game/persistence";
 
 interface Props {
   team: TeamConfig;
@@ -85,7 +86,14 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const aiTier = opponentTeamDef.tier;
   const isMobile = useIsMobile();
 
+  const savedMatch = loadMatch();
   const initState = useRef((() => {
+    if (savedMatch && savedMatch.version === 1 && savedMatch.twoPlayer === twoPlayer && savedMatch.isHome === isHome) {
+      return {
+        players: savedMatch.players,
+        ball: savedMatch.ball,
+      };
+    }
     const p1Players = p1Source ? p1Source.players : team.players;
     const pl = p1Players.slice(0, 5).map((card, i) =>
       makeSimPlayer(card, "player", playerFormation.positions[i] ?? { x: PITCH_WIDTH * 0.2, y: PITCH_HEIGHT / 2 })
@@ -103,34 +111,34 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
   const [players, setPlayers] = useState<SimPlayer[]>(initState.current.players);
   const [ball, setBall] = useState<SimBall>(initState.current.ball);
-  const [score, setScore] = useState({ player: 0, ai: 0 });
-  const scoreRef = useRef({ player: 0, ai: 0 });
-  const [turn, setTurn] = useState(1);
-  const turnRef = useRef(1);
-  const [phase, setPhase] = useState<"planning" | "simulating" | "finished">("planning");
-  const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map());
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
-  const [passTargetMode, setPassTargetMode] = useState(false);
+  const [score, setScore] = useState(savedMatch?.score ?? { player: 0, ai: 0 });
+  const scoreRef = useRef(savedMatch?.score ?? { player: 0, ai: 0 });
+  const [turn, setTurn] = useState(savedMatch?.turn ?? 1);
+  const turnRef = useRef(savedMatch?.turn ?? 1);
+  const [phase, setPhase] = useState<"planning" | "simulating" | "finished">(savedMatch?.phase ?? "planning");
+  const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map(savedMatch?.pendingCommands ?? []));
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(savedMatch?.selectedPlayerId ?? null);
+  const [passTargetMode, setPassTargetMode] = useState(savedMatch?.passTargetMode ?? false);
   const [currentFrame, setCurrentFrame] = useState<FrameSnapshot>(() =>
-    makeInitFrame(initState.current.players, initState.current.ball)
+    savedMatch?.currentFrame ?? makeInitFrame(initState.current.players, initState.current.ball)
   );
-  const [allEvents, setAllEvents] = useState<GameEvent[]>([]);
+  const [allEvents, setAllEvents] = useState<GameEvent[]>(savedMatch?.allEvents ?? []);
   const allEventsRef = useRef<GameEvent[]>([]);
   const [turnTimer, setTurnTimer] = useState(TURN_TIME);
   const [showGoalBanner, setShowGoalBanner] = useState<"player" | "ai" | null>(null);
   const pendingTurnRef = useRef(false);
 
   // Combo move+pass state
-  const [comboMoveFirst, setComboMoveFirst] = useState(true);
-  const [comboActive, setComboActive] = useState(false);
-  const [comboStep, setComboStep] = useState<1 | 2>(1);
-  const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(null);
-  const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(null);
+  const [comboMoveFirst, setComboMoveFirst] = useState(savedMatch?.comboMoveFirst ?? true);
+  const [comboActive, setComboActive] = useState(savedMatch?.comboActive ?? false);
+  const [comboStep, setComboStep] = useState<1 | 2>(savedMatch?.comboStep ?? 1);
+  const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(savedMatch?.comboStoredMove ?? null);
+  const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(savedMatch?.comboStoredPass ?? null);
 
   // 2-player sequential planning state
-  const [twoPlayerTurn, setTwoPlayerTurn] = useState<"p1" | "p2">("p1");
-  const twoPlayerTurnRef = useRef<"p1" | "p2">("p1");
-  const p1StoredCommandsRef = useRef<Map<string, Command>>(new Map());
+  const [twoPlayerTurn, setTwoPlayerTurn] = useState<"p1" | "p2">(savedMatch?.twoPlayerTurn ?? "p1");
+  const twoPlayerTurnRef = useRef<"p1" | "p2">(savedMatch?.twoPlayerTurn ?? "p1");
+  const p1StoredCommandsRef = useRef<Map<string, Command>>(new Map(savedMatch?.p1StoredCommands ?? []));
 
   const animRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -144,10 +152,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   // Replay
   const allMatchFramesRef = useRef<FrameSnapshot[]>([]);
   const [matchEndResult, setMatchEndResult] = useState<{ playerScore: number; aiScore: number } | null>(null);
-  const [replayMode, setReplayMode] = useState(false);
-  const [replayIdx, setReplayIdx] = useState(0);
-  const [replaySpeed, setReplaySpeed] = useState<1 | 6 | 8 | 10>(1);
-  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replayMode, setReplayMode] = useState(savedMatch?.replayMode ?? false);
+  const [replayIdx, setReplayIdx] = useState(savedMatch?.replayIdx ?? 0);
+  const [replaySpeed, setReplaySpeed] = useState<1 | 6 | 8 | 10>(savedMatch?.replaySpeed ?? 1);
+  const [replayPlaying, setReplayPlaying] = useState(savedMatch?.replayPlaying ?? false);
   const replayAnimRef = useRef<number | null>(null);
   const replayIdxRef = useRef(0);
   const replaySpeedRef = useRef<1 | 6 | 8 | 10>(1);
@@ -155,6 +163,38 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { ballRef.current = ball; }, [ball]);
   useEffect(() => { pendingCommandsRef.current = pendingCommands; }, [pendingCommands]);
+  const turnSaveCountRef = useRef(savedMatch?.turnSaveCount ?? 0);
+
+  const persistMatch = useCallback(() => {
+    saveMatch({
+      version: 1,
+      twoPlayer,
+      isHome,
+      turn: turnRef.current,
+      phase: phaseRef.current,
+      score: scoreRef.current,
+      players: playersRef.current,
+      ball: ballRef.current,
+      currentFrame,
+      allEvents: allEventsRef.current,
+      matchEndResult,
+      pendingCommands: [...pendingCommandsRef.current.entries()],
+      selectedPlayerId,
+      passTargetMode,
+      twoPlayerTurn: twoPlayerTurnRef.current,
+      p1StoredCommands: [...p1StoredCommandsRef.current.entries()],
+      comboMoveFirst,
+      comboActive,
+      comboStep,
+      comboStoredMove,
+      comboStoredPass,
+      replayMode,
+      replayIdx,
+      replaySpeed,
+      replayPlaying,
+      turnSaveCount: turnSaveCountRef.current,
+    });
+  }, [twoPlayer, isHome, currentFrame, matchEndResult, selectedPlayerId, passTargetMode, comboMoveFirst, comboActive, comboStep, comboStoredMove, comboStoredPass, replayMode, replayIdx, replaySpeed, replayPlaying]);
 
   const stopAnim = () => {
     if (animRef.current !== null) {

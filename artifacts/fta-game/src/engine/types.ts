@@ -210,3 +210,32 @@ export interface LeagueState {
   aiMatchIndex?: number;
   lastMatchdayResults?: MatchdayResult[];
 }
+
+export interface SavedMatchState {
+  version: 1;
+  twoPlayer: boolean;
+  isHome: boolean;
+  turn: number;
+  phase: "planning" | "simulating" | "finished";
+  score: { player: number; ai: number };
+  players: SimPlayer[];
+  ball: SimBall;
+  currentFrame: FrameSnapshot;
+  allEvents: GameEvent[];
+  matchEndResult: { playerScore: number; aiScore: number } | null;
+  pendingCommands: [string, Command][];
+  selectedPlayerId: string | null;
+  passTargetMode: boolean;
+  twoPlayerTurn: "p1" | "p2";
+  p1StoredCommands: [string, Command][];
+  comboMoveFirst: boolean;
+  comboActive: boolean;
+  comboStep: 1 | 2;
+  comboStoredMove: Vec2 | null;
+  comboStoredPass: { targetPosition?: Vec2; targetPlayerId?: string } | null;
+  replayMode: boolean;
+  replayIdx: number;
+  replaySpeed: 1 | 6 | 8 | 10;
+  replayPlaying: boolean;
+  turnSaveCount: number;
+}

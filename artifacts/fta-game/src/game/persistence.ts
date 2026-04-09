@@ -1,10 +1,11 @@
-import type { TeamConfig, LeagueState } from "../engine/types";
+import type { TeamConfig, LeagueState, SavedMatchState } from "../engine/types";
 import { getDefaultSquad } from "./players";
 import { FORMATIONS } from "./formations";
 import { createLeague } from "./league";
 
 const TEAM_KEY = "fta_team_v2";
 const LEAGUE_KEY = "fta_league_v3";
+const MATCH_KEY = "fta_match_v1";
 
 const PLAYER_TEAM_ID = "player_team";
 
@@ -46,6 +47,24 @@ export function loadLeague(teamName: string): LeagueState {
 
 export function saveLeague(league: LeagueState): void {
   localStorage.setItem(LEAGUE_KEY, JSON.stringify(league));
+}
+
+export function loadMatch(): SavedMatchState | null {
+  try {
+    const raw = localStorage.getItem(MATCH_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedMatchState;
+  } catch {
+    return null;
+  }
+}
+
+export function saveMatch(match: SavedMatchState | null): void {
+  if (!match) {
+    localStorage.removeItem(MATCH_KEY);
+    return;
+  }
+  localStorage.setItem(MATCH_KEY, JSON.stringify(match));
 }
 
 export function resetLeague(teamName: string): LeagueState {
