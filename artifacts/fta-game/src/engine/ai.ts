@@ -383,40 +383,43 @@ function computeRunTarget(
   tier: AiTier
 ): TilePos {
   const role = player.role;
-  // How far ahead to position (elite = much further, easy = barely)
-  const fwdOffset = tier === 1 ? 3 : tier === 2 ? 2 : 1;
+  // How far ahead to position — must be large enough to push into the attacking half
+  // on a 16-col grid (AI attacks toward col 0; carrier typically at cols 8-12)
+  const fwdOffset = tier === 1 ? 6 : tier === 2 ? 5 : 2;
+  // Minimum column targets: ensure attackers push deep into scoring positions
+  const minAttackCol = tier === 1 ? 2 : tier === 2 ? 3 : 4;
 
   if (role === "striker") {
-    // Striker makes a direct run toward goal, staying in the danger zone
+    // Striker makes a direct run into the goal-threat zone
     return {
-      col: Math.max(1, ballCarrierTile.col - fwdOffset),
+      col: Math.max(minAttackCol, ballCarrierTile.col - fwdOffset),
       row: Math.floor(GRID_ROWS / 2),
     };
   }
   if (role === "forward") {
-    // Forwards run into channels (wide)
+    // Forwards run into wide channels ahead of the carrier
     const runRow = roleIdx === 0
       ? Math.max(0, ballCarrierTile.row - 2)
       : Math.min(GRID_ROWS - 1, ballCarrierTile.row + 2);
     return {
-      col: Math.max(1, ballCarrierTile.col - fwdOffset),
+      col: Math.max(minAttackCol + 1, ballCarrierTile.col - fwdOffset),
       row: runRow,
     };
   }
   if (role === "midfielder") {
     // Midfielders fan out ahead/level with carrier to create passing lanes
-    const fwdOffset = tier === 1 ? 2 : tier === 2 ? 1 : 0;
+    const midFwdOffset = tier === 1 ? 4 : tier === 2 ? 3 : 1;
     const supportRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
       : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
     return {
-      col: Math.max(2, ballCarrierTile.col - fwdOffset),
+      col: Math.max(minAttackCol + 2, ballCarrierTile.col - midFwdOffset),
       row: supportRow,
     };
   }
   if (role === "defender") {
-    // Defender stays 2 tiles behind ball — recycling option
-    const coverOffset = tier === 1 ? 2 : 3;
+    // Defender stays behind ball as recycling option
+    const coverOffset = tier === 1 ? 3 : 4;
     const coverRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
       : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
@@ -641,10 +644,10 @@ function tier1Defense(
     return moveStep(player, pt, oppTile, claimed, friendly);
   }
 
-  // ── Loose marking: off-ball opponent safely away from play ────────────────
-  // Attacking roles drift into a zonal hold more often than defensive roles.
+  // ── Loose marking: only attacking AI roles drift, and only rarely ─────────
+  // Defensive/midfield AI roles always hold their mark.
   const looseRole = player.role === "forward" || player.role === "striker";
-  const isLoose = oppDistFromBall >= 3 && Math.random() < (looseRole ? 0.45 : 0.18);
+  const isLoose = looseRole && oppDistFromBall >= 5 && Math.random() < 0.20;
 
   if (isLoose) {
     // Zonal hold: 2 tiles goal-side of opponent, row blended toward ball row
@@ -653,12 +656,13 @@ function tier1Defense(
     return moveStep(player, pt, { col: looseCol, row: looseRow }, claimed, friendly);
   }
 
-  // ── Tight shadow: intercept the pass lane ────────────────────────────────
-  // Position on the line between opponent and ball, shifted 1 tile goal-side.
-  // Targets where a pass would arrive, not where the opponent currently is.
-  const interceptCol = Math.min(GRID_COLS - 1, Math.round((oppTile.col + ballTile.col) / 2) + 1);
-  const interceptRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.round((oppTile.row + ballTile.row) / 2)));
-  return moveStep(player, pt, { col: interceptCol, row: interceptRow }, claimed, friendly);
+  // ── Tight shadow: goal-side shadow one tile from receiver ────────────────
+  // Sit exactly 1 tile on the AI-goal side of the marked opponent (higher col).
+  // This blocks the pass lane: if the ball arrives the marker is already between
+  // receiver and the AI goal. Much tighter than a midpoint formula.
+  const shadowCol = Math.min(GRID_COLS - 1, oppTile.col + 1);
+  const shadowRow = oppTile.row;
+  return moveStep(player, pt, { col: shadowCol, row: shadowRow }, claimed, friendly);
 }
 
 // ─── Tier 2 — Mid: Balanced attack, pass when easy, dribble when open ────────
