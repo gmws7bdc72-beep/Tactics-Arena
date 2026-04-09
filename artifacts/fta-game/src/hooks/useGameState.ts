@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { TeamConfig, LeagueState } from "../engine/types";
-import { loadTeam, saveTeam, loadLeague, saveLeague, resetLeague } from "../game/persistence";
+import { loadTeam, saveTeam, loadLeague, saveLeague, resetLeague, getDefaultTeam } from "../game/persistence";
 import { PLAYER_TEAM_ID_CONST } from "../game/persistence";
 import { migrateLeague } from "../game/league";
 
@@ -36,6 +36,9 @@ export function useGameState() {
   }, []);
 
   const startNewSeason = useCallback((teamName: string) => {
+    const freshTeam = { ...getDefaultTeam(), name: teamName };
+    saveTeam(freshTeam);
+    setTeamState(freshTeam);
     const l = resetLeague(teamName);
     setLeagueState(l);
   }, []);
