@@ -39,7 +39,7 @@ interface PlayoffContext {
 }
 
 export default function App() {
-  const { team, updateTeam, league, updateLeague, startNewSeason } = useGameState();
+  const { team, updateTeam, league, updateLeague, startNewSeason, refreshState } = useGameState();
   const [screen, setScreen] = useState<Screen>("home");
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(null);
@@ -181,10 +181,11 @@ export default function App() {
 
   const handleNewSeason = useCallback(() => {
     startNewSeason(team.name);
+    refreshState();
     setMatchResult(null);
     setPlayoffContext(null);
     setScreen("home");
-  }, [startNewSeason, team.name]);
+  }, [refreshState, startNewSeason, team.name]);
 
   // ── Screens ───────────────────────────────────────────────────────────────
   if (screen === "home") {
