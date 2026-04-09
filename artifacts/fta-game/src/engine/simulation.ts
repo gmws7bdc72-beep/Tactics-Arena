@@ -619,8 +619,14 @@ function detectAndResolveEvents(
       const winner = candidates[0].player;
       const loser = candidates.length > 1 ? candidates[1].player : null;
 
-      winner.command = null;
-      winner.commandExecuted = false;
+      // Preserve an incomplete MOVE command so the player keeps running to their
+      // planned destination while dribbling (don't stop them the moment the ball
+      // arrives). Non-MOVE commands (PASS/SHOOT) relied on not yet having the
+      // ball, so those are cleared as before.
+      if (winner.command?.type !== CommandType.MOVE || winner.commandExecuted) {
+        winner.command = null;
+        winner.commandExecuted = false;
+      }
 
       if (loser && loser.teamId !== winner.teamId) {
         // Momentum bonus: running toward the ball helps claim it
@@ -630,8 +636,10 @@ function detectAndResolveEvents(
         const loserScore  = loser.stats.defense  / 10 + rng() * 0.3 + loserMomentum;
 
         if (loserScore > winnerScore) {
-          loser.command = null;
-          loser.commandExecuted = false;
+          if (loser.command?.type !== CommandType.MOVE || loser.commandExecuted) {
+            loser.command = null;
+            loser.commandExecuted = false;
+          }
           ball.ownerId = loser.id;
           ball.velocity = { x: 0, y: 0 };
           ball.passTarget = undefined;
