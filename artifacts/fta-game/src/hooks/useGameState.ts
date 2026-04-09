@@ -43,5 +43,14 @@ export function useGameState() {
     setLeagueState(l);
   }, []);
 
-  return { team, updateTeam, league, updateLeague, startNewSeason };
+  const refreshState = useCallback(() => {
+    const t = loadTeam();
+    const raw = loadLeague(t.name);
+    const migrated = migrateLeague(raw);
+    if (migrated !== raw) saveLeague(migrated);
+    setTeamState(t);
+    setLeagueState(migrated);
+  }, []);
+
+  return { team, updateTeam, league, updateLeague, startNewSeason, refreshState };
 }
