@@ -3,7 +3,7 @@ import type { AITeamDef } from "./league";
 export const TWO_PLAYER_TEAM_A: AITeamDef = {
   id: "2p_team_a",
   name: "Player 1",
-  tier: 2,
+  tier: 1,
   formationId: "1-1-2",
   jerseyColor: "#1565c0",
   secondaryColor: "#ffffff",
@@ -20,7 +20,7 @@ export const TWO_PLAYER_TEAM_A: AITeamDef = {
 export const TWO_PLAYER_TEAM_B: AITeamDef = {
   id: "2p_team_b",
   name: "Player 2",
-  tier: 2,
+  tier: 1,
   formationId: "1-2-1",
   jerseyColor: "#b71c1c",
   secondaryColor: "#ffffff",
