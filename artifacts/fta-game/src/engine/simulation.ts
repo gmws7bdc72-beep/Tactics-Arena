@@ -694,48 +694,83 @@ function detectAndResolveEvents(
     passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
 
     const owner = players.find(p => p.id === ball.ownerId)!;
-    // Tackle fires when any opponent moves through / into contact range.
-    // Uses pixel distance so it works regardless of tile boundary alignment.
-    const TACKLE_DIST = PLAYER_RADIUS * 2.5; // ~35 px — contact range
+
+    // Two-check checkers-style tackle system:
+    //
+    // CHECK 1 — Enter tile: did an opponent move INTO the carrier's tile this
+    //   tick?  "In the tile" = within TILE_W/2 of the carrier's centre and
+    //   moving toward them (velocity direction ≈ toward carrier).
+    //   Result: tackler ALWAYS retreats to the tile they came from.
+    //
+    // CHECK 2 — Pass through: did the tackler's PLANNED command target lie
+    //   BEYOND the carrier (carrier is between tackler and destination)?
+    //   Determined purely by command.targetPosition, not velocity.
+    //   Result: if true → run keepChance contest for the ball.
+    //           if false → retreat only, no contest.
+
+    const ENTER_DIST = TILE_W * 0.55; // ≈ 24 px — "same tile" threshold
 
     for (const other of players) {
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
       if (other.state === PlayerState.RECOVERING || other.state === PlayerState.CONTESTING) continue;
 
-      if (vec2Dist(other.position, owner.position) > TACKLE_DIST) continue;
+      const dist = vec2Dist(other.position, owner.position);
+      if (dist > ENTER_DIST) continue;
 
-      const defSpeed     = vec2Len(other.velocity);
-      const carrierSpeed = vec2Len(owner.velocity);
+      const defSpeed = vec2Len(other.velocity);
+      if (defSpeed < 15) continue; // must be actively moving
 
-      // Checkers-style rule: a tackle only fires when the tackler's movement
-      // passes THROUGH the carrier's tile, or the carrier dribbles through the
-      // defender.  We enforce this by requiring that whoever is moving has a
-      // velocity vector directed toward (or through) the other player.
-      // dot > 0.3 ≈ within ~72 ° of straight-on — generous enough for diagonal
-      // tiles but tight enough to rule out "standing next to" adjacency.
-      const toOwner  = vec2Normalize(vec2Sub(owner.position, other.position));
-      const toOther  = vec2Normalize(vec2Sub(other.position, owner.position));
-      const defThroughCarrier     = defSpeed     > 15 && vec2Dot(vec2Normalize(other.velocity), toOwner) > 0.30;
-      const carrierThroughDef     = carrierSpeed > 15 && vec2Dot(vec2Normalize(owner.velocity),  toOther) > 0.30;
-      if (!defThroughCarrier && !carrierThroughDef) continue;
+      // The tackler must be moving TOWARD the carrier (not already past them).
+      const toOwner = vec2Normalize(vec2Sub(owner.position, other.position));
+      if (vec2Dot(vec2Normalize(other.velocity), toOwner) < 0.25) continue;
 
-      // keepChance: carrier's attack vs defender's defense; abilities shift the balance.
-      // Base 30% keep chance so even a weak carrier survives some duels.
+      // CHECK 1 passed — tackler entered the carrier's tile.
+      // They must retreat regardless of what happens next.
+
+      // CHECK 2 — is the planned target BEYOND the carrier?
+      // "Beyond" = carrier lies between tackler's current position and their
+      // command target (same general direction AND target is farther).
+      const target = other.command?.targetPosition;
+      let passingThrough = false;
+      if (!other.commandExecuted && target) {
+        const toTarget  = vec2Sub(target, other.position);
+        const toCarrier = vec2Sub(owner.position, other.position);
+        const distToTarget  = vec2Len(toTarget);
+        const distToCarrier = vec2Len(toCarrier);
+        const alignment = vec2Dot(vec2Normalize(toTarget), vec2Normalize(toCarrier));
+        // Carrier is on the way to the target and target is farther
+        passingThrough = alignment > 0.30 && distToTarget > distToCarrier;
+      }
+
+      if (!passingThrough) {
+        // Tackler only entered the tile — bounce them back, no contest.
+        retreatFrom(other, owner);
+        other.command = null;
+        other.commandExecuted = false;
+        break;
+      }
+
+      // CHECK 2 passed — full tackle contest.
       let keepScore = (owner.stats.attack / 10) - (other.stats.defense / 10); // -1 … +1
-      if (owner.ability  === "ghost_run"    || owner.ability  === "powerhouse") keepScore += 0.20;
-      if (other.ability  === "iron_tackle"  || other.ability  === "powerhouse") keepScore -= 0.20;
-      // Carrier has a small initiative bonus when they're the one actively dribbling through
+      if (owner.ability === "ghost_run"   || owner.ability === "powerhouse") keepScore += 0.20;
+      if (other.ability === "iron_tackle" || other.ability === "powerhouse") keepScore -= 0.20;
+      // Carrier bonus: dribbling actively through gives slight edge
+      const carrierSpeed = vec2Len(owner.velocity);
       if (carrierSpeed > defSpeed) keepScore += 0.10;
 
       const keepChance = Math.max(0.05, Math.min(0.90, 0.30 + keepScore * 0.40));
-
       const carrierKeepsBall = rng() < keepChance;
 
       if (carrierKeepsBall) {
+        // Tackler fails — retreat and brief contest cool-down.
+        retreatFrom(other, owner);
+        other.command = null;
+        other.commandExecuted = false;
         other.state = PlayerState.CONTESTING;
         other.stateTimer = 0.3;
         events.push({ type: GameEventType.LOOSE_BALL, tick, playerId: owner.id, teamId: owner.teamId, message: `${owner.name} holds off ${other.name}` });
       } else {
+        // Tackler wins the ball.
         ball.ownerId = other.id;
         ball.velocity = { x: 0, y: 0 };
         other.state = PlayerState.DRIBBLING;
