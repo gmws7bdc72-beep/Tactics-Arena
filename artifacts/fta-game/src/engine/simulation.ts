@@ -281,15 +281,23 @@ function separateOverlapping(players: SimPlayer[], ball: SimBall, rng: () => num
       const overlap = dist > 0.01 ? (minDist - dist) : minDist;
       const nx = dist > 0.01 ? dx / dist : 0;
       const ny = dist > 0.01 ? dy / dist : 1;
+
+      // Cross-team collisions involving the carrier are handled entirely by the
+      // tackle system — skip separation physics so opponents can actually enter
+      // the carrier's tile and trigger the tackle check.
+      if ((aOwns && b.teamId !== a.teamId) || (bOwns && a.teamId !== b.teamId)) {
+        continue;
+      }
+
       if (aOwns) {
-        // Ball carrier always pushes non-carrier aside
+        // Same-team: carrier pushes friendly out of the way
         b.position.x += nx * overlap;
         b.position.y += ny * overlap;
       } else if (bOwns) {
         a.position.x -= nx * overlap;
         a.position.y -= ny * overlap;
       } else if (a.teamId === b.teamId) {
-        // Same team: share equally, no contest needed
+        // Same team, no ball: share equally
         a.position.x -= nx * overlap * 0.5;
         a.position.y -= ny * overlap * 0.5;
         b.position.x += nx * overlap * 0.5;
