@@ -727,19 +727,19 @@ function detectAndResolveEvents(
       // CHECK 1 passed — tackler entered the carrier's tile.
       // They must retreat regardless of what happens next.
 
-      // CHECK 2 — is the planned target BEYOND the carrier?
-      // "Beyond" = carrier lies between tackler's current position and their
-      // command target (same general direction AND target is farther).
+      // CHECK 2 — is the planned target BEYOND the carrier's tile?
+      // Simple tile-based test: if the tackler's command destination is a
+      // DIFFERENT tile than the carrier's current tile, the carrier's tile is
+      // just a waypoint and the tackler was passing through.
+      // If the destination IS the carrier's tile they were merely stepping in —
+      // no contest.  We skip the commandExecuted guard so a player that just
+      // arrived at their target this same tick can still be caught.
       const target = other.command?.targetPosition;
       let passingThrough = false;
-      if (!other.commandExecuted && target) {
-        const toTarget  = vec2Sub(target, other.position);
-        const toCarrier = vec2Sub(owner.position, other.position);
-        const distToTarget  = vec2Len(toTarget);
-        const distToCarrier = vec2Len(toCarrier);
-        const alignment = vec2Dot(vec2Normalize(toTarget), vec2Normalize(toCarrier));
-        // Carrier is on the way to the target and target is farther
-        passingThrough = alignment > 0.30 && distToTarget > distToCarrier;
+      if (target) {
+        const targetTile = posToTile(target);
+        const ownerTile  = posToTile(owner.position);
+        passingThrough = targetTile.col !== ownerTile.col || targetTile.row !== ownerTile.row;
       }
 
       if (!passingThrough) {
