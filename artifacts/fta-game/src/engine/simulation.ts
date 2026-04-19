@@ -183,7 +183,11 @@ export function runSimulation(
     }
   }
 
-  for (let tick = 0; tick < TICKS_PER_TURN; tick++) {
+  // Run for TICKS_PER_TURN, but extend while a pass is still in flight so the
+  // ball always reaches its destination within the same turn. Safety ceiling at
+  // 5× the normal budget to prevent runaway loops.
+  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 5;
+  for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
     updatePlayerMovement(simPlayers, simBall, DELTA, tickEvents, tick, passTracker, rng);
@@ -207,6 +211,12 @@ export function runSimulation(
 
     allEvents.push(...tickEvents);
     frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
+
+    // End the turn once the normal budget is spent AND no pass is in flight.
+    // If a pass is still travelling, keep ticking until it resolves.
+    if (tick >= TICKS_PER_TURN - 1 && !simBall.passTarget) {
+      break;
+    }
   }
 
   // Snap all players to tile centers at end of turn
