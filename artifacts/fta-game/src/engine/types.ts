@@ -49,7 +49,8 @@ export type AbilityId =
   | "eagle_eye"
   | "powerhouse"
   | "shadow_mark"
-  | "goalkeeper";
+  | "goalkeeper"
+  | "none";
 
 export interface Ability {
   id: AbilityId;

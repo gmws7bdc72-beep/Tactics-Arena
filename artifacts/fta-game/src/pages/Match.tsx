@@ -159,7 +159,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(savedMatch?.comboStoredMove ?? null);
   const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(savedMatch?.comboStoredPass ?? null);
 
-  // (2-player planning is now simultaneous — no sequential turn tracking needed)
+  // 2-player sequential turn tracking: P1 plans first, then P2.
+  const [twoPlayerTurn, setTwoPlayerTurn] = useState<"p1" | "p2">("p1");
+  const twoPlayerTurnRef = useRef<"p1" | "p2">("p1");
+  const p1StoredCommandsRef = useRef<Map<string, Command>>(new Map());
 
   const animRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -333,10 +336,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
     } else {
       // Zero velocity so the planning phase always starts with a stationary ball.
-      // If the simulation ended with the ball still rolling (an unowned pass that
-      // didn't reach its target in 60 ticks), we freeze it at its final position
-      // rather than carrying the live velocity into the next turn's state.
+      // If the simulation ended with the ball still rolling (a pass that didn't
+      // reach its target in 60 ticks), snap it to passTarget immediately so the
+      // planning UI always shows the ball at the correct destination tile.
       newBall = { ...lastFrame.ball, velocity: { x: 0, y: 0 } };
+      if (newBall.passTarget) {
+        newBall = { ...newBall, position: { ...newBall.passTarget }, passTarget: undefined };
+      }
     }
 
     setPlayers(newSimPlayers);
@@ -344,6 +350,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     playersRef.current = newSimPlayers;
     ballRef.current = newBall;
     setCurrentFrame(makeInitFrame(newSimPlayers, newBall));
+
+    // Reset sequential 2-player turn to P1 for the new turn
+    if (twoPlayer) {
+      twoPlayerTurnRef.current = "p1";
+      setTwoPlayerTurn("p1");
+      p1StoredCommandsRef.current = new Map();
+    }
 
     const matchOver = newScore.player >= GOALS_TO_WIN || newScore.ai >= GOALS_TO_WIN || nextTurn > MAX_MATCH_TURNS;
     if (matchOver) {
@@ -358,7 +371,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       phaseRef.current = "planning";
       setPhase("planning");
     }
-  }, [onMatchEnd, playerFormation, aiFormation]);
+  }, [onMatchEnd, playerFormation, aiFormation, twoPlayer]);
 
   const playbackFrames = useCallback((frames: FrameSnapshot[], allNewEvents: GameEvent[]) => {
     let idx = 0;
@@ -425,13 +438,40 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;
+
+    // Sequential 2-player mode: P1 confirms first, then P2.
+    if (twoPlayer) {
+      if (twoPlayerTurnRef.current === "p1") {
+        // Store P1's commands and hand the pitch to P2.
+        p1StoredCommandsRef.current = new Map(pendingCommandsRef.current);
+        setPendingCommands(new Map());
+        pendingCommandsRef.current = new Map();
+        clearSelection();
+        twoPlayerTurnRef.current = "p2";
+        setTwoPlayerTurn("p2");
+        return;
+      }
+      // P2 confirmed — merge both sets and run the turn.
+      const combined = new Map([...p1StoredCommandsRef.current, ...pendingCommandsRef.current]);
+      if (timerRef.current) clearInterval(timerRef.current);
+      phaseRef.current = "simulating";
+      setPhase("simulating");
+      clearSelection();
+      setPendingCommands(new Map());
+      pendingCommandsRef.current = new Map();
+      twoPlayerTurnRef.current = "p1";
+      setTwoPlayerTurn("p1");
+      runTurn(combined);
+      return;
+    }
+
     if (timerRef.current) clearInterval(timerRef.current);
     phaseRef.current = "simulating";
     setPhase("simulating");
     clearSelection();
     setPendingCommands(new Map());
     runTurn();
-  }, [runTurn, clearSelection]);
+  }, [twoPlayer, runTurn, clearSelection]);
 
   useEffect(() => {
     if (!pendingTurnRef.current) return;
@@ -730,7 +770,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           }
           phase={phase}
           isVertical={isMobile}
-          activePlanningTeam={undefined}
+          activePlanningTeam={twoPlayer ? (twoPlayerTurn === "p1" ? "player" : "ai") : undefined}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
         />
@@ -822,13 +862,19 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        {/* 2P simultaneous banner */}
+        {/* 2P sequential planning banner */}
         {twoPlayer && phase === "planning" && (
           <div
             className="mx-4 mt-2 px-3 py-1.5 rounded-xl text-center text-xs font-bold"
-            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#9ca3af" }}
+            style={{
+              background: twoPlayerTurn === "p1" ? "rgba(100,180,255,0.10)" : "rgba(255,160,100,0.10)",
+              border: `1px solid ${twoPlayerTurn === "p1" ? "rgba(100,180,255,0.25)" : "rgba(255,160,100,0.25)"}`,
+              color: twoPlayerTurn === "p1" ? "#93c5fd" : "#fdba74",
+            }}
           >
-            Plan moves for both sides, then confirm together
+            {twoPlayerTurn === "p1"
+              ? "P1: Plan your moves, then confirm — P2 plans next"
+              : "P2: Plan your moves, then confirm to simulate"}
           </div>
         )}
 
@@ -850,11 +896,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             className="px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
             style={{
               background: phase === "planning"
-                ? "linear-gradient(135deg, #00e676, #00b288)"
+                ? twoPlayer && twoPlayerTurn === "p2"
+                  ? "linear-gradient(135deg, #ff9800, #e65100)"
+                  : "linear-gradient(135deg, #00e676, #00b288)"
                 : "rgba(255,255,255,0.08)",
             }}
           >
-            Confirm
+            {twoPlayer && phase === "planning" ? (twoPlayerTurn === "p1" ? "P1 Done" : "P2 Done") : "Confirm"}
           </button>
         </div>
 
