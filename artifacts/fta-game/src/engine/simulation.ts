@@ -31,7 +31,7 @@ function clamp(v: number, min: number, max: number): number {
 
 const HALF_PITCH_X = PITCH_WIDTH / 2;
 
-function getOffsidePlayers(players: SimPlayer[]): Set<string> {
+export function getOffsidePlayers(players: SimPlayer[]): Set<string> {
   const playerTeam = players.filter(p => p.teamId === "player");
   const aiTeam     = players.filter(p => p.teamId === "ai");
   const offside    = new Set<string>();

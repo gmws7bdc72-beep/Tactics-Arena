@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { TeamConfig, SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
 import { CommandType, GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
-import { runSimulation } from "../engine/simulation";
+import { runSimulation, getOffsidePlayers } from "../engine/simulation";
 import { generateAICommands } from "../engine/ai";
 import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
@@ -44,7 +44,6 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
   };
 }
 
-const TURN_TIME = 22;
 const PLAYBACK_FPS = 60;
 
 function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
@@ -149,9 +148,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   );
   const [allEvents, setAllEvents] = useState<GameEvent[]>(savedMatch?.allEvents ?? []);
   const allEventsRef = useRef<GameEvent[]>([]);
-  const [turnTimer, setTurnTimer] = useState(TURN_TIME);
   const [showGoalBanner, setShowGoalBanner] = useState<"player" | "ai" | null>(null);
-  const pendingTurnRef = useRef(false);
 
   // Combo move+pass state
   const [comboMoveFirst, setComboMoveFirst] = useState(savedMatch?.comboMoveFirst ?? true);
@@ -166,7 +163,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const p1StoredCommandsRef = useRef<Map<string, Command>>(new Map());
 
   const animRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<"planning" | "simulating" | "finished">("planning");
   const playersRef = useRef(players);
   const ballRef = useRef(ball);
@@ -454,7 +450,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       }
       // P2 confirmed — merge both sets and run the turn.
       const combined = new Map([...p1StoredCommandsRef.current, ...pendingCommandsRef.current]);
-      if (timerRef.current) clearInterval(timerRef.current);
       phaseRef.current = "simulating";
       setPhase("simulating");
       clearSelection();
@@ -466,21 +461,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       return;
     }
 
-    if (timerRef.current) clearInterval(timerRef.current);
     phaseRef.current = "simulating";
     setPhase("simulating");
     clearSelection();
     setPendingCommands(new Map());
     runTurn();
   }, [twoPlayer, runTurn, clearSelection]);
-
-  useEffect(() => {
-    if (!pendingTurnRef.current) return;
-    if (phaseRef.current !== "planning") return;
-    if (Math.hypot(ballRef.current.velocity.x, ballRef.current.velocity.y) > 0.01) return;
-    pendingTurnRef.current = false;
-    confirmTurn();
-  }, [ball, confirmTurn]);
 
   // ── Replay handlers ───────────────────────────────────────────────────────
   const stopReplayAnim = useCallback(() => {
@@ -562,30 +548,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     }
   }, [stopReplayAnim]);
   // ─────────────────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (phase !== "planning") return;
-    if (twoPlayer) return; // No timer in 2P mode
-    setTurnTimer(TURN_TIME);
-    timerRef.current = setInterval(() => {
-      setTurnTimer(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          timerRef.current = null;
-          pendingTurnRef.current = true;
-          if (Math.hypot(ballRef.current.velocity.x, ballRef.current.velocity.y) <= 0.01) {
-            pendingTurnRef.current = false;
-            confirmTurn();
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    };
-  }, [phase, turn, twoPlayer]);
 
   const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
@@ -689,6 +651,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     clearSelection();
   }, [clearSelection]);
 
+  // Always recompute offside from live player positions so the OS flag shows
+  // continuously (during both simulation playback and the planning phase)
+  // for any player past the offside line — not just at the moment of reception.
+  const liveFrame = useMemo((): FrameSnapshot => {
+    const offsideSet = getOffsidePlayers(players);
+    return {
+      ...currentFrame,
+      players: currentFrame.players.map(p => ({
+        ...p,
+        offside: offsideSet.has(p.id),
+      })),
+    };
+  }, [currentFrame, players]);
+
   return (
     <div className="relative min-h-screen flex flex-col" style={{ background: "#070b14" }}>
       {/* Top bar */}
@@ -709,11 +685,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
           <div className="text-center">
             <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
-            {!twoPlayer && phase === "planning" && (
-              <div className="text-sm font-bold leading-tight" style={{ color: turnTimer <= 5 ? "#ff5252" : "#ffd700" }}>
-                {turnTimer}s
-              </div>
-            )}
             {phase === "simulating" && <div className="text-[#00e676] text-sm">▶</div>}
             {phase === "finished" && <div className="text-gray-500 text-xs">FT</div>}
             <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
@@ -757,7 +728,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
         <PitchCanvas
-          frame={currentFrame}
+          frame={liveFrame}
           playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
           aiTeamColor={effectiveAiColor}
           aiTeamSecondaryColor={effectiveAiSecondaryColor}
