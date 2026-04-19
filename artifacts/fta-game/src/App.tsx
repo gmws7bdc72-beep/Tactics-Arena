@@ -6,6 +6,9 @@ import TeamSetup from "./pages/TeamSetup";
 import Customize from "./pages/Customize";
 import Match from "./pages/Match";
 import PostMatch from "./pages/PostMatch";
+import OnlineLobby from "./pages/OnlineLobby";
+import OnlineMatch from "./pages/OnlineMatch";
+import type { TeamSummary } from "./pages/OnlineMatch";
 import {
   getAITeamDef,
   applyMatchResult,
@@ -17,7 +20,14 @@ import {
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
 
-type Screen = "home" | "team-setup" | "customize" | "match" | "post-match" | "two-player-match";
+type Screen = "home" | "team-setup" | "customize" | "match" | "post-match" | "two-player-match" | "online-lobby" | "online-match";
+
+interface OnlineGameConfig {
+  myRole: "p1" | "p2";
+  p1Team: TeamSummary;
+  p2Team: TeamSummary;
+  roomCode: string;
+}
 
 interface MatchResult {
   playerScore: number;
@@ -43,6 +53,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(null);
+  const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(null);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
@@ -200,6 +211,7 @@ export default function App() {
           onGoToCustomize={() => setScreen("customize")}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
+          onOnline={() => setScreen("online-lobby")}
         />
       </div>
     );
@@ -216,6 +228,35 @@ export default function App() {
           p1TeamDef={TWO_PLAYER_TEAM_A}
           onMatchEnd={() => setScreen("home")}
           onForfeit={() => setScreen("home")}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "online-lobby") {
+    return (
+      <div className="max-w-md mx-auto min-h-screen">
+        <OnlineLobby
+          team={team}
+          onGameReady={(config) => {
+            setOnlineConfig(config);
+            setScreen("online-match");
+          }}
+          onBack={() => setScreen("home")}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "online-match" && onlineConfig) {
+    return (
+      <div className="max-w-2xl mx-auto min-h-screen" style={{ maxWidth: "min(100vw, 760px)" }}>
+        <OnlineMatch
+          myRole={onlineConfig.myRole}
+          p1Team={onlineConfig.p1Team}
+          p2Team={onlineConfig.p2Team}
+          roomCode={onlineConfig.roomCode}
+          onLeave={() => { setOnlineConfig(null); setScreen("home"); }}
         />
       </div>
     );
@@ -307,6 +348,7 @@ export default function App() {
         onGoToCustomize={() => setScreen("customize")}
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}
+        onOnline={() => setScreen("online-lobby")}
       />
     </div>
   );

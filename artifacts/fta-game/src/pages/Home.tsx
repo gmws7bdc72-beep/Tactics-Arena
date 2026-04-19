@@ -10,6 +10,7 @@ interface Props {
   onGoToCustomize: () => void;
   onResetSeason: () => void;
   onTwoPlayer: () => void;
+  onOnline: () => void;
 }
 
 const TIER_LABEL: Record<number, string> = { 1: "Elite", 2: "Mid", 3: "Easy" };
@@ -94,6 +95,7 @@ export default function Home({
   onGoToCustomize,
   onResetSeason,
   onTwoPlayer,
+  onOnline,
 }: Props) {
   const standings = getLeagueStandings(league.teams);
   const playerEntry = league.teams.find(t => t.id === PLAYER_ID)!;
@@ -130,6 +132,13 @@ export default function Home({
             <h1 className="text-white text-xl font-black tracking-tight leading-none">{team.name}</h1>
             <p className="text-gray-400 text-xs">Football Tactics Arena · League Season</p>
           </div>
+          <button
+            onClick={onOnline}
+            className="px-2 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all active:scale-95 hover:brightness-110"
+            style={{ background: "linear-gradient(135deg, #0ea5e9, #0284c7)", color: "#fff", border: "1px solid rgba(14,165,233,0.5)" }}
+          >
+            🌐
+          </button>
           <button
             onClick={onTwoPlayer}
             className="px-3 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all active:scale-95 hover:brightness-110"
