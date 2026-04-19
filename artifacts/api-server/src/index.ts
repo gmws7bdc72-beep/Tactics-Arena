@@ -1,6 +1,6 @@
 import { createServer } from "http";
 import { Server as SocketIOServer } from "socket.io";
-import app from "./app.js";
+import { createApp } from "./app.js";
 import { logger } from "./lib/logger.js";
 import { setupSocketServer } from "./online/socketServer.js";
 
@@ -15,11 +15,23 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+const SOCKET_PATH = "/api/socket.io";
+
+const app = createApp();
+
+// Create the HTTP server with express as the request listener.
+// Engine.io (socket.io's transport layer) will intercept /api/socket.io
+// requests BEFORE they ever reach express, so pino-http never touches
+// socket.io long-poll responses.
 const httpServer = createServer(app);
 
+// Attach socket.io to the HTTP server. Internally, engine.io saves the
+// current "request" listeners (express), removes them, and adds its own.
+// Socket.io paths → handleRequest directly; everything else → express.
 const io = new SocketIOServer(httpServer, {
-  path: "/api/socket.io",
+  path: SOCKET_PATH,
   cors: { origin: "*", methods: ["GET", "POST"] },
+  transports: ["polling", "websocket"],
 });
 
 setupSocketServer(io);

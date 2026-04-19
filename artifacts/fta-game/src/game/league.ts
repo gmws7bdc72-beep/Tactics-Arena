@@ -67,7 +67,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "northern_wolves",
     name: "Northern Wolves",
-    tier: 1,
+    tier: 2,
     formationId: "2-1-1",
     jerseyColor: "#1b5e20",
     secondaryColor: "#ffffff",
@@ -83,7 +83,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "silver_city",
     name: "Silver City",
-    tier: 1,
+    tier: 2,
     formationId: "1-2-1",
     jerseyColor: "#546e7a",
     secondaryColor: "#cfd8dc",
@@ -99,7 +99,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "river_phoenix",
     name: "River Phoenix",
-    tier: 1,
+    tier: 2,
     formationId: "2-1-1",
     jerseyColor: "#bf360c",
     secondaryColor: "#ffccbc",
@@ -117,7 +117,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "rooksville_fc",
     name: "Rooksville FC",
-    tier: 1,
+    tier: 3,
     formationId: "2-1-1",
     jerseyColor: "#f57f17",
     secondaryColor: "#ffffff",
@@ -133,7 +133,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "the_underdogs",
     name: "The Underdogs",
-    tier: 1,
+    tier: 3,
     formationId: "1-2-1",
     jerseyColor: "#6a1b9a",
     secondaryColor: "#e1bee7",
@@ -149,7 +149,7 @@ export const AI_TEAMS: AITeamDef[] = [
   {
     id: "coastal_fc",
     name: "Coastal FC",
-    tier: 1,
+    tier: 3,
     formationId: "1-2-1",
     jerseyColor: "#006064",
     secondaryColor: "#b2ebf2",

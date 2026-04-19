@@ -565,34 +565,24 @@ function tier1Possession(
       }
     }
 
-    // 3. Support: look for lateral/backward recycle passes first
-    if (style === "support") {
-      const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
-      if (latTarget) {
-        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: posToTile(latTarget.position) };
-        return passTo(latTarget, player.position);
-      }
-      const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 5);
-      if (bkTarget) {
-        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: posToTile(bkTarget.position) };
-        return passTo(bkTarget, player.position);
-      }
-    }
-
     // 2. Assess situation
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // 3. Forward pass — ONLY if the receiver's tile is genuinely open.
-    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6);
-    const fwdTargetOpen = fwdTarget && !isThreatened(posToTile(fwdTarget.position), playerPlayers);
-    if (fwdTargetOpen) {
-      const runTile = posToTile(fwdTarget.position);
-      if (planRef) {
-        planRef.current = { runnerId: fwdTarget.id, runTile };
-        return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+    // 3. Forward pass — best forward target (already sorted by least threatened).
+    //    Pass if: a target exists AND (it's open OR we're pressed and need to escape).
+    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
+    if (fwdTarget) {
+      const fwdThreat = isThreatened(posToTile(fwdTarget.position), playerPlayers);
+      // Always pass forward if open; also pass under pressure even to a contested target
+      if (!fwdThreat || hardPressed || fwdBlocked) {
+        const runTile = posToTile(fwdTarget.position);
+        if (planRef) {
+          planRef.current = { runnerId: fwdTarget.id, runTile };
+          return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+        }
+        return passTo(fwdTarget, player.position);
       }
-      return passTo(fwdTarget, player.position);
     }
 
     // 4. Under pressure or forward blocked: escape with lateral or backward pass.
@@ -615,7 +605,21 @@ function tier1Possession(
       }
     }
 
-    // 5. No open receiver and not pressed: dribble forward.
+    // 4b. Support style: look for safe lateral/backward recycle when not pressed
+    if (style === "support" && !hardPressed) {
+      const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
+      if (latTarget) {
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: posToTile(latTarget.position) };
+        return passTo(latTarget, player.position);
+      }
+      const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 5);
+      if (bkTarget) {
+        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: posToTile(bkTarget.position) };
+        return passTo(bkTarget, player.position);
+      }
+    }
+
+    // 5. No pass available and not blocked: dribble forward.
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
       const dribRange = speedToTiles(player.stats.speed);
@@ -719,15 +723,29 @@ function tier1Defense(
   const oppDistFromBall = chebDist(oppTile, ballTile);
 
   // ── Ball carrier (opponent HAS the ball) ──────────────────────────────────
-  // Never crowd their current tile. Instead, cut their most likely exit:
-  // find their most advanced outfield teammate and intercept ~60% along that lane.
+  // If this player is the closest AI outfield player to the ball carrier, press
+  // directly through their tile. Otherwise cut their most likely forward outlet.
   if (oppDistFromBall === 0) {
+    const aiOutfield = aiPlayers.filter(p => p.role !== "goalkeeper");
+    const myDist = chebDist(pt, oppTile);
+    const isClosest = aiOutfield.every(p => {
+      if (p.id === player.id) return true;
+      return chebDist(posToTile(p.position), oppTile) >= myDist;
+    });
+
+    if (isClosest) {
+      // Closest player presses through the carrier to force a tackle
+      return moveStep(player, pt, tackleThrough(pt, oppTile), claimed, friendly);
+    }
+
+    // Farther players: intercept the most dangerous (most-advanced = lowest col) run outlet
     const teammates = playerPlayers.filter(
       p => p.role !== "goalkeeper" && p.id !== assignedOpponent.id
     );
     if (teammates.length > 0) {
+      // Lowest col = most advanced for the attacking player team (attacking right→left)
       const danger = teammates.reduce((best, p) =>
-        posToTile(p.position).col > posToTile(best.position).col ? p : best
+        posToTile(p.position).col < posToTile(best.position).col ? p : best
       );
       const tgt = posToTile(danger.position);
       const laneCol = Math.max(0, Math.min(GRID_COLS - 1,
