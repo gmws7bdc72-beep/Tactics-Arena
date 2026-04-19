@@ -8,6 +8,7 @@ export const ABILITIES: Record<AbilityId, Ability> = {
   powerhouse:   { id: "powerhouse",   name: "Powerhouse",   description: "+20% duel and tackle strength" },
   shadow_mark:  { id: "shadow_mark",  name: "Shadow Mark",  description: "Slows a dribbling opponent on close contact" },
   goalkeeper:   { id: "goalkeeper",   name: "Goalkeeper",   description: "+35% save rate on shots and superior loose-ball control" },
+  none:         { id: "none",         name: "No Ability",   description: "No special ability" },
 };
 
 export const ALL_PLAYERS: PlayerCard[] = [

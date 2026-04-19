@@ -469,11 +469,16 @@ function styleOffBallTarget(
 ): TilePos {
   switch (style) {
     case "poacher": {
-      // Lurk near the opponent goal regardless of where the ball is
-      const row = roleIdx === 0
-        ? Math.max(1, Math.floor(GRID_ROWS / 2) - 2)
-        : Math.min(GRID_ROWS - 2, Math.floor(GRID_ROWS / 2) + 2);
-      return { col: Math.max(1, 2 + (roleIdx % 2)), row };
+      // Three spread zones so multiple poachers never stack on the same tile.
+      // roleIdx here is a GLOBAL index across ALL poacher-style players (computed
+      // in the caller), so two poachers with different roles won't share a zone.
+      const halfRow = Math.floor(GRID_ROWS / 2);
+      const zones: TilePos[] = [
+        { col: 2, row: halfRow },                                     // centre striker
+        { col: 3, row: Math.max(1, halfRow - 3) },                    // top wing
+        { col: 2, row: Math.min(GRID_ROWS - 2, halfRow + 3) },        // bottom wing
+      ];
+      return zones[roleIdx % zones.length];
     }
     case "passer": {
       // Spread wide of the carrier to form passing triangles
@@ -502,16 +507,43 @@ function styleOffBallTarget(
 }
 
 /**
- * When pressing a ball carrier, plan to move ONE tile PAST them so the
- * movement path goes THROUGH their tile (checkers-style tackle).
+ * Press a ball carrier by targeting the tile ONE step AHEAD of them in their
+ * attack direction (player team attacks toward higher col = rightward).
+ * This guarantees:
+ *   • the command target is never the carrier's exact tile, so the
+ *     simulation's passingThrough check triggers and a tackle is attempted
+ *   • defenders never press BEHIND the carrier (toward the carrier's own goal)
  */
-function tackleThrough(from: TilePos, carrier: TilePos): TilePos {
-  const dc = Math.sign(carrier.col - from.col);
-  const dr = Math.sign(carrier.row - from.row);
-  return {
-    col: Math.max(0, Math.min(GRID_COLS - 1, carrier.col + dc)),
-    row: Math.max(0, Math.min(GRID_ROWS - 1, carrier.row + dr)),
+function pressCarrier(
+  player: SimPlayer,
+  from: TilePos,
+  carrierTile: TilePos,
+  claimed: Set<string>,
+  _friendly: Set<string>
+): Command {
+  const interceptTile: TilePos = {
+    col: Math.min(GRID_COLS - 1, carrierTile.col + 1),
+    row: carrierTile.row,
   };
+
+  const isGK = player.role === "goalkeeper";
+  const range = isGK ? 2 : speedToTiles(player.stats.speed);
+  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
+
+  let best: TilePos = from;
+  let bestDist = tileDist(from, interceptTile);
+
+  for (const c of reachable) {
+    // Never land exactly on the carrier — that fails the passingThrough check
+    if (c.col === carrierTile.col && c.row === carrierTile.row) continue;
+    const k = tileKey(c.col, c.row);
+    if (claimed.has(k)) continue;
+    const d = tileDist(c, interceptTile);
+    if (d < bestDist) { bestDist = d; best = c; }
+  }
+
+  if (best !== from) claimed.add(tileKey(best.col, best.row));
+  return { type: CommandType.MOVE, targetPosition: tileToPos(best.col, best.row) };
 }
 
 // ─── Tier 1 — Elite: Possession football, structured triangles, pass-first ───
@@ -607,7 +639,9 @@ function tier1Possession(
     if (fwdTarget) {
       const fwdThreat = isThreatened(posToTile(fwdTarget.position), playerPlayers);
       if (!fwdThreat || hardPressed || fwdBlocked) {
-        const runTile = posToTile(fwdTarget.position);
+        const projTile = posToTile(fwdTarget.position);
+        // Push pass target 1 tile more advanced so receiver must sprint → visible through-ball
+        const runTile: TilePos = { col: Math.max(1, projTile.col - 1), row: projTile.row };
         if (planRef) {
           planRef.current = { runnerId: fwdTarget.id, runTile };
           return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
@@ -671,9 +705,13 @@ function tier1Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning
-  const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+  // Off-ball: style-based positioning.
+  // For poachers use a GLOBAL style index so two poachers with different
+  // roles (e.g. striker + forward) still get different spread zones.
   const style = getPlayerStyle(player);
+  const roleIdx = style === "poacher"
+    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
+    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
   const runTarget = styleOffBallTarget(player, style, roleIdx, ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
@@ -748,7 +786,7 @@ function tier1Defense(
 
   // Fallback: no mark assigned (e.g. more AI players than opponents) — press ball
   if (!assignedOpponent) {
-    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
+    return pressCarrier(player, pt, ballTile, claimed, friendly);
   }
 
   const oppTile = posToTile(assignedOpponent.position);
@@ -766,8 +804,8 @@ function tier1Defense(
     });
 
     if (isClosest) {
-      // Closest player presses through the carrier to force a tackle
-      return moveStep(player, pt, tackleThrough(pt, oppTile), claimed, friendly);
+      // Closest player intercepts ahead of the carrier (never exact tile → tackle triggers)
+      return pressCarrier(player, pt, oppTile, claimed, friendly);
     }
 
     // Farther players: intercept the most dangerous (most-advanced = lowest col) run outlet
@@ -799,7 +837,7 @@ function tier1Defense(
   // Press through their tile — if they receive the ball next turn the path
   // already plans to go THROUGH them (checkers-style tackle).
   if (oppDistFromBall === 1) {
-    return moveStep(player, pt, tackleThrough(pt, oppTile), claimed, friendly);
+    return pressCarrier(player, pt, oppTile, claimed, friendly);
   }
 
   // ── Loose marking: only attacking AI roles drift, and only rarely ─────────
@@ -934,9 +972,11 @@ function tier2Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning
-  const roleIdx2 = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+  // Off-ball: style-based positioning (global poacher index to prevent stacking)
   const style2Off = getPlayerStyle(player);
+  const roleIdx2 = style2Off === "poacher"
+    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
+    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
   const runTarget = styleOffBallTarget(player, style2Off, roleIdx2, ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
@@ -976,7 +1016,7 @@ function tier2Defense(
   const ballInZone = ballTile.col >= baseCol - 1 && ballTile.col <= baseCol + 1;
 
   if (ballInZone || tileDist(pt, ballTile) <= pressThreshold) {
-    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
+    return pressCarrier(player, pt, ballTile, claimed, friendly);
   }
 
   // Check for opponent in zone to mark (also consider danger row vicinity when adapted)
@@ -1045,10 +1085,12 @@ function tier3Possession(
     return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning (still loose — tier 3 executes imprecisely)
-  const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+  // Off-ball: style-based positioning (global poacher index to prevent stacking)
   const style3 = getPlayerStyle(player);
-  const runTarget = styleOffBallTarget(player, style3, roleIdx, _ballTile);
+  const roleIdx3 = style3 === "poacher"
+    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
+    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+  const runTarget = styleOffBallTarget(player, style3, roleIdx3, _ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
@@ -1084,7 +1126,7 @@ function tier3Defense(
   const pressThreshold = Math.min(5, 3 + adapt.urgency);
 
   if (tileDist(pt, ballTile) <= pressThreshold) {
-    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
+    return pressCarrier(player, pt, ballTile, claimed, friendly);
   }
   return moveStep(player, pt, { col, row: compactRow }, claimed, friendly);
 }
