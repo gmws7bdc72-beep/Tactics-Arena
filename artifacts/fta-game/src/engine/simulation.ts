@@ -515,21 +515,10 @@ function updatePlayerMovement(
         player.commandExecuted = true;
         player.velocity = { x: 0, y: 0 };
       } else {
-        // Move toward ball to gain possession first
-        const target = cmd.targetPosition ?? { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
-        const arrived = moveLinear(player, ball.position, dt);
-        if (arrived) {
-          // Near ball — now pass
-          player.state = PlayerState.PASSING;
-          player.stateTimer = PASS_WIND_UP;
-          player.commandExecuted = true;
-          if (cmd.targetPosition) {
-            // Restore the target
-            player.command = { ...cmd };
-          }
-        }
-        void target;
-        player.state = PlayerState.MOVING;
+        // Player doesn't have the ball — discard the pass command and stay idle.
+        player.commandExecuted = true;
+        player.velocity = { x: 0, y: 0 };
+        player.state = PlayerState.IDLE;
       }
     } else if (cmd.type === CommandType.SHOOT) {
       if (hasBall) {
