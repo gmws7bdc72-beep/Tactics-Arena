@@ -127,6 +127,8 @@ interface BallTracker {
   teamId: "player" | "ai" | null;
   playerId: string | null;
   name: string | null;
+  /** Player IDs that were in an offside position at the moment the pass was kicked. */
+  offsideIds: Set<string>;
 }
 
 export function speedToTiles(speed: number): number {
@@ -141,7 +143,7 @@ export function runSimulation(
   const rng = seededRandom(seedValue);
   const frames: FrameSnapshot[] = [];
   const allEvents: GameEvent[] = [];
-  const passTracker: BallTracker = { type: null, teamId: null, playerId: null, name: null };
+  const passTracker: BallTracker = { type: null, teamId: null, playerId: null, name: null, offsideIds: new Set() };
 
   const simPlayers: SimPlayer[] = players.map(p => ({
     ...p,
@@ -449,6 +451,8 @@ function updatePlayerMovement(
           passTracker.teamId = player.teamId;
           passTracker.playerId = player.id;
           passTracker.name = player.name;
+          passTracker.offsideIds = getOffsidePlayers(players);
+          passTracker.offsideIds.delete(player.id);
           executePass(player, ball, rng);
           const passFollowUp = player.command?.followUp;
           if (passFollowUp) {
@@ -557,6 +561,8 @@ function updatePlayerMovement(
             passTracker.teamId = player.teamId;
             passTracker.playerId = player.id;
             passTracker.name = player.name;
+            passTracker.offsideIds = getOffsidePlayers(players);
+            passTracker.offsideIds.delete(player.id);
             executePass(player, ball, rng);
             player.state = PlayerState.RECOVERING;
             player.recoveryTimer = PASS_RECOVERY;
@@ -724,15 +730,15 @@ function detectAndResolveEvents(
           } else {
             events.push({ type: GameEventType.TACKLE, tick, playerId: loser.id, targetId: winner.id, teamId: loser.teamId, message: `${loser.name} wins the ball!` });
           }
-          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
+          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null; passTracker.offsideIds = new Set();
           return;
         }
       }
 
-      // Offside check: triggered only when a same-team pass is received
+      // Offside check: use snapshot taken at the moment the pass was kicked.
+      // Players who were onside when the pass was played can always receive it.
       if (passTracker.type === "pass" && passTracker.teamId === winner.teamId) {
-        const offsideSet = getOffsidePlayers(players);
-        if (offsideSet.has(winner.id)) {
+        if (passTracker.offsideIds.has(winner.id)) {
           events.push({
             type: GameEventType.OFFSIDE,
             tick,
@@ -753,7 +759,7 @@ function detectAndResolveEvents(
           ball.ownerId = fkTaker.id;
           ball.velocity = { x: 0, y: 0 };
           ball.passTarget = undefined;
-          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
+          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null; passTracker.offsideIds = new Set();
           return;
         }
       }
@@ -777,7 +783,7 @@ function detectAndResolveEvents(
         } else {
           events.push({ type: GameEventType.PASS_INTERCEPTED, tick, playerId: winner.id, targetId: passTracker.playerId ?? undefined, teamId: winner.teamId, message: `${winner.name} intercepts!` });
         }
-        passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
+        passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null; passTracker.offsideIds = new Set();
       } else if (candidates.length > 1 && candidates[1].player.teamId !== winner.teamId) {
         events.push({ type: GameEventType.TACKLE, tick, playerId: winner.id, teamId: winner.teamId, message: `${winner.name} picks up the ball!` });
       }
@@ -787,7 +793,7 @@ function detectAndResolveEvents(
   }
 
   if (ball.ownerId !== null) {
-    passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
+    passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null; passTracker.offsideIds = new Set();
 
     const owner = players.find(p => p.id === ball.ownerId)!;
 
