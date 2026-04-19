@@ -607,6 +607,15 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           setComboStoredMove(pos);
           setComboStep(2);
           setPassTargetMode(true);
+        } else {
+          // Step 2: tile tapped as pass target (no player needed)
+          const cmd: Command = {
+            type: CommandType.MOVE,
+            targetPosition: comboStoredMove!,
+            followUp: { type: CommandType.PASS, targetPosition: pos },
+          };
+          setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
+          clearSelection();
         }
       } else if (comboStep === 1) {
         setComboStoredPass({ targetPosition: pos });

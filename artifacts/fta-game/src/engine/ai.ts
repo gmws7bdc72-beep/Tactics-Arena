@@ -431,6 +431,79 @@ function computeRunTarget(
   return ballCarrierTile;
 }
 
+// ─── Player style system ─────────────────────────────────────────────────────
+
+type PlayerStyle = "passer" | "dribbler" | "poacher" | "support" | "balanced";
+
+/** Derive a player's possession style from their stats and role. */
+function getPlayerStyle(player: SimPlayer): PlayerStyle {
+  const { passing, attack, defense, speed } = player.stats;
+  const { role } = player;
+  // Fast attackers lurk in the danger zone waiting for the ball
+  if ((role === "striker" || role === "forward") && speed >= 7) return "poacher";
+  // High passing stat → always looking to distribute
+  if (passing >= 7) return "passer";
+  // High attack, low-ish passing → wants to carry the ball
+  if (attack >= 7 && passing < 6) return "dribbler";
+  // Defensive / recycling role
+  if (role === "defender" || defense >= 7) return "support";
+  return "balanced";
+}
+
+/** Off-ball movement target based on the player's style. */
+function styleOffBallTarget(
+  player: SimPlayer,
+  style: PlayerStyle,
+  roleIdx: number,
+  ballTile: TilePos
+): TilePos {
+  switch (style) {
+    case "poacher": {
+      // Lurk near the opponent goal regardless of where the ball is
+      const row = roleIdx === 0
+        ? Math.max(1, Math.floor(GRID_ROWS / 2) - 2)
+        : Math.min(GRID_ROWS - 2, Math.floor(GRID_ROWS / 2) + 2);
+      return { col: Math.max(1, 2 + (roleIdx % 2)), row };
+    }
+    case "passer": {
+      // Spread wide of the carrier to form passing triangles
+      const row = roleIdx === 0
+        ? Math.max(0, ballTile.row - 2)
+        : Math.min(GRID_ROWS - 1, ballTile.row + 2);
+      return { col: Math.max(1, ballTile.col - 2), row };
+    }
+    case "dribbler": {
+      // Stay 1 tile behind the carrier — ready to receive then run
+      const row = roleIdx === 0
+        ? Math.max(0, ballTile.row - 1)
+        : Math.min(GRID_ROWS - 1, ballTile.row + 1);
+      return { col: Math.max(1, ballTile.col - 1), row };
+    }
+    case "support": {
+      // Stay 3 tiles behind the ball as a safe backward-pass outlet
+      const row = roleIdx === 0
+        ? Math.max(1, ballTile.row - 1)
+        : Math.min(GRID_ROWS - 2, ballTile.row + 1);
+      return { col: Math.min(GRID_COLS - 2, ballTile.col + 3), row };
+    }
+    default: // "balanced"
+      return computeRunTarget(player, roleIdx, ballTile, 1);
+  }
+}
+
+/**
+ * When pressing a ball carrier, plan to move ONE tile PAST them so the
+ * movement path goes THROUGH their tile (checkers-style tackle).
+ */
+function tackleThrough(from: TilePos, carrier: TilePos): TilePos {
+  const dc = Math.sign(carrier.col - from.col);
+  const dr = Math.sign(carrier.row - from.row);
+  return {
+    col: Math.max(0, Math.min(GRID_COLS - 1, carrier.col + dc)),
+    row: Math.max(0, Math.min(GRID_ROWS - 1, carrier.row + dr)),
+  };
+}
+
 // ─── Tier 1 — Elite: Possession football, structured triangles, pass-first ───
 
 function tier1Possession(
@@ -469,8 +542,42 @@ function tier1Possession(
   }
 
   if (hasBall) {
-    // 1. Shoot if in goal-threat zone
-    if (pt.col <= 2) return shoot();
+    const style = getPlayerStyle(player);
+
+    // 1. Shoot — poachers shoot from further out, everyone else from close range
+    const shootCol = style === "poacher" ? 5 : 2;
+    if (pt.col <= shootCol) return shoot();
+
+    // 2. Dribbler: carry the ball unless heavily pressed
+    if (style === "dribbler") {
+      const hardPressedD = isHardPressed(pt, playerPlayers);
+      const fwdBlockedD  = isForwardBlocked(pt, playerPlayers);
+      if (!hardPressedD && !fwdBlockedD) {
+        const dribRange = speedToTiles(player.stats.speed);
+        const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
+        return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
+      }
+      // Pressed — dump to any teammate
+      const dumpTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
+      if (dumpTarget) {
+        if (planRef) planRef.current = { runnerId: dumpTarget.id, runTile: posToTile(dumpTarget.position) };
+        return passTo(dumpTarget, player.position);
+      }
+    }
+
+    // 3. Support: look for lateral/backward recycle passes first
+    if (style === "support") {
+      const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
+      if (latTarget) {
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: posToTile(latTarget.position) };
+        return passTo(latTarget, player.position);
+      }
+      const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 5);
+      if (bkTarget) {
+        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: posToTile(bkTarget.position) };
+        return passTo(bkTarget, player.position);
+      }
+    }
 
     // 2. Assess situation
     const hardPressed = isHardPressed(pt, playerPlayers);
@@ -528,10 +635,10 @@ function tier1Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: elite positioning — create triangles and passing lanes
+  // Off-ball: style-based positioning
   const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const ballCarrierTile = ballTile;
-  const runTarget = computeRunTarget(player, roleIdx, ballCarrierTile, 1);
+  const style = getPlayerStyle(player);
+  const runTarget = styleOffBallTarget(player, style, roleIdx, ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
@@ -605,7 +712,7 @@ function tier1Defense(
 
   // Fallback: no mark assigned (e.g. more AI players than opponents) — press ball
   if (!assignedOpponent) {
-    return moveStep(player, pt, ballTile, claimed, friendly);
+    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
   }
 
   const oppTile = posToTile(assignedOpponent.position);
@@ -639,9 +746,10 @@ function tier1Defense(
   }
 
   // ── Adjacent to ball (likely imminent receiver) ───────────────────────────
-  // Press their tile directly — fine to target since they don't have possession.
+  // Press through their tile — if they receive the ball next turn the path
+  // already plans to go THROUGH them (checkers-style tackle).
   if (oppDistFromBall === 1) {
-    return moveStep(player, pt, oppTile, claimed, friendly);
+    return moveStep(player, pt, tackleThrough(pt, oppTile), claimed, friendly);
   }
 
   // ── Loose marking: only attacking AI roles drift, and only rarely ─────────
@@ -751,9 +859,10 @@ function tier2Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: moderate positioning
+  // Off-ball: style-based positioning
   const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const runTarget = computeRunTarget(player, roleIdx, ballTile, 2);
+  const style2 = getPlayerStyle(player);
+  const runTarget = styleOffBallTarget(player, style2, roleIdx, ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
@@ -792,7 +901,7 @@ function tier2Defense(
   const ballInZone = ballTile.col >= baseCol - 1 && ballTile.col <= baseCol + 1;
 
   if (ballInZone || tileDist(pt, ballTile) <= pressThreshold) {
-    return moveStep(player, pt, ballTile, claimed, friendly);
+    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
   }
 
   // Check for opponent in zone to mark (also consider danger row vicinity when adapted)
@@ -861,9 +970,10 @@ function tier3Possession(
     return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
-  // Off-ball: barely move, loose shape
+  // Off-ball: style-based positioning (still loose — tier 3 executes imprecisely)
   const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const runTarget = computeRunTarget(player, roleIdx, pt, 3);
+  const style3 = getPlayerStyle(player);
+  const runTarget = styleOffBallTarget(player, style3, roleIdx, _ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
@@ -899,7 +1009,7 @@ function tier3Defense(
   const pressThreshold = Math.min(5, 3 + adapt.urgency);
 
   if (tileDist(pt, ballTile) <= pressThreshold) {
-    return moveStep(player, pt, ballTile, claimed, friendly);
+    return moveStep(player, pt, tackleThrough(pt, ballTile), claimed, friendly);
   }
   return moveStep(player, pt, { col, row: compactRow }, claimed, friendly);
 }
