@@ -470,6 +470,8 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           onTileClick={handleTileClick}
           passTargetMode={passTargetMode}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}
+          activePlanningTeam={myTeamId}
+          isVertical={isMobile}
         />
       </div>
 
