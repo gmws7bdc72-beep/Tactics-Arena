@@ -131,6 +131,8 @@ export interface FrameSnapshot {
     position: Vec2;
     velocity: Vec2;
     ownerId: string | null;
+    /** Preserved from the previous turn when a pass was still in flight at turn end. */
+    passTarget?: Vec2;
   };
   events: GameEvent[];
 }
@@ -226,8 +228,8 @@ export interface SavedMatchState {
   pendingCommands: [string, Command][];
   selectedPlayerId: string | null;
   passTargetMode: boolean;
-  twoPlayerTurn: "p1" | "p2";
-  p1StoredCommands: [string, Command][];
+  twoPlayerTurn?: "p1" | "p2";
+  p1StoredCommands?: [string, Command][];
   comboMoveFirst: boolean;
   comboActive: boolean;
   comboStep: 1 | 2;

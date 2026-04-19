@@ -122,6 +122,8 @@ export function runSimulation(
     position: { ...ball.position },
     velocity: { ...ball.velocity },
     ownerId: ball.ownerId,
+    // Carry forward any mid-flight pass from the previous turn so it completes.
+    passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
   };
 
   // Snap all players to tile centers at start of turn
@@ -352,6 +354,7 @@ function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events
       position: { ...ball.position },
       velocity: { ...ball.velocity },
       ownerId: ball.ownerId,
+      passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
     },
     events: [...events],
   };
