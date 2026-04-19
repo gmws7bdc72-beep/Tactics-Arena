@@ -286,6 +286,20 @@ function isLaneBlocked(fromTile: TilePos, toTile: TilePos, opponents: SimPlayer[
   return false;
 }
 
+// Returns the x-coordinate of the offside line as seen by the AI's attackers.
+// AI attacks leftward, so their offside line = 2nd-to-last player team player (sorted by x ASC).
+function aiOffsideLineX(playerPlayers: SimPlayer[]): number {
+  if (playerPlayers.length === 0) return 0;
+  const sorted = [...playerPlayers].sort((a, b) => a.position.x - b.position.x);
+  return sorted.length >= 2 ? sorted[1].position.x : sorted[0].position.x;
+}
+
+function isAIPlayerOffside(p: SimPlayer, playerPlayers: SimPlayer[]): boolean {
+  if (p.role === "goalkeeper") return false;
+  const lineX = aiOffsideLineX(playerPlayers);
+  return p.position.x < PITCH_WIDTH / 2 && p.position.x < lineX;
+}
+
 function bestForwardPass(
   carrier: SimPlayer,
   aiPlayers: SimPlayer[],
@@ -299,6 +313,7 @@ function bestForwardPass(
     .filter(({ t }) => t.col < ct.col)
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
     .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
+    .filter(({ p }) => !isAIPlayerOffside(p, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;
@@ -322,6 +337,7 @@ function bestLateralPass(
     .filter(({ t }) => Math.abs(t.col - ct.col) <= 1)
     .filter(({ t }) => tileDist(t, ct) >= 1 && tileDist(t, ct) <= maxDist)
     .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
+    .filter(({ p }) => !isAIPlayerOffside(p, playerPlayers))
     .sort((a, b) => {
       const aThreat = isThreatened(a.t, playerPlayers) ? 1 : 0;
       const bThreat = isThreatened(b.t, playerPlayers) ? 1 : 0;

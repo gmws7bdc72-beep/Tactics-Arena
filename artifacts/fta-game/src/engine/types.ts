@@ -104,6 +104,7 @@ export enum GameEventType {
   SHOT_BLOCKED = "SHOT_BLOCKED",
   SAVE = "SAVE",
   KICKOFF = "KICKOFF",
+  OFFSIDE = "OFFSIDE",
 }
 
 export interface GameEvent {
@@ -127,6 +128,7 @@ export interface FrameSnapshot {
     jerseyNumber: number;
     role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
     tileRange: number;
+    offside?: boolean;
   }[];
   ball: {
     position: Vec2;
