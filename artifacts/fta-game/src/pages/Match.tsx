@@ -30,6 +30,7 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     cardId: card.id,
     position: { ...pos },
     velocity: { x: 0, y: 0 },
+    startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
     stats: { ...card.stats },
     ability: card.ability,

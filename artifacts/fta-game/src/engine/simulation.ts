@@ -739,6 +739,9 @@ function detectAndResolveEvents(
       // Players who were onside when the pass was played can always receive it.
       if (passTracker.type === "pass" && passTracker.teamId === winner.teamId) {
         if (passTracker.offsideIds.has(winner.id)) {
+          // Capture the exact tile where the offside player received the ball
+          const receptionPos = { ...winner.position };
+
           events.push({
             type: GameEventType.OFFSIDE,
             tick,
@@ -746,6 +749,8 @@ function detectAndResolveEvents(
             teamId: winner.teamId,
             message: `Offside! ${winner.name} caught offside — free kick awarded!`,
           });
+
+          // Pick a random outfield defender from the opposing team
           const defendingTeamId = winner.teamId === "player" ? "ai" : "player";
           const defCandidates = players.filter(
             p => p.teamId === defendingTeamId && p.role !== "goalkeeper"
@@ -753,12 +758,27 @@ function detectAndResolveEvents(
           const fkTaker = defCandidates.length > 0
             ? defCandidates[Math.floor(rng() * defCandidates.length)]
             : players.find(p => p.teamId === defendingTeamId)!;
+
+          // Teleport the free-kick taker to exactly where the offside player was
+          fkTaker.position = { ...receptionPos };
+          fkTaker.velocity = { x: 0, y: 0 };
           fkTaker.command = null;
           fkTaker.commandExecuted = false;
           fkTaker.state = PlayerState.DRIBBLING;
+
+          // Snap ball to that same spot
+          ball.position = { ...receptionPos };
           ball.ownerId = fkTaker.id;
           ball.velocity = { x: 0, y: 0 };
           ball.passTarget = undefined;
+
+          // Return the offside player to their match-start position
+          winner.position = { ...winner.startPosition };
+          winner.velocity = { x: 0, y: 0 };
+          winner.state = PlayerState.IDLE;
+          winner.command = null;
+          winner.commandExecuted = false;
+
           passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null; passTracker.offsideIds = new Set();
           return;
         }

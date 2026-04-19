@@ -73,6 +73,8 @@ export interface SimPlayer {
   cardId: string;
   position: Vec2;
   velocity: Vec2;
+  /** Match-start position — used to return an offside player to their kickoff spot. */
+  startPosition: Vec2;
   state: PlayerState;
   stats: PlayerStats;
   ability: AbilityId;
