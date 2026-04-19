@@ -202,6 +202,16 @@ function passAndRun(target: SimPlayer, runTile: TilePos, _ballPos?: Vec2): Comma
   };
 }
 
+// Move to `destTile` then immediately fire a pass to `target` — a "run and pass" combo.
+// The simulation fires the pass instantly on arrival so the ball travels the full distance.
+function moveAndPass(destTile: TilePos, target: SimPlayer): Command {
+  return {
+    type: CommandType.MOVE,
+    targetPosition: tileToPos(destTile.col, destTile.row),
+    followUp: { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } },
+  };
+}
+
 // Pick a sensible "run into space" tile for the carrier after they pass.
 // Tries to move into a gap 1-2 tiles ahead and to the side for a return pass.
 function pickRunAfterPassTile(_carrier: SimPlayer, pt: TilePos, opponents: SimPlayer[]): TilePos {
@@ -548,33 +558,54 @@ function tier1Possession(
     const shootCol = style === "poacher" ? 5 : 2;
     if (pt.col <= shootCol) return shoot();
 
-    // 2. Dribbler: carry the ball unless heavily pressed
+    // 2. Dribbler: move into space then release — or carry when the path is open
     if (style === "dribbler") {
       const hardPressedD = isHardPressed(pt, playerPlayers);
       const fwdBlockedD  = isForwardBlocked(pt, playerPlayers);
       if (!hardPressedD && !fwdBlockedD) {
+        // Move+Pass: drive one tile forward then whip it to the most advanced teammate
+        const advTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7)
+          ?? bestLateralPass(player, aiPlayers, playerPlayers, 5);
+        if (advTarget && Math.random() < 0.55) {
+          const dribRange = speedToTiles(player.stats.speed);
+          const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
+          return moveAndPass(destTile, advTarget);
+        }
+        // Otherwise just carry
         const dribRange = speedToTiles(player.stats.speed);
         const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
         return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
       }
-      // Pressed — dump to any teammate
+      // Pressed — Pass+Move to escape: pass and immediately reposition
       const dumpTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
       if (dumpTarget) {
-        if (planRef) planRef.current = { runnerId: dumpTarget.id, runTile: posToTile(dumpTarget.position) };
-        return passTo(dumpTarget, player.position);
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(dumpTarget, runTile, player.position);
       }
     }
 
-    // 2. Assess situation
+    // 2b. Passer style: quick release then run — always prefer Pass+Move
+    if (style === "passer") {
+      const fwdP = bestForwardPass(player, aiPlayers, playerPlayers, 7);
+      if (fwdP) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdP, runTile, player.position);
+      }
+      const latP = bestLateralPass(player, aiPlayers, playerPlayers, 5);
+      if (latP) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(latP, runTile, player.position);
+      }
+    }
+
+    // 3. Assess situation
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
 
-    // 3. Forward pass — best forward target (already sorted by least threatened).
-    //    Pass if: a target exists AND (it's open OR we're pressed and need to escape).
+    // 4. Forward pass — best forward target (already sorted by least threatened).
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
     if (fwdTarget) {
       const fwdThreat = isThreatened(posToTile(fwdTarget.position), playerPlayers);
-      // Always pass forward if open; also pass under pressure even to a contested target
       if (!fwdThreat || hardPressed || fwdBlocked) {
         const runTile = posToTile(fwdTarget.position);
         if (planRef) {
@@ -585,14 +616,13 @@ function tier1Possession(
       }
     }
 
-    // 4. Under pressure or forward blocked: escape with lateral or backward pass.
+    // 5. Under pressure or forward blocked: escape with Pass+Move or plain pass.
     if (hardPressed || fwdBlocked) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
-        if (Math.random() < 0.3) {
-          const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-          return passAndRun(latTarget, runTile, player.position);
-        }
+        // All styles: prefer Pass+Move when pressed — get the ball away and find space
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (Math.random() < 0.55) return passAndRun(latTarget, runTile, player.position);
         const latTile = posToTile(latTarget.position);
         if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
         return passTo(latTarget, player.position);
@@ -605,10 +635,12 @@ function tier1Possession(
       }
     }
 
-    // 4b. Support style: look for safe lateral/backward recycle when not pressed
+    // 5b. Support style: recycle safely and reposition with Pass+Move
     if (style === "support" && !hardPressed) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (Math.random() < 0.40) return passAndRun(latTarget, runTile, player.position);
         if (planRef) planRef.current = { runnerId: latTarget.id, runTile: posToTile(latTarget.position) };
         return passTo(latTarget, player.position);
       }
@@ -829,8 +861,29 @@ function tier2Possession(
     // Shoot from closer range than tier 1
     if (pt.col <= 3) return shoot();
 
+    const style2 = getPlayerStyle(player);
     const hardPressed = isHardPressed(pt, playerPlayers);
     const fwdBlocked = isForwardBlocked(pt, playerPlayers);
+
+    // Dribbler: Move+Pass — advance then release
+    if (style2 === "dribbler" && !hardPressed && !fwdBlocked) {
+      const advTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6)
+        ?? bestLateralPass(player, aiPlayers, playerPlayers, 4);
+      if (advTarget && Math.random() < 0.45) {
+        const dribRange = speedToTiles(player.stats.speed);
+        const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
+        return moveAndPass(destTile, advTarget);
+      }
+    }
+
+    // Passer: Pass+Move when a forward target exists
+    if (style2 === "passer") {
+      const fwdP = bestForwardPass(player, aiPlayers, playerPlayers, 6);
+      if (fwdP && Math.random() < 0.50) {
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        return passAndRun(fwdP, runTile, player.position);
+      }
+    }
 
     // Forward pass — bestForwardPass already ranks by least threatened, so trust it.
     const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6);
@@ -843,10 +896,14 @@ function tier2Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // Under pressure or forward lane blocked: lateral or backward escape.
+    // Under pressure or forward lane blocked: Pass+Move or plain pass to escape.
     if (hardPressed || fwdBlocked) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (latTarget) {
+        if (Math.random() < 0.40) {
+          const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+          return passAndRun(latTarget, runTile, player.position);
+        }
         const latTile = posToTile(latTarget.position);
         if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
         return passTo(latTarget, player.position);
@@ -878,9 +935,9 @@ function tier2Possession(
   }
 
   // Off-ball: style-based positioning
-  const roleIdx = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const style2 = getPlayerStyle(player);
-  const runTarget = styleOffBallTarget(player, style2, roleIdx, ballTile);
+  const roleIdx2 = aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+  const style2Off = getPlayerStyle(player);
+  const runTarget = styleOffBallTarget(player, style2Off, roleIdx2, ballTile);
   return moveStep(player, pt, runTarget, claimed, friendly);
 }
 

@@ -506,9 +506,29 @@ function updatePlayerMovement(
       const arrived = moveLinear(player, target, dt);
       if (arrived) {
         if (cmd.followUp) {
-          player.command = cmd.followUp;
-          player.commandExecuted = false;
-          player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
+          const followUp = { ...cmd.followUp };
+          // MOVE → PASS combo: fire the pass immediately with no wind-up.
+          // The running motion counts as the wind-up. Update target to receiver's
+          // current (live) position so the ball leads them correctly.
+          if (followUp.type === CommandType.PASS && hasBall) {
+            if (followUp.targetPlayerId) {
+              const receiver = players.find(p => p.id === followUp.targetPlayerId);
+              if (receiver) followUp.targetPosition = { ...receiver.position };
+            }
+            player.command = followUp;
+            player.commandExecuted = true;
+            passTracker.type = "pass";
+            passTracker.teamId = player.teamId;
+            passTracker.playerId = player.id;
+            passTracker.name = player.name;
+            executePass(player, ball, rng);
+            player.state = PlayerState.RECOVERING;
+            player.recoveryTimer = PASS_RECOVERY;
+          } else {
+            player.command = followUp;
+            player.commandExecuted = false;
+            player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
+          }
         } else {
           player.commandExecuted = true;
           player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
