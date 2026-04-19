@@ -29,6 +29,40 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
+const HALF_PITCH_X = PITCH_WIDTH / 2;
+
+function getOffsidePlayers(players: SimPlayer[]): Set<string> {
+  const playerTeam = players.filter(p => p.teamId === "player");
+  const aiTeam     = players.filter(p => p.teamId === "ai");
+  const offside    = new Set<string>();
+
+  // Player team attacks rightward (high x).
+  // Offside line = 2nd-to-last AI player sorted by x DESC (closest to their own goal).
+  if (aiTeam.length > 0) {
+    const sortedAI = [...aiTeam].sort((a, b) => b.position.x - a.position.x);
+    const lineX = sortedAI.length >= 2 ? sortedAI[1].position.x : sortedAI[0].position.x;
+    for (const p of playerTeam) {
+      if (p.role !== "goalkeeper" && p.position.x > HALF_PITCH_X && p.position.x > lineX) {
+        offside.add(p.id);
+      }
+    }
+  }
+
+  // AI team attacks leftward (low x).
+  // Offside line = 2nd-to-last player team player sorted by x ASC (closest to their own goal).
+  if (playerTeam.length > 0) {
+    const sortedPlayer = [...playerTeam].sort((a, b) => a.position.x - b.position.x);
+    const lineX = sortedPlayer.length >= 2 ? sortedPlayer[1].position.x : sortedPlayer[0].position.x;
+    for (const p of aiTeam) {
+      if (p.role !== "goalkeeper" && p.position.x < HALF_PITCH_X && p.position.x < lineX) {
+        offside.add(p.id);
+      }
+    }
+  }
+
+  return offside;
+}
+
 function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
   const lt = posToTile(loser.position);
   const wt = posToTile(winner.position);
@@ -337,6 +371,7 @@ function separateOverlapping(players: SimPlayer[], ball: SimBall, rng: () => num
 }
 
 function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events: GameEvent[]): FrameSnapshot {
+  const offsidePlayers = getOffsidePlayers(players);
   return {
     tick,
     players: players.map(p => ({
@@ -349,6 +384,7 @@ function snapshotFrame(tick: number, players: SimPlayer[], ball: SimBall, events
       jerseyNumber: p.jerseyNumber,
       role: p.role,
       tileRange: speedToTiles(p.stats.speed),
+      offside: offsidePlayers.has(p.id),
     })),
     ball: {
       position: { ...ball.position },
@@ -688,6 +724,35 @@ function detectAndResolveEvents(
           } else {
             events.push({ type: GameEventType.TACKLE, tick, playerId: loser.id, targetId: winner.id, teamId: loser.teamId, message: `${loser.name} wins the ball!` });
           }
+          passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
+          return;
+        }
+      }
+
+      // Offside check: triggered only when a same-team pass is received
+      if (passTracker.type === "pass" && passTracker.teamId === winner.teamId) {
+        const offsideSet = getOffsidePlayers(players);
+        if (offsideSet.has(winner.id)) {
+          events.push({
+            type: GameEventType.OFFSIDE,
+            tick,
+            playerId: winner.id,
+            teamId: winner.teamId,
+            message: `Offside! ${winner.name} caught offside — free kick awarded!`,
+          });
+          const defendingTeamId = winner.teamId === "player" ? "ai" : "player";
+          const defCandidates = players.filter(
+            p => p.teamId === defendingTeamId && p.role !== "goalkeeper"
+          );
+          const fkTaker = defCandidates.length > 0
+            ? defCandidates[Math.floor(rng() * defCandidates.length)]
+            : players.find(p => p.teamId === defendingTeamId)!;
+          fkTaker.command = null;
+          fkTaker.commandExecuted = false;
+          fkTaker.state = PlayerState.DRIBBLING;
+          ball.ownerId = fkTaker.id;
+          ball.velocity = { x: 0, y: 0 };
+          ball.passTarget = undefined;
           passTracker.type = null; passTracker.teamId = null; passTracker.playerId = null; passTracker.name = null;
           return;
         }

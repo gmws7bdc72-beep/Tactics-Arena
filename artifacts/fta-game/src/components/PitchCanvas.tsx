@@ -434,6 +434,28 @@ export default function PitchCanvas({
       ctx.font = `${Math.round(tr(5.5))}px 'Inter', sans-serif`;
       ctx.fillText(p.name, pos.x, pos.y + radius + tr(2) + nameH / 2);
 
+      if (p.offside) {
+        const flagX = pos.x + radius + tr(2);
+        const flagY = pos.y - radius - tr(12);
+        const fw = tr(14);
+        const fh = tr(9);
+        ctx.fillStyle = "#ff1744";
+        ctx.fillRect(flagX, flagY, fw, fh);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${Math.round(tr(5.5))}px 'Inter', sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("OS", flagX + tr(1.5), flagY + fh / 2);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.strokeStyle = "#ff1744";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(flagX, flagY + fh);
+        ctx.lineTo(flagX, flagY + fh + tr(7));
+        ctx.stroke();
+      }
+
       if (frame.ball.ownerId === p.id) {
         ctx.strokeStyle = "#ffd700";
         ctx.lineWidth = 2;
