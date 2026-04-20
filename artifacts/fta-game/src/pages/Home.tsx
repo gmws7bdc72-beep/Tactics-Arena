@@ -225,7 +225,7 @@ export default function Home({
             {/* CTA */}
             {isPlayoffComplete ? (
               <button
-                onClick={onStartMatch}
+                onClick={onResetSeason}
                 className="w-full mt-3 py-3.5 rounded-xl text-white font-black text-base tracking-wide transition-all active:scale-95 shadow-lg"
                 style={{ background: "linear-gradient(135deg, #ffd700, #ff9800)" }}
               >
