@@ -29,32 +29,35 @@ function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-const HALF_PITCH_X = PITCH_WIDTH / 2;
-
 export function getOffsidePlayers(players: SimPlayer[]): Set<string> {
   const playerTeam = players.filter(p => p.teamId === "player");
   const aiTeam     = players.filter(p => p.teamId === "ai");
   const offside    = new Set<string>();
 
-  // Player team attacks rightward (high x).
-  // Offside line = 2nd-to-last AI player sorted by x DESC (closest to their own goal).
+  // Offside only applies inside the attacking third (Baller League rules):
+  //   player team attacks rightward → offside zone: x > 2/3 of pitch
+  //   AI team attacks leftward      → offside zone: x < 1/3 of pitch
+  // The middle third is a free zone — no offside there.
+  const ATTACK_LINE = PITCH_WIDTH * 2 / 3;
+  const DEFEND_LINE = PITCH_WIDTH / 3;
+
+  // Player team: offside only when past the 2/3 line AND ahead of 2nd-to-last AI defender.
   if (aiTeam.length > 0) {
     const sortedAI = [...aiTeam].sort((a, b) => b.position.x - a.position.x);
     const lineX = sortedAI.length >= 2 ? sortedAI[1].position.x : sortedAI[0].position.x;
     for (const p of playerTeam) {
-      if (p.role !== "goalkeeper" && p.position.x > HALF_PITCH_X && p.position.x > lineX) {
+      if (p.role !== "goalkeeper" && p.position.x > ATTACK_LINE && p.position.x > lineX) {
         offside.add(p.id);
       }
     }
   }
 
-  // AI team attacks leftward (low x).
-  // Offside line = 2nd-to-last player team player sorted by x ASC (closest to their own goal).
+  // AI team: offside only when past the 1/3 line AND ahead of 2nd-to-last player defender.
   if (playerTeam.length > 0) {
     const sortedPlayer = [...playerTeam].sort((a, b) => a.position.x - b.position.x);
     const lineX = sortedPlayer.length >= 2 ? sortedPlayer[1].position.x : sortedPlayer[0].position.x;
     for (const p of aiTeam) {
-      if (p.role !== "goalkeeper" && p.position.x < HALF_PITCH_X && p.position.x < lineX) {
+      if (p.role !== "goalkeeper" && p.position.x < DEFEND_LINE && p.position.x < lineX) {
         offside.add(p.id);
       }
     }
