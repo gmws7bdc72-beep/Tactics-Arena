@@ -24,10 +24,10 @@ export const AI_TEAMS: AITeamDef[] = [
     crestIcon: "⚔️",
     players: [
       { id: "ig1", name: "Voss",  role: "goalkeeper", stats: { attack: 3, defense: 9,  passing: 6, speed: 4, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "ig2", name: "Stark", role: "defender",   stats: { attack: 5, defense: 9,  passing: 5, speed: 7, luck: 6 }, ability: "iron_tackle", jerseyNumber: 5 },
+      { id: "ig2", name: "Stark", role: "defender",   stats: { attack: 5, defense: 9,  passing: 6, speed: 7, luck: 6 }, ability: "iron_tackle", jerseyNumber: 5 },
       { id: "ig3", name: "Helm",  role: "midfielder", stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "eagle_eye",   jerseyNumber: 8 },
-      { id: "ig4", name: "Blaze", role: "forward",    stats: { attack: 9, defense: 4,  passing: 6, speed: 9, luck: 7 }, ability: "ghost_run",   jerseyNumber: 10 },
-      { id: "ig5", name: "Forge", role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 8, luck: 8 }, ability: "powerhouse",  jerseyNumber: 9 },
+      { id: "ig4", name: "Blaze", role: "forward",    stats: { attack: 9, defense: 4,  passing: 7, speed: 9, luck: 7 }, ability: "ghost_run",   jerseyNumber: 10 },
+      { id: "ig5", name: "Forge", role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 9, luck: 8 }, ability: "powerhouse",  jerseyNumber: 9 },
     ],
   },
   {
@@ -56,7 +56,7 @@ export const AI_TEAMS: AITeamDef[] = [
     crestIcon: "⚡",
     players: [
       { id: "ti1", name: "Stone", role: "goalkeeper", stats: { attack: 3, defense: 10, passing: 5, speed: 4, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "ti2", name: "Grip",  role: "defender",   stats: { attack: 4, defense: 9,  passing: 5, speed: 6, luck: 5 }, ability: "iron_tackle", jerseyNumber: 3 },
+      { id: "ti2", name: "Grip",  role: "defender",   stats: { attack: 4, defense: 9,  passing: 6, speed: 7, luck: 5 }, ability: "iron_tackle", jerseyNumber: 3 },
       { id: "ti3", name: "Pulse", role: "midfielder", stats: { attack: 8, defense: 7,  passing: 8, speed: 8, luck: 8 }, ability: "eagle_eye",   jerseyNumber: 7 },
       { id: "ti4", name: "Apex",  role: "forward",    stats: { attack: 9, defense: 5,  passing: 7, speed: 8, luck: 7 }, ability: "powerhouse",  jerseyNumber: 10 },
       { id: "ti5", name: "Volt",  role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 10, luck: 9 }, ability: "ghost_run",  jerseyNumber: 9 },

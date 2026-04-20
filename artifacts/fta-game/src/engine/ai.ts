@@ -297,7 +297,52 @@ function aiOffsideLineX(playerPlayers: SimPlayer[]): number {
 function isAIPlayerOffside(p: SimPlayer, playerPlayers: SimPlayer[]): boolean {
   if (p.role === "goalkeeper") return false;
   const lineX = aiOffsideLineX(playerPlayers);
-  return p.position.x < PITCH_WIDTH / 2 && p.position.x < lineX;
+  // Offside only in the attacking third (x < 1/3 pitch) — middle third is a free zone.
+  return p.position.x < PITCH_WIDTH / 3 && p.position.x < lineX;
+}
+
+/**
+ * Cap poachers to 1 per team and handle onside retreat.
+ * The most-advanced poacher (lowest x, since AI attacks leftward) keeps the role.
+ * Extra poachers are demoted to "dribbler".
+ * If the designated poacher is caught offside they step back to the legal zone.
+ */
+function offBallMove(
+  player: SimPlayer,
+  pt: TilePos,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  ballTile: TilePos,
+  claimed: Set<string>,
+  friendly: Set<string>
+): Command {
+  const baseStyle = getPlayerStyle(player);
+
+  // Sort all poachers by most-advanced position (lowest x = deepest into opponent's half for AI).
+  const poachersSorted = aiPlayers
+    .filter(p => getPlayerStyle(p) === "poacher")
+    .sort((a, b) => a.position.x - b.position.x);
+
+  // Only the leading poacher keeps the role; extras become dribblers.
+  const effectiveStyle: PlayerStyle =
+    baseStyle === "poacher" && poachersSorted[0]?.id !== player.id ? "dribbler" : baseStyle;
+
+  // Designated poacher retreats to get onside when beyond the attacking-third boundary.
+  if (effectiveStyle === "poacher" && isAIPlayerOffside(player, playerPlayers)) {
+    const halfRow = Math.floor(GRID_ROWS / 2);
+    const retreatRow = pt.row >= halfRow
+      ? Math.min(GRID_ROWS - 2, halfRow + 2)
+      : Math.max(1, halfRow - 2);
+    // col 5 ≈ just inside the legal zone (boundary at PITCH_WIDTH/3 ≈ col 5)
+    return moveStep(player, pt, { col: Math.floor(GRID_COLS / 3), row: retreatRow }, claimed, friendly);
+  }
+
+  const roleIdx = effectiveStyle === "poacher"
+    ? poachersSorted.findIndex(p => p.id === player.id)
+    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
+
+  const runTarget = styleOffBallTarget(player, effectiveStyle, roleIdx, ballTile);
+  return moveStep(player, pt, runTarget, claimed, friendly);
 }
 
 function bestForwardPass(
@@ -721,15 +766,8 @@ function tier1Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning.
-  // For poachers use a GLOBAL style index so two poachers with different
-  // roles (e.g. striker + forward) still get different spread zones.
-  const style = getPlayerStyle(player);
-  const roleIdx = style === "poacher"
-    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
-    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const runTarget = styleOffBallTarget(player, style, roleIdx, ballTile);
-  return moveStep(player, pt, runTarget, claimed, friendly);
+  // Off-ball: capped poacher logic + onside retreat handled in offBallMove.
+  return offBallMove(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly);
 }
 
 // Builds a fixed 1-to-1 man-marking map for Tier 1 at game start.
@@ -988,13 +1026,8 @@ function tier2Possession(
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning (global poacher index to prevent stacking)
-  const style2Off = getPlayerStyle(player);
-  const roleIdx2 = style2Off === "poacher"
-    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
-    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const runTarget = styleOffBallTarget(player, style2Off, roleIdx2, ballTile);
-  return moveStep(player, pt, runTarget, claimed, friendly);
+  // Off-ball: capped poacher logic + onside retreat handled in offBallMove.
+  return offBallMove(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly);
 }
 
 function tier2Defense(
@@ -1101,13 +1134,8 @@ function tier3Possession(
     return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
-  // Off-ball: style-based positioning (global poacher index to prevent stacking)
-  const style3 = getPlayerStyle(player);
-  const roleIdx3 = style3 === "poacher"
-    ? aiPlayers.filter(p => getPlayerStyle(p) === "poacher").findIndex(p => p.id === player.id)
-    : aiPlayers.filter(p => p.role === player.role).findIndex(p => p.id === player.id);
-  const runTarget = styleOffBallTarget(player, style3, roleIdx3, _ballTile);
-  return moveStep(player, pt, runTarget, claimed, friendly);
+  // Off-ball: capped poacher logic + onside retreat handled in offBallMove.
+  return offBallMove(player, pt, aiPlayers, playerPlayers, _ballTile, claimed, friendly);
 }
 
 function tier3Defense(
