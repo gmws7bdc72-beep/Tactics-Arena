@@ -183,6 +183,24 @@ export default function PitchCanvas({
       ctx.lineWidth = 2;
       ctx.fillRect(gX, 0, gWidth, gDepth); ctx.strokeRect(gX, 0, gWidth, gDepth);
       ctx.fillRect(gX, H - gDepth, gWidth, gDepth); ctx.strokeRect(gX, H - gDepth, gWidth, gDepth);
+
+      // Offside zone lines (attacking-third only rule).
+      // In vertical mode: high pitch x → low canvas y → top of screen (player attacks up).
+      // Player's offside zone: pitch x > 2/3 → canvas y < H/3 (top third).
+      // AI's offside zone:     pitch x < 1/3 → canvas y > 2H/3 (bottom third).
+      const offsideTop = H / 3;
+      const offsideBot = (2 * H) / 3;
+      ctx.globalAlpha = 0.04;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, W, offsideTop);
+      ctx.fillRect(0, offsideBot, W, H - offsideBot);
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, offsideTop); ctx.lineTo(W, offsideTop); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, offsideBot); ctx.lineTo(W, offsideBot); ctx.stroke();
+      ctx.setLineDash([]);
     } else {
       const scx = W / PITCH_WIDTH;
       const scy = H / PITCH_HEIGHT;
@@ -207,6 +225,23 @@ export default function PitchCanvas({
       ctx.lineWidth = 2;
       ctx.fillRect(0, goalY, goalD, goalW); ctx.strokeRect(0, goalY, goalD, goalW);
       ctx.fillRect(W - goalD, goalY, goalD, goalW); ctx.strokeRect(W - goalD, goalY, goalD, goalW);
+
+      // Offside zone lines (attacking-third only rule).
+      // Player attacks right → offside zone: right third (x > 2W/3).
+      // AI attacks left     → offside zone: left third  (x < W/3).
+      const offsideLeft  = W / 3;
+      const offsideRight = (2 * W) / 3;
+      ctx.globalAlpha = 0.04;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, offsideLeft, H);
+      ctx.fillRect(offsideRight, 0, W - offsideRight, H);
+      ctx.globalAlpha = 1;
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(offsideLeft, 0); ctx.lineTo(offsideLeft, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(offsideRight, 0); ctx.lineTo(offsideRight, H); ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // Tile grid
