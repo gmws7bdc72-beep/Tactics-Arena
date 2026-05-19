@@ -12,156 +12,52 @@ export interface AITeamDef {
   crestIcon: string;
 }
 
+// Uniform tier-1 template used by every AI team — everyone plays at max level.
+const TIER1_TEMPLATE = {
+  formationId: "1-2-1",
+  players: [
+    { name: "GK",   role: "goalkeeper" as const, stats: { attack: 3, defense: 9,  passing: 6, speed: 4, luck: 6 }, ability: "goalkeeper" as const,  jerseyNumber: 1 },
+    { name: "DEF",  role: "defender" as const,   stats: { attack: 5, defense: 9,  passing: 6, speed: 7, luck: 6 }, ability: "iron_tackle" as const, jerseyNumber: 5 },
+    { name: "MID1", role: "midfielder" as const, stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "eagle_eye" as const,   jerseyNumber: 8 },
+    { name: "MID2", role: "midfielder" as const, stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "bullet_pass" as const, jerseyNumber: 6 },
+    { name: "FWD",  role: "striker" as const,    stats: { attack: 10, defense: 3, passing: 5, speed: 9, luck: 8 }, ability: "ghost_run" as const,   jerseyNumber: 9 },
+  ],
+};
+
+function mkTeam(
+  id: string,
+  name: string,
+  jerseyColor: string,
+  secondaryColor: string,
+  crestIcon: string,
+  prefix: string
+): AITeamDef {
+  return {
+    id,
+    name,
+    tier: 1,
+    formationId: TIER1_TEMPLATE.formationId,
+    jerseyColor,
+    secondaryColor,
+    crestIcon,
+    players: TIER1_TEMPLATE.players.map((p, i) => ({
+      ...p,
+      id: `${prefix}${i + 1}`,
+      name: `${p.name}${i + 1}`,
+    })),
+  };
+}
+
 export const AI_TEAMS: AITeamDef[] = [
-  // Tier 1 — Elite
-  {
-    id: "fc_ironforge",
-    name: "FC Ironforge",
-    tier: 1,
-    formationId: "1-1-2",
-    jerseyColor: "#1a237e",
-    secondaryColor: "#ffcc00",
-    crestIcon: "⚔️",
-    players: [
-      { id: "ig1", name: "Voss",  role: "goalkeeper", stats: { attack: 3, defense: 9,  passing: 6, speed: 4, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "ig2", name: "Stark", role: "defender",   stats: { attack: 5, defense: 9,  passing: 6, speed: 7, luck: 6 }, ability: "iron_tackle", jerseyNumber: 5 },
-      { id: "ig3", name: "Helm",  role: "midfielder", stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "eagle_eye",   jerseyNumber: 8 },
-      { id: "ig4", name: "Blaze", role: "forward",    stats: { attack: 9, defense: 4,  passing: 7, speed: 9, luck: 7 }, ability: "ghost_run",   jerseyNumber: 10 },
-      { id: "ig5", name: "Forge", role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 9, luck: 8 }, ability: "powerhouse",  jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "the_vanguard",
-    name: "The Vanguard",
-    tier: 1,
-    formationId: "1-1-2",
-    jerseyColor: "#880e4f",
-    secondaryColor: "#ffffff",
-    crestIcon: "🛡️",
-    players: [
-      { id: "tv1", name: "Ward",  role: "goalkeeper", stats: { attack: 2, defense: 9,  passing: 5, speed: 4, luck: 7 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "tv2", name: "Crest", role: "defender",   stats: { attack: 5, defense: 8,  passing: 6, speed: 7, luck: 6 }, ability: "shadow_mark", jerseyNumber: 4 },
-      { id: "tv3", name: "Edge",  role: "midfielder", stats: { attack: 8, defense: 6,  passing: 8, speed: 8, luck: 7 }, ability: "bullet_pass", jerseyNumber: 6 },
-      { id: "tv4", name: "Fang",  role: "forward",    stats: { attack: 9, defense: 4,  passing: 7, speed: 9, luck: 8 }, ability: "eagle_eye",   jerseyNumber: 11 },
-      { id: "tv5", name: "Rush",  role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 10, luck: 7 }, ability: "ghost_run",  jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "titanium_fc",
-    name: "Titanium FC",
-    tier: 1,
-    formationId: "1-1-2",
-    jerseyColor: "#37474f",
-    secondaryColor: "#eceff1",
-    crestIcon: "⚡",
-    players: [
-      { id: "ti1", name: "Stone", role: "goalkeeper", stats: { attack: 3, defense: 10, passing: 5, speed: 4, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "ti2", name: "Grip",  role: "defender",   stats: { attack: 4, defense: 9,  passing: 6, speed: 7, luck: 5 }, ability: "iron_tackle", jerseyNumber: 3 },
-      { id: "ti3", name: "Pulse", role: "midfielder", stats: { attack: 8, defense: 7,  passing: 8, speed: 8, luck: 8 }, ability: "eagle_eye",   jerseyNumber: 7 },
-      { id: "ti4", name: "Apex",  role: "forward",    stats: { attack: 9, defense: 5,  passing: 7, speed: 8, luck: 7 }, ability: "powerhouse",  jerseyNumber: 10 },
-      { id: "ti5", name: "Volt",  role: "striker",    stats: { attack: 10, defense: 3, passing: 5, speed: 10, luck: 9 }, ability: "ghost_run",  jerseyNumber: 9 },
-    ],
-  },
-
-  // Tier 2 — Mid
-  {
-    id: "northern_wolves",
-    name: "Northern Wolves",
-    tier: 2,
-    formationId: "2-1-1",
-    jerseyColor: "#1b5e20",
-    secondaryColor: "#ffffff",
-    crestIcon: "🐺",
-    players: [
-      { id: "nw1", name: "Pack",  role: "goalkeeper", stats: { attack: 3, defense: 7, passing: 5, speed: 4, luck: 5 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "nw2", name: "Claw",  role: "defender",   stats: { attack: 4, defense: 7, passing: 5, speed: 6, luck: 5 }, ability: "iron_tackle", jerseyNumber: 5 },
-      { id: "nw3", name: "Hunt",  role: "defender",   stats: { attack: 4, defense: 7, passing: 5, speed: 6, luck: 5 }, ability: "shadow_mark", jerseyNumber: 4 },
-      { id: "nw4", name: "Trail", role: "midfielder", stats: { attack: 6, defense: 5, passing: 7, speed: 7, luck: 6 }, ability: "bullet_pass", jerseyNumber: 8 },
-      { id: "nw5", name: "Howl",  role: "striker",    stats: { attack: 8, defense: 3, passing: 5, speed: 7, luck: 6 }, ability: "powerhouse",  jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "silver_city",
-    name: "Silver City",
-    tier: 2,
-    formationId: "1-2-1",
-    jerseyColor: "#546e7a",
-    secondaryColor: "#cfd8dc",
-    crestIcon: "🏙️",
-    players: [
-      { id: "sc1", name: "Gates", role: "goalkeeper", stats: { attack: 2, defense: 7, passing: 5, speed: 4, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "sc2", name: "Lane",  role: "defender",   stats: { attack: 3, defense: 7, passing: 5, speed: 6, luck: 5 }, ability: "iron_tackle", jerseyNumber: 2 },
-      { id: "sc3", name: "Cross", role: "midfielder", stats: { attack: 6, defense: 5, passing: 7, speed: 7, luck: 6 }, ability: "bullet_pass", jerseyNumber: 7 },
-      { id: "sc4", name: "Urban", role: "midfielder", stats: { attack: 5, defense: 6, passing: 6, speed: 6, luck: 5 }, ability: "eagle_eye",   jerseyNumber: 10 },
-      { id: "sc5", name: "Metro", role: "striker",    stats: { attack: 7, defense: 3, passing: 5, speed: 7, luck: 6 }, ability: "ghost_run",   jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "river_phoenix",
-    name: "River Phoenix",
-    tier: 2,
-    formationId: "2-1-1",
-    jerseyColor: "#bf360c",
-    secondaryColor: "#ffccbc",
-    crestIcon: "🔥",
-    players: [
-      { id: "rp1", name: "Banks",   role: "goalkeeper", stats: { attack: 3, defense: 7, passing: 5, speed: 4, luck: 5 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "rp2", name: "Reed",    role: "defender",   stats: { attack: 4, defense: 7, passing: 5, speed: 6, luck: 5 }, ability: "iron_tackle", jerseyNumber: 3 },
-      { id: "rp3", name: "Flow",    role: "defender",   stats: { attack: 3, defense: 6, passing: 5, speed: 5, luck: 6 }, ability: "shadow_mark", jerseyNumber: 6 },
-      { id: "rp4", name: "Current", role: "midfielder", stats: { attack: 6, defense: 5, passing: 7, speed: 7, luck: 5 }, ability: "eagle_eye",   jerseyNumber: 8 },
-      { id: "rp5", name: "Surge",   role: "striker",    stats: { attack: 8, defense: 3, passing: 5, speed: 7, luck: 6 }, ability: "powerhouse",  jerseyNumber: 9 },
-    ],
-  },
-
-  // Tier 3 — Easy
-  {
-    id: "rooksville_fc",
-    name: "Rooksville FC",
-    tier: 3,
-    formationId: "2-1-1",
-    jerseyColor: "#f57f17",
-    secondaryColor: "#ffffff",
-    crestIcon: "🌱",
-    players: [
-      { id: "rf1", name: "Rook",   role: "goalkeeper", stats: { attack: 2, defense: 5, passing: 3, speed: 3, luck: 5 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "rf2", name: "Pawn",   role: "defender",   stats: { attack: 3, defense: 5, passing: 3, speed: 4, luck: 4 }, ability: "iron_tackle", jerseyNumber: 5 },
-      { id: "rf3", name: "Knight", role: "defender",   stats: { attack: 3, defense: 4, passing: 3, speed: 4, luck: 4 }, ability: "shadow_mark", jerseyNumber: 4 },
-      { id: "rf4", name: "Bishop", role: "midfielder", stats: { attack: 5, defense: 4, passing: 5, speed: 5, luck: 5 }, ability: "bullet_pass", jerseyNumber: 8 },
-      { id: "rf5", name: "King",   role: "striker",    stats: { attack: 6, defense: 2, passing: 4, speed: 5, luck: 5 }, ability: "ghost_run",   jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "the_underdogs",
-    name: "The Underdogs",
-    tier: 3,
-    formationId: "1-2-1",
-    jerseyColor: "#6a1b9a",
-    secondaryColor: "#e1bee7",
-    crestIcon: "🐕",
-    players: [
-      { id: "ud1", name: "Mutt",    role: "goalkeeper", stats: { attack: 2, defense: 5, passing: 3, speed: 3, luck: 6 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "ud2", name: "Scrappy", role: "defender",   stats: { attack: 3, defense: 5, passing: 3, speed: 4, luck: 5 }, ability: "iron_tackle", jerseyNumber: 4 },
-      { id: "ud3", name: "Grit",    role: "midfielder", stats: { attack: 5, defense: 4, passing: 5, speed: 5, luck: 5 }, ability: "eagle_eye",   jerseyNumber: 7 },
-      { id: "ud4", name: "Heart",   role: "midfielder", stats: { attack: 4, defense: 4, passing: 5, speed: 5, luck: 6 }, ability: "bullet_pass", jerseyNumber: 8 },
-      { id: "ud5", name: "Pup",     role: "striker",    stats: { attack: 6, defense: 2, passing: 4, speed: 5, luck: 6 }, ability: "ghost_run",   jerseyNumber: 9 },
-    ],
-  },
-  {
-    id: "coastal_fc",
-    name: "Coastal FC",
-    tier: 3,
-    formationId: "1-2-1",
-    jerseyColor: "#006064",
-    secondaryColor: "#b2ebf2",
-    crestIcon: "🌊",
-    players: [
-      { id: "cf1", name: "Shore", role: "goalkeeper", stats: { attack: 2, defense: 5, passing: 3, speed: 3, luck: 5 }, ability: "goalkeeper",  jerseyNumber: 1 },
-      { id: "cf2", name: "Tide",  role: "defender",   stats: { attack: 3, defense: 5, passing: 3, speed: 4, luck: 5 }, ability: "iron_tackle", jerseyNumber: 2 },
-      { id: "cf3", name: "Wave",  role: "midfielder", stats: { attack: 5, defense: 4, passing: 5, speed: 5, luck: 4 }, ability: "eagle_eye",   jerseyNumber: 6 },
-      { id: "cf4", name: "Reef",  role: "midfielder", stats: { attack: 4, defense: 4, passing: 5, speed: 5, luck: 5 }, ability: "bullet_pass", jerseyNumber: 8 },
-      { id: "cf5", name: "Drift", role: "striker",    stats: { attack: 6, defense: 2, passing: 4, speed: 5, luck: 5 }, ability: "powerhouse",  jerseyNumber: 9 },
-    ],
-  },
+  mkTeam("fc_ironforge",   "FC Ironforge",    "#1a237e", "#ffcc00",  "⚔️", "ig"),
+  mkTeam("the_vanguard",     "The Vanguard",    "#880e4f", "#ffffff",  "🛡️", "tv"),
+  mkTeam("titanium_fc",      "Titanium FC",     "#37474f", "#eceff1",  "⚡", "ti"),
+  mkTeam("northern_wolves",  "Northern Wolves", "#1b5e20", "#ffffff",  "🐺", "nw"),
+  mkTeam("silver_city",      "Silver City",     "#546e7a", "#cfd8dc",  "🏙️", "sc"),
+  mkTeam("river_phoenix",    "River Phoenix",   "#bf360c", "#ffccbc",  "🔥", "rp"),
+  mkTeam("rooksville_fc",    "Rooksville FC",   "#f57f17", "#ffffff",  "🌱", "rf"),
+  mkTeam("the_underdogs",    "The Underdogs",   "#6a1b9a", "#e1bee7",  "🐕", "ud"),
+  mkTeam("coastal_fc",       "Coastal FC",      "#006064", "#b2ebf2",  "🌊", "cf"),
 ];
 
 /**

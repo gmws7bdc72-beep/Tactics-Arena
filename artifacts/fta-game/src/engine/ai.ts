@@ -6,6 +6,34 @@ import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER
 
 export type AiTier = 1 | 2 | 3;
 
+// ─── Anti-loopback tracker ─────────────────────────────────────────────────
+// Module-level state: records the last 3 commands per AI player so we can
+// detect repetitive ping-pong passing and force deviation.
+interface CmdLog { type: CommandType; targetId?: string | null }
+const cmdHistory = new Map<string, CmdLog[]>();
+const LOOP_LOOKBACK = 2; // how many consecutive identical passes triggers break
+
+function logCommand(id: string, cmd: Command) {
+  const list = cmdHistory.get(id) ?? [];
+  const entry: CmdLog = {
+    type: cmd.type,
+    targetId: "targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null,
+  };
+  list.push(entry);
+  if (list.length > 3) list.shift();
+  cmdHistory.set(id, list);
+}
+
+/** Returns true if this player has passed to the same target for the last N turns. */
+function isLoopingPass(id: string, cmd: Command): boolean {
+  if (cmd.type !== CommandType.PASS) return false;
+  const target = "targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null;
+  if (!target) return false;
+  const list = cmdHistory.get(id) ?? [];
+  if (list.length < LOOP_LOOKBACK) return false;
+  return list.slice(-LOOP_LOOKBACK).every(l => l.type === CommandType.PASS && l.targetId === target);
+}
+
 /**
  * Carry the "pass-to-tile" decision from the carrier's tier function back to
  * the main loop, so the designated runner can be given a MOVE override that
@@ -454,21 +482,18 @@ function computeRunTarget(
   tier: AiTier
 ): TilePos {
   const role = player.role;
-  // How far ahead to position — must be large enough to push into the attacking half
-  // on a 16-col grid (AI attacks toward col 0; carrier typically at cols 8-12)
-  const fwdOffset = tier === 1 ? 6 : tier === 2 ? 5 : 2;
-  // Minimum column targets: ensure attackers push deep into scoring positions
-  const minAttackCol = tier === 1 ? 2 : tier === 2 ? 3 : 4;
+  // AI attacks toward col 0 (lower = deeper into opponent territory).
+  // All tiers push aggressively — the uniform squad is now tier-1 everywhere.
+  const fwdOffset = 7;        // how many cols ahead of the carrier
+  const minAttackCol = 1;     // absolute deepest allowed
 
   if (role === "striker") {
-    // Striker makes a direct run into the goal-threat zone
     return {
       col: Math.max(minAttackCol, ballCarrierTile.col - fwdOffset),
       row: Math.floor(GRID_ROWS / 2),
     };
   }
   if (role === "forward") {
-    // Forwards run into wide channels ahead of the carrier
     const runRow = roleIdx === 0
       ? Math.max(0, ballCarrierTile.row - 2)
       : Math.min(GRID_ROWS - 1, ballCarrierTile.row + 2);
@@ -478,19 +503,18 @@ function computeRunTarget(
     };
   }
   if (role === "midfielder") {
-    // Midfielders fan out ahead/level with carrier to create passing lanes
-    const midFwdOffset = tier === 1 ? 4 : tier === 2 ? 3 : 1;
+    // Midfielders now push well into the attacking half
     const supportRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
       : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
     return {
-      col: Math.max(minAttackCol + 2, ballCarrierTile.col - midFwdOffset),
+      col: Math.max(minAttackCol + 2, ballCarrierTile.col - 5),
       row: supportRow,
     };
   }
   if (role === "defender") {
-    // Defender stays behind ball as recycling option
-    const coverOffset = tier === 1 ? 3 : 4;
+    // Even the defender steps up — only 1 tile behind the carrier
+    const coverOffset = 2;
     const coverRow = roleIdx === 0
       ? Math.max(1, ballCarrierTile.row - 1)
       : Math.min(GRID_ROWS - 2, ballCarrierTile.row + 1);
@@ -542,25 +566,25 @@ function styleOffBallTarget(
       return zones[roleIdx % zones.length];
     }
     case "passer": {
-      // Spread wide of the carrier to form passing triangles
+      // Spread wide and ahead of the carrier — always in the attacking half
       const row = roleIdx === 0
         ? Math.max(0, ballTile.row - 2)
         : Math.min(GRID_ROWS - 1, ballTile.row + 2);
-      return { col: Math.max(1, ballTile.col - 2), row };
+      return { col: Math.max(1, ballTile.col - 4), row };
     }
     case "dribbler": {
-      // Stay 1 tile behind the carrier — ready to receive then run
+      // Dribblers now push into the attacking third alongside the carrier
       const row = roleIdx === 0
         ? Math.max(0, ballTile.row - 1)
         : Math.min(GRID_ROWS - 1, ballTile.row + 1);
-      return { col: Math.max(1, ballTile.col - 1), row };
+      return { col: Math.max(1, ballTile.col - 3), row };
     }
     case "support": {
-      // Stay 3 tiles behind the ball as a safe backward-pass outlet
+      // Support steps up — only 1 tile behind the ball
       const row = roleIdx === 0
         ? Math.max(1, ballTile.row - 1)
         : Math.min(GRID_ROWS - 2, ballTile.row + 1);
-      return { col: Math.min(GRID_COLS - 2, ballTile.col + 3), row };
+      return { col: Math.min(GRID_COLS - 2, ballTile.col + 1), row };
     }
     default: // "balanced"
       return computeRunTarget(player, roleIdx, ballTile, 1);
@@ -1285,6 +1309,23 @@ export function generateAICommands(
       }
     }
 
+    // Anti-loopback: if this player has passed to the same teammate twice
+    // consecutively, break the pattern by dribbling or shooting instead.
+    if (isLoopingPass(player.id, cmd)) {
+      const targetId = "targetPlayerId" in cmd ? cmd.targetPlayerId : null;
+      if (targetId) {
+        const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
+        if (altTarget && altTarget.id !== targetId) {
+          const altTile = posToTile(altTarget.position);
+          cmd = { type: CommandType.PASS, targetPlayerId: altTarget.id, targetPosition: tileToPos(altTile.col, altTile.row), coordinated: false };
+        } else {
+          const fwd = pt.col - 2;
+          if (fwd >= 0) cmd = { type: CommandType.MOVE, targetPosition: tileToPos(Math.max(0, fwd), pt.row) };
+        }
+      }
+    }
+
+    logCommand(player.id, cmd);
     commands.set(player.id, cmd);
   }
 
