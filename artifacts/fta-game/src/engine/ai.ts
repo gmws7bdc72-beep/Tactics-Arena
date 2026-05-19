@@ -35,6 +35,23 @@ function isLoopingPass(id: string, cmd: Command): boolean {
 }
 
 /**
+ * Detect bilateral ping-pong: A→B, B→A, A→B …
+ * Returns true if player `id` is about to pass to `targetId` AND `targetId`
+ * has been passing back to `id` at least once recently.
+ */
+function isBilateralPingPong(id: string, targetId: string): boolean {
+  // Check that targetId's recent history includes a pass back to id
+  const targetHistory = cmdHistory.get(targetId) ?? [];
+  const targetPassedBack = targetHistory.some(
+    l => l.type === CommandType.PASS && l.targetId === id
+  );
+  if (!targetPassedBack) return false;
+  // Also require that this player has already passed to targetId at least once
+  const myHistory = cmdHistory.get(id) ?? [];
+  return myHistory.some(l => l.type === CommandType.PASS && l.targetId === targetId);
+}
+
+/**
  * Carry the "pass-to-tile" decision from the carrier's tier function back to
  * the main loop, so the designated runner can be given a MOVE override that
  * sends them to the exact tile the ball is aimed at.
@@ -697,6 +714,8 @@ function tier1Possession(
       const dumpTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
       if (dumpTarget) {
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        const dumpTile = posToTile(dumpTarget.position);
+        if (planRef) planRef.current = { runnerId: dumpTarget.id, runTile: dumpTile };
         return passAndRun(dumpTarget, runTile, player.position);
       }
     }
@@ -705,12 +724,16 @@ function tier1Possession(
     if (style === "passer") {
       const fwdP = bestForwardPass(player, aiPlayers, playerPlayers, 7);
       if (fwdP) {
+        const fwdPTile = posToTile(fwdP.position);
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (planRef) planRef.current = { runnerId: fwdP.id, runTile: fwdPTile };
         return passAndRun(fwdP, runTile, player.position);
       }
       const latP = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latP) {
+        const latPTile = posToTile(latP.position);
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (planRef) planRef.current = { runnerId: latP.id, runTile: latPTile };
         return passAndRun(latP, runTile, player.position);
       }
     }
@@ -739,10 +762,13 @@ function tier1Possession(
     if (hardPressed || fwdBlocked) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
+        const latTile = posToTile(latTarget.position);
         // All styles: prefer Pass+Move when pressed — get the ball away and find space
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (Math.random() < 0.55) return passAndRun(latTarget, runTile, player.position);
-        const latTile = posToTile(latTarget.position);
+        if (Math.random() < 0.55) {
+          if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
+          return passAndRun(latTarget, runTile, player.position);
+        }
         if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
         return passTo(latTarget, player.position);
       }
@@ -758,9 +784,13 @@ function tier1Possession(
     if (style === "support" && !hardPressed) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
+        const latSupportTile = posToTile(latTarget.position);
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (Math.random() < 0.40) return passAndRun(latTarget, runTile, player.position);
-        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: posToTile(latTarget.position) };
+        if (Math.random() < 0.40) {
+          if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latSupportTile };
+          return passAndRun(latTarget, runTile, player.position);
+        }
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latSupportTile };
         return passTo(latTarget, player.position);
       }
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 5);
@@ -996,7 +1026,9 @@ function tier2Possession(
     if (style2 === "passer") {
       const fwdP = bestForwardPass(player, aiPlayers, playerPlayers, 6);
       if (fwdP && Math.random() < 0.50) {
+        const fwdP2Tile = posToTile(fwdP.position);
         const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (planRef) planRef.current = { runnerId: fwdP.id, runTile: fwdP2Tile };
         return passAndRun(fwdP, runTile, player.position);
       }
     }
@@ -1016,12 +1048,13 @@ function tier2Possession(
     if (hardPressed || fwdBlocked) {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (latTarget) {
+        const latTile2 = posToTile(latTarget.position);
         if (Math.random() < 0.40) {
           const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+          if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile2 };
           return passAndRun(latTarget, runTile, player.position);
         }
-        const latTile = posToTile(latTarget.position);
-        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
+        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile2 };
         return passTo(latTarget, player.position);
       }
       const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 4);
@@ -1309,18 +1342,35 @@ export function generateAICommands(
       }
     }
 
-    // Anti-loopback: if this player has passed to the same teammate twice
-    // consecutively, break the pattern by dribbling or shooting instead.
-    if (isLoopingPass(player.id, cmd)) {
-      const targetId = "targetPlayerId" in cmd ? cmd.targetPlayerId : null;
-      if (targetId) {
-        const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
-        if (altTarget && altTarget.id !== targetId) {
-          const altTile = posToTile(altTarget.position);
-          cmd = { type: CommandType.PASS, targetPlayerId: altTarget.id, targetPosition: tileToPos(altTile.col, altTile.row), coordinated: false };
+    // Anti-loopback: break same-target pass loops AND bilateral A↔B ping-pong.
+    const cmdTargetId = cmd.type === CommandType.PASS
+      ? ("targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null)
+      : null;
+    const isLooping = isLoopingPass(player.id, cmd)
+      || (cmdTargetId !== null && isBilateralPingPong(player.id, cmdTargetId));
+
+    if (isLooping && cmdTargetId) {
+      // Try an alternative pass to ANY other teammate (wider range than normal)
+      const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
+      if (altTarget && altTarget.id !== cmdTargetId) {
+        const altTile = posToTile(altTarget.position);
+        cmd = { type: CommandType.PASS, targetPlayerId: altTarget.id, targetPosition: tileToPos(altTile.col, altTile.row), coordinated: false };
+      } else {
+        // No alternative pass — dribble/clear forward, or hold if GK
+        const isGK = player.role === "goalkeeper";
+        if (!isGK) {
+          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
+          cmd = { type: CommandType.MOVE, targetPosition: tileToPos(fwd, pt.row) };
         } else {
-          const fwd = pt.col - 2;
-          if (fwd >= 0) cmd = { type: CommandType.MOVE, targetPosition: tileToPos(Math.max(0, fwd), pt.row) };
+          // GK: try a long clearance to any outfield player regardless of range
+          const clearTarget = aiPlayers
+            .filter(p => p.id !== player.id && p.role !== "goalkeeper")
+            .sort((a, b) => posToTile(a.position).col - posToTile(b.position).col)[0];
+          if (clearTarget) {
+            const ct = posToTile(clearTarget.position);
+            cmd = { type: CommandType.PASS, targetPlayerId: clearTarget.id, targetPosition: tileToPos(ct.col, ct.row), coordinated: false };
+          }
+          // If even that fails, GK just holds (keep existing cmd as MOVE to goal line)
         }
       }
     }
