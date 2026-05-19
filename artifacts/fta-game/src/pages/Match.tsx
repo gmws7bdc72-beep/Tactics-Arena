@@ -468,20 +468,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     runTurn();
   }, [twoPlayer, runTurn, clearSelection]);
 
-  // ── Enter key confirms the current turn during planning ──────────────────
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter") return;
-      if (phaseRef.current !== "planning") return;
-      // Skip if focus is inside an input/textarea/select
-      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-      if (["input", "textarea", "select"].includes(tag)) return;
-      confirmTurn();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [confirmTurn]);
-
   // ── Replay handlers ───────────────────────────────────────────────────────
   const stopReplayAnim = useCallback(() => {
     if (replayAnimRef.current !== null) {
@@ -664,6 +650,41 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const cancelAction = useCallback(() => {
     clearSelection();
   }, [clearSelection]);
+
+  // ── Keyboard shortcuts during planning ───────────────────────────────────
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Skip if focus is inside an input/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (["input", "textarea", "select"].includes(tag)) return;
+
+      if (phaseRef.current !== "planning") return;
+
+      if (e.key === "Enter") {
+        confirmTurn();
+        return;
+      }
+
+      if (!selectedPlayerId) return;
+
+      switch (e.key) {
+        case "1": // Move + Pass
+          if (!comboActive) { setComboMoveFirst(true); startCombo(); }
+          break;
+        case "2": // Pass + Move
+          if (!comboActive) { setComboMoveFirst(false); startCombo(); }
+          break;
+        case "3": // Pass
+          if (!comboActive && !passTargetMode) setPass();
+          break;
+        case "4": // Shoot
+          if (!comboActive) setShoot();
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [confirmTurn, selectedPlayerId, comboActive, passTargetMode, startCombo, setPass, setShoot]);
 
   // Always recompute offside from live player positions so the OS flag shows
   // continuously (during both simulation playback and the planning phase)
