@@ -468,6 +468,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     runTurn();
   }, [twoPlayer, runTurn, clearSelection]);
 
+  // ── Enter key confirms the current turn during planning ──────────────────
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter") return;
+      if (phaseRef.current !== "planning") return;
+      // Skip if focus is inside an input/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (["input", "textarea", "select"].includes(tag)) return;
+      confirmTurn();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [confirmTurn]);
+
   // ── Replay handlers ───────────────────────────────────────────────────────
   const stopReplayAnim = useCallback(() => {
     if (replayAnimRef.current !== null) {
