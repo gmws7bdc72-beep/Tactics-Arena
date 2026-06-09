@@ -663,22 +663,28 @@ function tier1Possession(
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
-      // GK distributes: pass to the closest open forward teammate
-      const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 4);
-      if (fwdTarget) {
-        const runTile = posToTile(fwdTarget.position);
-        if (planRef) {
-          planRef.current = { runnerId: fwdTarget.id, runTile };
-          return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+      // GK distributes — try progressively longer ranges so it never gets stuck
+      const gkPassRanges = [4, 7, 12];
+      for (const range of gkPassRanges) {
+        const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, range);
+        if (fwdTarget) {
+          const runTile = posToTile(fwdTarget.position);
+          if (planRef) {
+            planRef.current = { runnerId: fwdTarget.id, runTile };
+            return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+          }
+          return passTo(fwdTarget, player.position);
         }
-        return passTo(fwdTarget, player.position);
+        const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, range);
+        if (anyTarget) {
+          const anyTile = posToTile(anyTarget.position);
+          if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+          return passTo(anyTarget, player.position);
+        }
       }
-      const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 4);
-      if (anyTarget) {
-        const anyTile = posToTile(anyTarget.position);
-        if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
-        return passTo(anyTarget, player.position);
-      }
+      // Absolutely no teammate reachable — GK dribbles forward to create a passing angle
+      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
     const gkRow = Math.max(3, Math.min(5, ballTile.row));
@@ -687,135 +693,137 @@ function tier1Possession(
 
   if (hasBall) {
     const style = getPlayerStyle(player);
+    const isAttacker = player.role === "striker" || player.role === "forward";
+    const isDeepBuilder = player.role === "defender" || player.role === "midfielder";
 
     // 1. Shoot — poachers shoot from further out, everyone else from close range
     const shootCol = style === "poacher" ? 5 : 2;
     if (pt.col <= shootCol) return shoot();
 
-    // 2. Dribbler: move into space then release — or carry when the path is open
-    if (style === "dribbler") {
-      const hardPressedD = isHardPressed(pt, playerPlayers);
-      const fwdBlockedD  = isForwardBlocked(pt, playerPlayers);
-      if (!hardPressedD && !fwdBlockedD) {
-        // Move+Pass: drive one tile forward then whip it to the most advanced teammate
-        const advTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7)
-          ?? bestLateralPass(player, aiPlayers, playerPlayers, 5);
-        if (advTarget && Math.random() < 0.55) {
+    // 2. Assess pressure
+    const hardPressed = isHardPressed(pt, playerPlayers);
+    const fwdBlocked  = isForwardBlocked(pt, playerPlayers);
+
+    // 3. PRESSED → Pass+Move (dump ball and escape into space)
+    //    Used by everyone when under immediate pressure.
+    if (hardPressed) {
+      const escapeTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7)
+        ?? bestLateralPass(player, aiPlayers, playerPlayers, 5)
+        ?? bestAnyPass(player, aiPlayers, playerPlayers, 7);
+      if (escapeTarget) {
+        const escapeTile = posToTile(escapeTarget.position);
+        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        if (planRef) planRef.current = { runnerId: escapeTarget.id, runTile: escapeTile };
+        return passAndRun(escapeTarget, runTile, player.position);
+      }
+    }
+
+    // 4. OPEN SPACE AHEAD — role-specific combo choice
+    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
+
+    if (!fwdBlocked && fwdTarget) {
+      const fwdThreat = isThreatened(posToTile(fwdTarget.position), playerPlayers);
+
+      // 4a. Deep builder (defender/midfielder) with open space → Move+Pass:
+      //     advance 1-2 tiles to close distance, then release to a forward.
+      //     Creates better angles and draws defenders before the pass.
+      if (isDeepBuilder && !fwdThreat) {
+        if (Math.random() < 0.65) {
+          const dribRange = Math.min(2, speedToTiles(player.stats.speed));
+          const destCol = Math.max(0, pt.col - dribRange);
+          // Coordinate receiver to stay at their current tile
+          const fwdMoveTile = posToTile(fwdTarget.position);
+          if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: fwdMoveTile };
+          return moveAndPass({ col: destCol, row: pt.row }, fwdTarget);
+        }
+      }
+
+      // 4b. Attacker with an open forward target → Pass+Move:
+      //     one-touch pass and immediately sprint into space for a return.
+      if (isAttacker && !fwdThreat) {
+        if (Math.random() < 0.60) {
+          const fwdPMTile = posToTile(fwdTarget.position);
+          const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
+          if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: fwdPMTile };
+          return passAndRun(fwdTarget, runTile, player.position);
+        }
+      }
+
+      // 4c. Passer style → always quick release then run
+      if (style === "passer") {
+        const passerRunTile = pickRunAfterPassTile(player, pt, playerPlayers);
+        const passerFwdTile = posToTile(fwdTarget.position);
+        if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: passerFwdTile };
+        return passAndRun(fwdTarget, passerRunTile, player.position);
+      }
+
+      // 4d. Dribbler style with space → Move+Pass at higher pace
+      if (style === "dribbler") {
+        if (Math.random() < 0.55) {
           const dribRange = speedToTiles(player.stats.speed);
           const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
-          return moveAndPass(destTile, advTarget);
+          const dribblerFwdTile = posToTile(fwdTarget.position);
+          if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: dribblerFwdTile };
+          return moveAndPass(destTile, fwdTarget);
         }
-        // Otherwise just carry
+        // Otherwise just carry with a slight row juke
         const dribRange = speedToTiles(player.stats.speed);
         const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
         return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
       }
-      // Pressed — Pass+Move to escape: pass and immediately reposition
-      const dumpTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
-      if (dumpTarget) {
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        const dumpTile = posToTile(dumpTarget.position);
-        if (planRef) planRef.current = { runnerId: dumpTarget.id, runTile: dumpTile };
-        return passAndRun(dumpTarget, runTile, player.position);
-      }
-    }
 
-    // 2b. Passer style: quick release then run — always prefer Pass+Move
-    if (style === "passer") {
-      const fwdP = bestForwardPass(player, aiPlayers, playerPlayers, 7);
-      if (fwdP) {
-        const fwdPTile = posToTile(fwdP.position);
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (planRef) planRef.current = { runnerId: fwdP.id, runTile: fwdPTile };
-        return passAndRun(fwdP, runTile, player.position);
-      }
-      const latP = bestLateralPass(player, aiPlayers, playerPlayers, 5);
-      if (latP) {
-        const latPTile = posToTile(latP.position);
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (planRef) planRef.current = { runnerId: latP.id, runTile: latPTile };
-        return passAndRun(latP, runTile, player.position);
-      }
-    }
-
-    // 3. Assess situation
-    const hardPressed = isHardPressed(pt, playerPlayers);
-    const fwdBlocked = isForwardBlocked(pt, playerPlayers);
-
-    // 4. Forward pass — best forward target (already sorted by least threatened).
-    const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 7);
-    if (fwdTarget) {
-      const fwdThreat = isThreatened(posToTile(fwdTarget.position), playerPlayers);
-      if (!fwdThreat || hardPressed || fwdBlocked) {
+      // 4e. Balanced/support: plain through-ball pushed 1 tile ahead of receiver
+      if (!fwdThreat || fwdBlocked) {
         const projTile = posToTile(fwdTarget.position);
-        // Push pass target 1 tile more advanced so receiver must sprint → visible through-ball
         const runTile: TilePos = { col: Math.max(1, projTile.col - 1), row: projTile.row };
         if (planRef) {
           planRef.current = { runnerId: fwdTarget.id, runTile };
           return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
         }
-        return passTo(fwdTarget, player.position);
       }
     }
 
-    // 5. Under pressure or forward blocked: escape with Pass+Move or plain pass.
-    if (hardPressed || fwdBlocked) {
+    // 5. Forward blocked or no forward target: lateral / backward escape
+    {
       const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
       if (latTarget) {
         const latTile = posToTile(latTarget.position);
-        // All styles: prefer Pass+Move when pressed — get the ball away and find space
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (Math.random() < 0.55) {
+        if (fwdBlocked || Math.random() < 0.45) {
+          // Pass+Move: escape sideways then reposition
+          const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
           if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
           return passAndRun(latTarget, runTile, player.position);
         }
         if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latTile };
         return passTo(latTarget, player.position);
       }
-      const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
-      if (bkTarget) {
-        const bkTile = posToTile(bkTarget.position);
-        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: bkTile };
-        return passTo(bkTarget, player.position);
-      }
-    }
 
-    // 5b. Support style: recycle safely and reposition with Pass+Move
-    if (style === "support" && !hardPressed) {
-      const latTarget = bestLateralPass(player, aiPlayers, playerPlayers, 5);
-      if (latTarget) {
-        const latSupportTile = posToTile(latTarget.position);
-        const runTile = pickRunAfterPassTile(player, pt, playerPlayers);
-        if (Math.random() < 0.40) {
-          if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latSupportTile };
-          return passAndRun(latTarget, runTile, player.position);
+      // Support style: recycle backward
+      if (style === "support") {
+        const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 6);
+        if (bkTarget) {
+          if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: posToTile(bkTarget.position) };
+          return passTo(bkTarget, player.position);
         }
-        if (planRef) planRef.current = { runnerId: latTarget.id, runTile: latSupportTile };
-        return passTo(latTarget, player.position);
-      }
-      const bkTarget = bestBackwardPass(player, aiPlayers, playerPlayers, 5);
-      if (bkTarget) {
-        if (planRef) planRef.current = { runnerId: bkTarget.id, runTile: posToTile(bkTarget.position) };
-        return passTo(bkTarget, player.position);
       }
     }
 
-    // 5. No pass available and not blocked: dribble forward.
+    // 6. No pass: dribble forward with a row juke
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
       const dribRange = speedToTiles(player.stats.speed);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
-    // 6. Truly stuck: any open teammate in any direction.
-    const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 7);
+    // 7. Truly stuck: any teammate in any direction
+    const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 8);
     if (anyTarget) {
       const anyTile = posToTile(anyTarget.position);
       if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
       return passTo(anyTarget, player.position);
     }
 
-    // Sidestep to create a new passing angle.
+    // Last resort: sidestep to break the deadlock
     const sideRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 2 : pt.row - 2;
     return moveStep(player, pt, { col: pt.col, row: Math.max(0, Math.min(GRID_ROWS - 1, sideRow)) }, claimed, friendly);
   }
@@ -984,21 +992,28 @@ function tier2Possession(
 ): Command {
   if (player.role === "goalkeeper") {
     if (hasBall) {
-      const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, 4);
-      if (fwdTarget) {
-        const runTile = posToTile(fwdTarget.position);
-        if (planRef) {
-          planRef.current = { runnerId: fwdTarget.id, runTile };
-          return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+      // GK distributes — try progressively longer ranges so it never gets stuck
+      const gkPassRanges2 = [4, 7, 12];
+      for (const range of gkPassRanges2) {
+        const fwdTarget = bestForwardPass(player, aiPlayers, playerPlayers, range);
+        if (fwdTarget) {
+          const runTile = posToTile(fwdTarget.position);
+          if (planRef) {
+            planRef.current = { runnerId: fwdTarget.id, runTile };
+            return { type: CommandType.PASS, targetPlayerId: fwdTarget.id, targetPosition: tileToPos(runTile.col, runTile.row), coordinated: true };
+          }
+          return passTo(fwdTarget, player.position);
         }
-        return passTo(fwdTarget, player.position);
+        const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, range);
+        if (anyTarget) {
+          const anyTile = posToTile(anyTarget.position);
+          if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
+          return passTo(anyTarget, player.position);
+        }
       }
-      const anyTarget = bestAnyPass(player, aiPlayers, playerPlayers, 4);
-      if (anyTarget) {
-        const anyTile = posToTile(anyTarget.position);
-        if (planRef) planRef.current = { runnerId: anyTarget.id, runTile: anyTile };
-        return passTo(anyTarget, player.position);
-      }
+      // Absolutely no teammate reachable — dribble forward to create passing angle
+      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
   }
