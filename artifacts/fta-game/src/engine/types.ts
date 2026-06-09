@@ -107,6 +107,7 @@ export enum GameEventType {
   SAVE = "SAVE",
   KICKOFF = "KICKOFF",
   OFFSIDE = "OFFSIDE",
+  DRIBBLE = "DRIBBLE",
 }
 
 export interface GameEvent {
