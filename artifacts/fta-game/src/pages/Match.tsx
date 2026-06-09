@@ -913,7 +913,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </button>
         </div>
 
-        <div className="px-4 pb-3 h-10 overflow-hidden">
+        <div className="px-4 pb-3">
           <EventLog events={allEvents} />
         </div>
       </div>

@@ -575,6 +575,16 @@ function updatePlayerMovement(
           }
         } else {
           player.commandExecuted = true;
+          if (hasBall) {
+            // Ball carrier arrived at destination — emit a dribble event
+            events.push({
+              type: GameEventType.DRIBBLE,
+              tick,
+              playerId: player.id,
+              teamId: player.teamId,
+              message: player.name,
+            });
+          }
           player.state = hasBall ? PlayerState.DRIBBLING : PlayerState.IDLE;
         }
       } else {
