@@ -803,6 +803,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             Tap tile or teammate to pass
           </div>
         )}
+
+        {/* Commentary overlay — bottom of pitch */}
+        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
+          <EventLog events={allEvents} />
+        </div>
       </div>
 
       {/* Controls bottom bar */}
@@ -885,22 +890,11 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        <div className="flex items-center gap-2 px-4 py-2">
-          <div className="flex-1 text-xs text-gray-500">
-            {phase === "planning" && !selectedPlayerId && "Tap any player · green tiles = move range"}
-            {phase === "planning" && selectedPlayerId && !passTargetMode && !comboActive && "Tap green tile to move · ⚔ orange = tackle"}
-            {phase === "planning" && !comboActive && passTargetMode && "Tap a tile or player to pass"}
-            {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
-            {phase === "planning" && comboActive && comboMoveFirst && comboStep === 2 && "Now tap pass target (tile or player)"}
-            {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 1 && "Tap pass target (tile or player)"}
-            {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 2 && "Now tap move destination tile"}
-            {phase === "simulating" && "Simulating…"}
-            {phase === "finished" && "Match over!"}
-          </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-2">
           <button
             onClick={confirmTurn}
             disabled={phase !== "planning"}
-            className="px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
+            className="w-full px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
             style={{
               background: phase === "planning"
                 ? twoPlayer && twoPlayerTurn === "p2"
@@ -909,12 +903,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
                 : "rgba(255,255,255,0.08)",
             }}
           >
-            {twoPlayer && phase === "planning" ? (twoPlayerTurn === "p1" ? "P1 Done" : "P2 Done") : "Confirm"}
+            {twoPlayer && phase === "planning" ? (twoPlayerTurn === "p1" ? "P1 Done" : "P2 Done") : "Confirm Turn"}
           </button>
-        </div>
-
-        <div className="px-4 pb-3">
-          <EventLog events={allEvents} />
         </div>
       </div>
 
