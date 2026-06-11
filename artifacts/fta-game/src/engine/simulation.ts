@@ -466,6 +466,13 @@ function updatePlayerMovement(
           passTracker.name = player.name;
           passTracker.offsideIds = getOffsidePlayers(players);
           passTracker.offsideIds.delete(player.id);
+          // Refresh target to receiver's live position so the ball leads them
+          if (player.command?.targetPlayerId) {
+            const rcvr = players.find(p => p.id === player.command!.targetPlayerId);
+            if (rcvr) {
+              player.command = { ...player.command, targetPosition: { ...rcvr.position } };
+            }
+          }
           executePass(player, ball, rng);
           const passFollowUp = player.command?.followUp;
           if (passFollowUp) {
