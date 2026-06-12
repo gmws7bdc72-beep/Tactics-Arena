@@ -398,6 +398,19 @@ export default function PitchCanvas({
           ctx.globalAlpha = 0.55;
           ctx.beginPath(); ctx.arc(to.x, to.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
+          // Move+Pass combo: draw the pass arrow in red
+          if (cmd.followUp?.type === CommandType.PASS && cmd.followUp.targetPosition) {
+            const passTo = tp(cmd.followUp.targetPosition);
+            ctx.globalAlpha = 0.7;
+            ctx.strokeStyle = "#ff1744";
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([7, 4]);
+            ctx.beginPath(); ctx.moveTo(to.x, to.y); ctx.lineTo(passTo.x, passTo.y); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.55;
+            ctx.beginPath(); ctx.arc(passTo.x, passTo.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
         } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
           ctx.globalAlpha = 0.7;
@@ -407,6 +420,19 @@ export default function PitchCanvas({
           ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
+          // Pass+Move combo: draw the move arrow in yellow
+          if (cmd.followUp?.type === CommandType.MOVE && cmd.followUp.targetPosition) {
+            const moveTo = tp(cmd.followUp.targetPosition);
+            ctx.globalAlpha = 0.45;
+            ctx.strokeStyle = "#ffeb3b";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 4]);
+            ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(moveTo.x, moveTo.y); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.55;
+            ctx.beginPath(); ctx.arc(moveTo.x, moveTo.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
         } else if (cmd.type === CommandType.SHOOT) {
           // "player" team attacks right; "ai" team attacks left
           const attacksRight = pf.teamId === "player";
