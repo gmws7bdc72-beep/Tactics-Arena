@@ -390,13 +390,13 @@ export default function PitchCanvas({
         if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
           const isCombo = cmd.followUp?.type === CommandType.PASS;
-          ctx.globalAlpha = 0.45;
-          ctx.strokeStyle = isCombo ? "#ff4444" : "#00e676"; // red for combo move
-          ctx.lineWidth = 2;
+          ctx.globalAlpha = isCombo ? 0.75 : 0.45;
+          ctx.strokeStyle = isCombo ? "#ff3333" : "#00e676"; // bright red for combo move
+          ctx.lineWidth = isCombo ? 3 : 2;
           ctx.setLineDash([5, 4]);
           ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
-          ctx.globalAlpha = 0.55;
+          ctx.globalAlpha = isCombo ? 0.85 : 0.55;
           ctx.beginPath(); ctx.arc(to.x, to.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
           // If this MOVE has a PASS follow-up, draw the orange pass arrow from the move destination
