@@ -30,13 +30,14 @@ function mkTeam(
   jerseyColor: string,
   secondaryColor: string,
   crestIcon: string,
-  prefix: string
+  prefix: string,
+  formationId: string
 ): AITeamDef {
   return {
     id,
     name,
     tier: 1,
-    formationId: TIER1_TEMPLATE.formationId,
+    formationId,
     jerseyColor,
     secondaryColor,
     crestIcon,
@@ -49,15 +50,15 @@ function mkTeam(
 }
 
 export const AI_TEAMS: AITeamDef[] = [
-  mkTeam("fc_ironforge",   "FC Ironforge",    "#1a237e", "#ffcc00",  "⚔️", "ig"),
-  mkTeam("the_vanguard",     "The Vanguard",    "#880e4f", "#ffffff",  "🛡️", "tv"),
-  mkTeam("titanium_fc",      "Titanium FC",     "#37474f", "#eceff1",  "⚡", "ti"),
-  mkTeam("northern_wolves",  "Northern Wolves", "#1b5e20", "#ffffff",  "🐺", "nw"),
-  mkTeam("silver_city",      "Silver City",     "#546e7a", "#cfd8dc",  "🏙️", "sc"),
-  mkTeam("river_phoenix",    "River Phoenix",   "#bf360c", "#ffccbc",  "🔥", "rp"),
-  mkTeam("rooksville_fc",    "Rooksville FC",   "#f57f17", "#ffffff",  "🌱", "rf"),
-  mkTeam("the_underdogs",    "The Underdogs",   "#6a1b9a", "#e1bee7",  "🐕", "ud"),
-  mkTeam("coastal_fc",       "Coastal FC",      "#006064", "#b2ebf2",  "🌊", "cf"),
+  mkTeam("fc_ironforge",   "FC Ironforge",    "#1a237e", "#ffcc00",  "⚔️", "ig", "2-1-1"), // defensive fortress
+  mkTeam("the_vanguard",   "The Vanguard",    "#880e4f", "#ffffff",  "🛡️", "tv", "2-1-1"), // disciplined block
+  mkTeam("titanium_fc",    "Titanium FC",     "#37474f", "#eceff1",  "⚡", "ti", "1-2-1"), // balanced
+  mkTeam("northern_wolves","Northern Wolves", "#1b5e20", "#ffffff",  "🐺", "nw", "1-1-2"), // aggressive press
+  mkTeam("silver_city",    "Silver City",     "#546e7a", "#cfd8dc",  "🏙️", "sc", "1-2-1"), // balanced
+  mkTeam("river_phoenix",  "River Phoenix",   "#bf360c", "#ffccbc",  "🔥", "rp", "1-1-2"), // attack-minded
+  mkTeam("rooksville_fc",  "Rooksville FC",   "#f57f17", "#ffffff",  "🌱", "rf", "1-2-1"), // balanced default
+  mkTeam("the_underdogs",  "The Underdogs",   "#6a1b9a", "#e1bee7",  "🐕", "ud", "1-1-2"), // nothing to lose
+  mkTeam("coastal_fc",     "Coastal FC",      "#006064", "#b2ebf2",  "🌊", "cf", "2-1-1"), // compact and cautious
 ];
 
 /**
