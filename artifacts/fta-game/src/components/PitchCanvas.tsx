@@ -389,52 +389,24 @@ export default function PitchCanvas({
 
         if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
-          const isCombo = cmd.followUp?.type === CommandType.PASS;
-          ctx.globalAlpha = isCombo ? 0.75 : 0.45;
-          ctx.strokeStyle = isCombo ? "#ff3333" : "#00e676"; // bright red for combo move
-          ctx.lineWidth = isCombo ? 3 : 2;
+          ctx.globalAlpha = 0.45;
+          ctx.strokeStyle = "#00e676";
+          ctx.lineWidth = 2;
           ctx.setLineDash([5, 4]);
           ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
-          ctx.globalAlpha = isCombo ? 0.85 : 0.55;
+          ctx.globalAlpha = 0.55;
           ctx.beginPath(); ctx.arc(to.x, to.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
-          // If this MOVE has a PASS follow-up, draw the orange pass arrow from the move destination
-          const followUp = cmd.followUp;
-          if (isCombo && followUp && followUp.targetPosition) {
-            const passTarget = tp(followUp.targetPosition);
-            ctx.globalAlpha = 0.7;
-            ctx.strokeStyle = "#ff9800"; // orange for combo pass
-            ctx.lineWidth = 2.5;
-            ctx.setLineDash([7, 4]);
-            ctx.beginPath(); ctx.moveTo(to.x, to.y); ctx.lineTo(passTarget.x, passTarget.y); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 1;
-          }
         } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
           const to = tp(cmd.targetPosition);
-          const isCombo = cmd.followUp?.type === CommandType.MOVE;
           ctx.globalAlpha = 0.7;
-          ctx.strokeStyle = isCombo ? "#ff9800" : "#ffeb3b"; // orange for combo pass
+          ctx.strokeStyle = "#ffeb3b";
           ctx.lineWidth = 2.5;
           ctx.setLineDash([7, 4]);
           ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
-          // If PASS has a MOVE follow-up (Pass+Move), draw the red run arrow
-          const followUp2 = cmd.followUp;
-          if (isCombo && followUp2 && followUp2.targetPosition) {
-            const runDest = tp(followUp2.targetPosition);
-            ctx.globalAlpha = 0.45;
-            ctx.strokeStyle = "#ff4444"; // red for combo move
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 4]);
-            ctx.beginPath(); ctx.moveTo(to.x, to.y); ctx.lineTo(runDest.x, runDest.y); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 0.55;
-            ctx.beginPath(); ctx.arc(runDest.x, runDest.y, tr(PLAYER_RADIUS), 0, Math.PI * 2); ctx.stroke();
-            ctx.globalAlpha = 1;
-          }
         } else if (cmd.type === CommandType.SHOOT) {
           // "player" team attacks right; "ai" team attacks left
           const attacksRight = pf.teamId === "player";
