@@ -420,11 +420,11 @@ export default function PitchCanvas({
           ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
-          // Pass+Move combo: draw the move arrow in yellow
+          // Pass+Move combo: draw the move arrow in orange
           if (cmd.followUp?.type === CommandType.MOVE && cmd.followUp.targetPosition) {
             const moveTo = tp(cmd.followUp.targetPosition);
             ctx.globalAlpha = 0.45;
-            ctx.strokeStyle = "#ffeb3b";
+            ctx.strokeStyle = "#ff9800";
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 4]);
             ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(moveTo.x, moveTo.y); ctx.stroke();
