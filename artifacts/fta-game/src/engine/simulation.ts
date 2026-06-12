@@ -508,6 +508,12 @@ function updatePlayerMovement(
                 passEndpoint = receiverDestination;
               }
 
+              // DEBUG — remove after verification
+              const reason = !resolved ? "CORRECTED→dest" : vec2Dist(passEndpoint, receiverDestination) < 2 ? "dest" : "current";
+              console.log(
+                `[PASS] ${A.name}→${B.name} | aimed=${JSON.stringify(A.command!.targetPosition ? posToTile(A.command!.targetPosition) : null)} | currentTile=${JSON.stringify(posToTile(receiverCurrentTile))} | dest=${JSON.stringify(posToTile(receiverDestination))} | final=${JSON.stringify(posToTile(passEndpoint))} | verdict=${reason}`
+              );
+
               player.command = { ...A.command!, targetPosition: passEndpoint };
             }
           }
