@@ -466,11 +466,49 @@ function updatePlayerMovement(
           passTracker.name = player.name;
           passTracker.offsideIds = getOffsidePlayers(players);
           passTracker.offsideIds.delete(player.id);
-          // Refresh target to receiver's live position so the ball leads them
+          // Lead-pass reconciliation — ensure the ball lands where the receiver IS or IS GOING.
+          //
+          // Variable 1 — A: passer, B: receiver (exactly one of each)
+          // Variable 2 — receiverDestination: tile centre B is moving to, or current tile if standing
+          // Variable 3 — passEndpoint: where the ball is currently aimed
+          //
+          // Loop until passEndpoint matches receiverDestination or receiver's current tile.
           if (player.command?.targetPlayerId) {
-            const rcvr = players.find(p => p.id === player.command!.targetPlayerId);
-            if (rcvr) {
-              player.command = { ...player.command, targetPosition: { ...rcvr.position } };
+            const A = player;                                                      // passer
+            const B = players.find(p => p.id === A.command!.targetPlayerId);      // receiver
+
+            if (B) {
+              // Variable 2 — where B wants to end up
+              const receiverDestination: Vec2 =
+                B.command?.type === CommandType.MOVE &&
+                !B.commandExecuted &&
+                B.command.targetPosition
+                  ? snapToTile(B.command.targetPosition)
+                  : snapToTile(B.position);
+
+              const receiverCurrentTile: Vec2 = snapToTile(B.position);
+
+              // Variable 3 — where the ball is aimed right now
+              let passEndpoint: Vec2 = A.command!.targetPosition
+                ? snapToTile(A.command!.targetPosition)
+                : receiverDestination;
+
+              // Loop: try to match passEndpoint to one of the two valid targets
+              let resolved = false;
+              const candidates: Vec2[] = [receiverDestination, receiverCurrentTile];
+              for (const candidate of candidates) {
+                if (vec2Dist(passEndpoint, candidate) < 2) {
+                  passEndpoint = candidate;   // already correct
+                  resolved = true;
+                  break;
+                }
+              }
+              if (!resolved) {
+                // Neither matched — lead the pass to receiver's destination
+                passEndpoint = receiverDestination;
+              }
+
+              player.command = { ...A.command!, targetPosition: passEndpoint };
             }
           }
           executePass(player, ball, rng);
