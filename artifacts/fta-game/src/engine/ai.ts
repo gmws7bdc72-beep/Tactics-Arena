@@ -6,6 +6,11 @@ import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER
 
 export type AiTier = 1 | 2 | 3;
 
+
+
+
+
+
 // ─── Anti-loopback tracker ─────────────────────────────────────────────────
 // Module-level state: records the last 3 commands per AI player so we can
 // detect repetitive ping-pong passing and force deviation.
@@ -233,27 +238,49 @@ function leadPassTarget(ballPos: Vec2, target: SimPlayer): Vec2 {
 }
 
 function passTo(target: SimPlayer, _ballPos?: Vec2): Command {
-  return { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } };
+  const targetTile = target.command?.targetPosition
+    ? posToTile(target.command.targetPosition)
+    : posToTile(target.position);
+
+  return {
+    type: CommandType.PASS,
+    targetPlayerId: target.id,
+    targetPosition: tileToPos(targetTile.col, targetTile.row),
+  };
 }
 
 // Pass and immediately run into space after — a "pass and run" combo command.
 // The carrier passes to `target` then moves to `runTile`.
 function passAndRun(target: SimPlayer, runTile: TilePos, _ballPos?: Vec2): Command {
+  const targetTile = target.command?.targetPosition
+    ? posToTile(target.command.targetPosition)
+    : posToTile(target.position);
+
   return {
     type: CommandType.PASS,
     targetPlayerId: target.id,
-    targetPosition: { ...target.position },
-    followUp: { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) },
+    targetPosition: tileToPos(targetTile.col, targetTile.row),
+    followUp: {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(runTile.col, runTile.row),
+    },
   };
 }
-
 // Move to `destTile` then immediately fire a pass to `target` — a "run and pass" combo.
 // The simulation fires the pass instantly on arrival so the ball travels the full distance.
 function moveAndPass(destTile: TilePos, target: SimPlayer): Command {
+  const targetTile = target.command?.targetPosition
+    ? posToTile(target.command.targetPosition)
+    : posToTile(target.position);
+
   return {
     type: CommandType.MOVE,
     targetPosition: tileToPos(destTile.col, destTile.row),
-    followUp: { type: CommandType.PASS, targetPlayerId: target.id, targetPosition: { ...target.position } },
+    followUp: {
+      type: CommandType.PASS,
+      targetPlayerId: target.id,
+      targetPosition: tileToPos(targetTile.col, targetTile.row),
+    },
   };
 }
 
@@ -552,7 +579,7 @@ function getPlayerStyle(player: SimPlayer): PlayerStyle {
   const { passing, attack, defense, speed } = player.stats;
   const { role } = player;
   // Fast attackers lurk in the danger zone waiting for the ball
-  if ((role === "striker" || role === "forward") && speed >= 7) return "poacher";
+  if ((role === "striker" || role === "forward") && speed >= 7) return "balanced";
   // High passing stat → always looking to distribute
   if (passing >= 7) return "passer";
   // High attack, low-ish passing → wants to carry the ball
@@ -1357,42 +1384,590 @@ export function generateAICommands(
       }
     }
 
-    // Anti-loopback: break same-target pass loops AND bilateral A↔B ping-pong.
-    const cmdTargetId = cmd.type === CommandType.PASS
+  if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
+    cmd = defenseBuffCommand(
+      player,
+      cmd,
+      pt,
+      aiPlayers,
+      playerPlayers,
+      ball,
+      ballTile,
+      claimed,
+      friendly,
+    );
+  }
+
+  // Anti-loopback
+  const cmdTargetId =
+    cmd.type === CommandType.PASS
       ? ("targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null)
       : null;
-    const isLooping = isLoopingPass(player.id, cmd)
-      || (cmdTargetId !== null && isBilateralPingPong(player.id, cmdTargetId));
 
-    if (isLooping && cmdTargetId) {
-      // Try an alternative pass to ANY other teammate (wider range than normal)
-      const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
-      if (altTarget && altTarget.id !== cmdTargetId) {
-        const altTile = posToTile(altTarget.position);
-        cmd = { type: CommandType.PASS, targetPlayerId: altTarget.id, targetPosition: tileToPos(altTile.col, altTile.row), coordinated: false };
-      } else {
-        // No alternative pass — dribble/clear forward, or hold if GK
-        const isGK = player.role === "goalkeeper";
-        if (!isGK) {
-          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
-          cmd = { type: CommandType.MOVE, targetPosition: tileToPos(fwd, pt.row) };
-        } else {
-          // GK: try a long clearance to any outfield player regardless of range
-          const clearTarget = aiPlayers
-            .filter(p => p.id !== player.id && p.role !== "goalkeeper")
-            .sort((a, b) => posToTile(a.position).col - posToTile(b.position).col)[0];
-          if (clearTarget) {
-            const ct = posToTile(clearTarget.position);
-            cmd = { type: CommandType.PASS, targetPlayerId: clearTarget.id, targetPosition: tileToPos(ct.col, ct.row), coordinated: false };
-          }
-          // If even that fails, GK just holds (keep existing cmd as MOVE to goal line)
-        }
+  const isLooping =
+    isLoopingPass(player.id, cmd) ||
+    (cmdTargetId !== null && isBilateralPingPong(player.id, cmdTargetId));
+
+  if (isLooping && cmdTargetId) {
+    const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
+
+    if (altTarget && altTarget.id !== cmdTargetId) {
+      const altTile = posToTile(altTarget.position);
+      cmd = {
+        type: CommandType.PASS,
+        targetPlayerId: altTarget.id,
+        targetPosition: tileToPos(altTile.col, altTile.row),
+        coordinated: false,
+      };
+    } else {
+      const isGK = player.role === "goalkeeper";
+
+      if (!isGK) {
+        const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
+        cmd = {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(fwd, pt.row),
+        };
       }
     }
+  }
 
-    logCommand(player.id, cmd);
-    commands.set(player.id, cmd);
+    if (
+      player.role !== "goalkeeper" &&
+      aiHasBall &&
+      hasBall
+    ) {
+      cmd = possessionRiskBuffCommand(
+        player,
+        cmd,
+        aiPlayers,
+        playerPlayers,
+      );
+    }
+  
+  logCommand(player.id, cmd);
+  commands.set(player.id, cmd);
+  }
+
+  // FINAL PASS TARGET CLEANUP
+  for (const [id, cmd] of commands) {
+  if (cmd.type === CommandType.PASS && cmd.targetPlayerId) {
+    const receiverCmd = commands.get(cmd.targetPlayerId);
+    const receiver = aiPlayers.find((p) => p.id === cmd.targetPlayerId);
+
+    if (receiver) {
+      const wantedTile =
+        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
+          ? posToTile(receiverCmd.targetPosition)
+          : posToTile(receiver.position);
+
+      const finalTile = receiverReachableTile(receiver, wantedTile);
+      const finalTarget = tileToPos(finalTile.col, finalTile.row);
+
+      commands.set(id, {
+        ...cmd,
+        targetPosition: finalTarget,
+      });
+
+      commands.set(cmd.targetPlayerId, {
+        type: CommandType.MOVE,
+        targetPosition: finalTarget,
+      });
+    }
+  }
+
+  if (
+    cmd.type === CommandType.MOVE &&
+    cmd.followUp?.type === CommandType.PASS &&
+    cmd.followUp.targetPlayerId
+  ) {
+    const receiverCmd = commands.get(cmd.followUp.targetPlayerId);
+    const receiver = aiPlayers.find(
+      (p) => p.id === cmd.followUp!.targetPlayerId,
+    );
+
+    if (receiver) {
+      const wantedTile =
+        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
+          ? posToTile(receiverCmd.targetPosition)
+          : posToTile(receiver.position);
+
+      const finalTile = receiverReachableTile(receiver, wantedTile);
+      const finalTarget = tileToPos(finalTile.col, finalTile.row);
+
+      commands.set(id, {
+        ...cmd,
+        followUp: {
+          ...cmd.followUp,
+          targetPosition: finalTarget,
+        },
+      });
+
+      commands.set(cmd.followUp.targetPlayerId, {
+        type: CommandType.MOVE,
+        targetPosition: finalTarget,
+      });
+    }
+  }
   }
 
   return commands;
+  }
+// ─── END-SCRIPT DEFENSE BUFF V3 ─────────────────────────────────────────────
+
+function defenseBuffCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  pt: TilePos,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  ball: SimBall,
+  ballTile: TilePos,
+  claimed: Set<string>,
+  friendly: Set<string>,
+): Command {
+  const carrier = playerPlayers.find((p) => p.id === ball.ownerId);
+
+  // Even when AI has the ball, defenders still stay back and mark danger.
+  if (!carrier) {
+    if (player.role === "defender") {
+      const highestThreat = getHighestManThreat(playerPlayers);
+
+      if (highestThreat) {
+        const laneTile = getPassLaneBlockTile(highestThreat.tile, highestThreat.tile);
+        return moveStep(player, pt, laneTile, claimed, friendly);
+      }
+    }
+
+    return currentCmd;
+  }
+
+  const futureBallTile = predictFutureBallTile(carrier, playerPlayers, ballTile);
+  const threats = getDangerousAttackers(playerPlayers, carrier, futureBallTile);
+
+  if (player.role === "goalkeeper") return currentCmd;
+
+  if (player.role === "defender") {
+    const assignedThreat = assignThreatToPlayer(player, aiPlayers, threats, "defender");
+
+    if (assignedThreat) {
+      const laneTile = getPassLaneBlockTile(assignedThreat.tile, futureBallTile);
+      return moveStep(player, pt, laneTile, claimed, friendly);
+    }
+
+    return currentCmd;
+  }
+
+  if (player.role === "midfielder") {
+    const closestPresser = getClosestPresser(aiPlayers, futureBallTile);
+
+    if (closestPresser?.id === player.id) {
+      return interceptFutureBallTile(player, pt, futureBallTile, claimed, friendly);
+    }
+
+    const assignedThreat = assignThreatToPlayer(player, aiPlayers, threats, "midfielder");
+
+    if (assignedThreat) {
+      const laneTile = getPassLaneBlockTile(assignedThreat.tile, futureBallTile);
+      return moveStep(player, pt, laneTile, claimed, friendly);
+    }
+
+    return currentCmd;
+  }
+
+  if (player.role === "forward" || player.role === "striker") {
+    const closestPresser = getClosestPresser(aiPlayers, futureBallTile);
+
+    if (closestPresser?.id === player.id) {
+      return interceptFutureBallTile(player, pt, futureBallTile, claimed, friendly);
+    }
+
+    return moveStep(
+      player,
+      pt,
+      {
+        col: Math.max(0, futureBallTile.col - 1),
+        row: futureBallTile.row,
+      },
+      claimed,
+      friendly,
+    );
+  }
+
+  return currentCmd;
+}
+
+interface ThreatInfo {
+  player: SimPlayer;
+  tile: TilePos;
+  score: number;
+}
+
+function getDangerousAttackers(
+  playerPlayers: SimPlayer[],
+  carrier: SimPlayer,
+  futureBallTile: TilePos,
+): ThreatInfo[] {
+  const goalRow = Math.floor(GRID_ROWS / 2);
+
+  return playerPlayers
+    .filter((p) => p.role !== "goalkeeper" && p.id !== carrier.id)
+    .map((p) => {
+      const tile = posToTile(p.position);
+
+      const advance = tile.col * 2.2;
+      const centrality = (GRID_ROWS - Math.abs(tile.row - goalRow)) * 1.6;
+      const nearFutureBall = (GRID_COLS - chebDist(tile, futureBallTile)) * 1.4;
+      const boxDanger = tile.col >= GRID_COLS - 5 ? 10 : 0;
+      const receiverIntent =
+        p.command?.type === CommandType.MOVE && p.command.targetPosition ? 4 : 0;
+
+      const score =
+        advance +
+        centrality +
+        nearFutureBall +
+        boxDanger +
+        receiverIntent;
+
+      return { player: p, tile, score };
+    })
+    .sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.tile.col !== b.tile.col) return b.tile.col - a.tile.col;
+      return a.tile.row - b.tile.row;
+    });
+}
+
+function assignThreatToPlayer(
+  player: SimPlayer,
+  aiPlayers: SimPlayer[],
+  threats: ThreatInfo[],
+  role: "defender" | "midfielder",
+): ThreatInfo | null {
+  if (threats.length === 0) return null;
+
+  const group = aiPlayers
+    .filter((p) => p.role === role)
+    .sort(
+      (a, b) =>
+        posToTile(a.position).row - posToTile(b.position).row,
+    );
+
+  const idx = group.findIndex((p) => p.id === player.id);
+  if (idx < 0) return null;
+
+  const sortedThreats = [...threats].sort((a, b) => {
+    const colGap = Math.abs(a.tile.col - b.tile.col);
+
+    // If attackers are basically equally high, split by row.
+    if (colGap <= 1) {
+      return a.tile.row - b.tile.row;
+    }
+
+    // Otherwise prioritize actual danger score.
+    if (a.score !== b.score) return b.score - a.score;
+
+    return a.tile.row - b.tile.row;
+  });
+
+  return sortedThreats[idx] ?? sortedThreats[sortedThreats.length - 1] ?? null;
+}
+
+function getPassLaneBlockTile(
+  attackerTile: TilePos,
+  futureBallTile: TilePos,
+): TilePos {
+  const goalRow = Math.floor(GRID_ROWS / 2);
+
+  return {
+    col: Math.min(
+      GRID_COLS - 1,
+      Math.round(
+        attackerTile.col * 0.5 +
+        futureBallTile.col * 0.3 +
+        (GRID_COLS - 1) * 0.2,
+      ),
+    ),
+    row: Math.max(
+      0,
+      Math.min(
+        GRID_ROWS - 1,
+        Math.round(
+          attackerTile.row * 0.6 +
+          futureBallTile.row * 0.2 +
+          goalRow * 0.2,
+        ),
+      ),
+    ),
+  };
+}
+
+function getClosestPresser(
+  aiPlayers: SimPlayer[],
+  futureBallTile: TilePos,
+): SimPlayer | null {
+  return (
+    aiPlayers
+      .filter((p) => p.role !== "goalkeeper" && p.role !== "defender")
+      .sort(
+        (a, b) =>
+          chebDist(posToTile(a.position), futureBallTile) -
+          chebDist(posToTile(b.position), futureBallTile),
+      )[0] ?? null
+  );
+}
+
+function predictFutureBallTile(
+  carrier: SimPlayer,
+  playerPlayers: SimPlayer[],
+  ballTile: TilePos,
+): TilePos {
+  const carrierTile = posToTile(carrier.position);
+  const cmd = carrier.command;
+
+  if (cmd?.type === CommandType.PASS) {
+    if (cmd.targetPlayerId) {
+      const receiver = playerPlayers.find((p) => p.id === cmd.targetPlayerId);
+
+      if (receiver?.command?.targetPosition) {
+        return receiverReachableTile(
+          receiver,
+          posToTile(receiver.command.targetPosition),
+        );
+      }
+
+      if (receiver) return posToTile(receiver.position);
+    }
+
+    if (cmd.targetPosition) return posToTile(cmd.targetPosition);
+  }
+
+  if (cmd?.type === CommandType.MOVE && cmd.targetPosition) {
+    return receiverReachableTile(carrier, posToTile(cmd.targetPosition));
+  }
+
+  return {
+    col: Math.min(GRID_COLS - 1, carrierTile.col + 1),
+    row: carrierTile.row,
+  };
+}
+
+function interceptFutureBallTile(
+  player: SimPlayer,
+  from: TilePos,
+  futureBallTile: TilePos,
+  claimed: Set<string>,
+  friendly: Set<string>,
+): Command {
+  const interceptTile = {
+    col: Math.min(GRID_COLS - 1, futureBallTile.col + 1),
+    row: futureBallTile.row,
+  };
+
+  return moveStep(player, from, interceptTile, claimed, friendly);
+}
+
+function receiverReachableTile(receiver: SimPlayer, wantedTile: TilePos): TilePos {
+  const from = posToTile(receiver.position);
+  const maxStep = speedToTiles(receiver.stats.speed);
+
+  const dc = Math.sign(wantedTile.col - from.col);
+  const dr = Math.sign(wantedTile.row - from.row);
+
+  return {
+    col: Math.max(
+      0,
+      Math.min(
+        GRID_COLS - 1,
+        from.col + dc * Math.min(maxStep, Math.abs(wantedTile.col - from.col)),
+      ),
+    ),
+    row: Math.max(
+      0,
+      Math.min(
+        GRID_ROWS - 1,
+        from.row + dr * Math.min(maxStep, Math.abs(wantedTile.row - from.row)),
+      ),
+    ),
+  };
+}
+
+// ─── END-SCRIPT POSSESSION RISK BUFF V1 ─────────────────────────────────────
+
+function predictPlayerReachTiles(playerPlayers: SimPlayer[]): Set<string> {
+  const danger = new Set<string>();
+
+  for (const p of playerPlayers) {
+    const t = posToTile(p.position);
+    const range = speedToTiles(p.stats.speed);
+    const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId);
+
+    for (const r of reachable) {
+      danger.add(tileKey(r.col, r.row));
+    }
+  }
+
+  return danger;
+}
+
+function isPassRiskyNextTurn(
+  fromTile: TilePos,
+  toTile: TilePos,
+  playerPlayers: SimPlayer[],
+): boolean {
+  const playerReach = predictPlayerReachTiles(playerPlayers);
+
+  if (playerReach.has(tileKey(toTile.col, toTile.row))) {
+    return true;
+  }
+
+  const steps = Math.max(
+    Math.abs(toTile.col - fromTile.col),
+    Math.abs(toTile.row - fromTile.row),
+  );
+
+  for (let i = 1; i < steps; i++) {
+    const frac = i / steps;
+    const col = Math.round(fromTile.col + frac * (toTile.col - fromTile.col));
+    const row = Math.round(fromTile.row + frac * (toTile.row - fromTile.row));
+
+    if (playerReach.has(tileKey(col, row))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isReceiverTrapRisk(
+  receiverTile: TilePos,
+  playerPlayers: SimPlayer[],
+): boolean {
+  let nearby = 0;
+
+  for (const p of playerPlayers) {
+    const pt = posToTile(p.position);
+
+    if (chebDist(pt, receiverTile) <= 2) {
+      nearby++;
+    }
+  }
+
+  return nearby >= 2;
+}
+
+function bestSafeForwardPass(
+  carrier: SimPlayer,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  maxDist: number = 8,
+): SimPlayer | null {
+  const ct = posToTile(carrier.position);
+
+  const candidates = aiPlayers
+    .filter((p) => p.id !== carrier.id && p.role !== "goalkeeper")
+    .map((p) => ({ p, t: posToTile(p.position) }))
+    .filter(({ t }) => t.col < ct.col)
+    .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
+    .filter(({ p }) => !isAIPlayerOffside(p, playerPlayers))
+    .filter(({ t }) => !isPassRiskyNextTurn(ct, t, playerPlayers))
+    .filter(({ t }) => !isReceiverTrapRisk(t, playerPlayers))
+    .sort((a, b) => {
+      return a.t.col - b.t.col;
+    });
+
+  return candidates[0]?.p ?? null;
+}
+
+function bestSafeAnyPass(
+  carrier: SimPlayer,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  maxDist: number = 8,
+): SimPlayer | null {
+  const ct = posToTile(carrier.position);
+
+  const candidates = aiPlayers
+    .filter((p) => p.id !== carrier.id)
+    .map((p) => ({ p, t: posToTile(p.position) }))
+    .filter(({ t }) => tileDist(t, ct) <= maxDist)
+    .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
+    .filter(({ t }) => !isPassRiskyNextTurn(ct, t, playerPlayers))
+    .filter(({ t }) => !isReceiverTrapRisk(t, playerPlayers))
+    .sort((a, b) => {
+      const aForward = a.t.col < ct.col ? 0 : 1;
+      const bForward = b.t.col < ct.col ? 0 : 1;
+
+      if (aForward !== bForward) return aForward - bForward;
+
+      return a.t.col - b.t.col;
+    });
+
+  return candidates[0]?.p ?? null;
+}
+
+function possessionRiskBuffCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+): Command {
+  if (currentCmd.type !== CommandType.PASS) return currentCmd;
+
+  const fromTile = posToTile(player.position);
+  const targetTile = posToTile(currentCmd.targetPosition);
+
+  const risky =
+    isPassRiskyNextTurn(fromTile, targetTile, playerPlayers) ||
+    isReceiverTrapRisk(targetTile, playerPlayers);
+
+  if (!risky) return currentCmd;
+
+  const saferTarget =
+    bestSafeForwardPass(player, aiPlayers, playerPlayers, 8) ??
+    bestSafeAnyPass(player, aiPlayers, playerPlayers, 10);
+
+  if (saferTarget) {
+    const safeTile = posToTile(saferTarget.position);
+
+    return {
+      type: CommandType.PASS,
+      targetPlayerId: saferTarget.id,
+      targetPosition: tileToPos(safeTile.col, safeTile.row),
+      coordinated: false,
+    };
+  }
+
+  const pt = posToTile(player.position);
+
+  return {
+    type: CommandType.MOVE,
+    targetPosition: tileToPos(
+      Math.max(0, pt.col - speedToTiles(player.stats.speed)),
+      pt.row,
+    ),
+  };
+}
+
+
+function getHighestManThreat(playerPlayers: SimPlayer[]): ThreatInfo | null {
+  const goalRow = Math.floor(GRID_ROWS / 2);
+
+  const highest = playerPlayers
+    .filter((p) => p.role !== "goalkeeper")
+    .map((p) => {
+      const tile = posToTile(p.position);
+
+      const centrality = GRID_ROWS - Math.abs(tile.row - goalRow);
+      const score = tile.col * 3 + centrality;
+
+      return { player: p, tile, score };
+    })
+    .sort((a, b) => {
+      if (a.tile.col !== b.tile.col) return b.tile.col - a.tile.col;
+      return a.tile.row - b.tile.row;
+    })[0];
+
+  return highest ?? null;
 }
