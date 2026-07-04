@@ -8,6 +8,7 @@ interface Props {
   onStartMatch: () => void;
   onGoToTeamSetup: () => void;
   onGoToCustomize: () => void;
+  onGoToProfiles: () => void;
   onResetSeason: () => void;
   onTwoPlayer: () => void;
   onOnline: () => void;
@@ -93,6 +94,7 @@ export default function Home({
   onStartMatch,
   onGoToTeamSetup,
   onGoToCustomize,
+  onGoToProfiles,
   onResetSeason,
   onTwoPlayer,
   onOnline,
@@ -446,6 +448,14 @@ export default function Home({
             Customize
           </button>
         </div>
+
+        <button
+          onClick={onGoToProfiles}
+          className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:bg-white/10 active:scale-95"
+          style={{ background: "rgba(0,180,216,0.10)", border: "1px solid rgba(0,180,216,0.25)", color: "#67e8f9" }}
+        >
+          Team Profiles · Stats + Tactics
+        </button>
 
         {/* Restart season */}
         <button

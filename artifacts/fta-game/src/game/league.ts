@@ -1,5 +1,4 @@
-import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch, PlayoffMatch, PlayoffBracket, MatchdayResult } from "../engine/types";
-import { tileToPos } from "../engine/grid";
+import type { PlayerCard, LeagueTeamEntry, LeagueState, ScheduledMatch, PlayoffMatch, PlayoffBracket, MatchdayResult, TeamTactic, TeamTacticId, PlayerStats } from "../engine/types";
 
 export interface AITeamDef {
   id: string;
@@ -10,19 +9,121 @@ export interface AITeamDef {
   jerseyColor: string;
   secondaryColor: string;
   crestIcon: string;
+  tacticId: TeamTacticId;
+  tactic: TeamTactic;
 }
 
-// Uniform tier-1 template used by every AI team — everyone plays at max level.
-const TIER1_TEMPLATE = {
-  formationId: "1-2-1",
-  players: [
-    { name: "GK",   role: "goalkeeper" as const, stats: { attack: 3, defense: 9,  passing: 6, speed: 4, luck: 6 }, ability: "goalkeeper" as const,  jerseyNumber: 1 },
-    { name: "DEF",  role: "defender" as const,   stats: { attack: 5, defense: 9,  passing: 6, speed: 7, luck: 6 }, ability: "iron_tackle" as const, jerseyNumber: 5 },
-    { name: "MID1", role: "midfielder" as const, stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "eagle_eye" as const,   jerseyNumber: 8 },
-    { name: "MID2", role: "midfielder" as const, stats: { attack: 7, defense: 7,  passing: 8, speed: 7, luck: 7 }, ability: "bullet_pass" as const, jerseyNumber: 6 },
-    { name: "FWD",  role: "striker" as const,    stats: { attack: 10, defense: 3, passing: 5, speed: 9, luck: 8 }, ability: "ghost_run" as const,   jerseyNumber: 9 },
-  ],
+const s = (stats: PlayerStats): PlayerStats => stats;
+
+export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
+  slow_possession: {
+    id: "slow_possession",
+    name: "Slow Possession Progression",
+    description: "Patient buildup, recycling passes, low-risk short combinations, and a deep rest defender.",
+    tempo: 2,
+    risk: 2,
+    pressIntensity: 4,
+    defensiveLine: 5,
+    longBallFrequency: 1,
+    restDefenseDepth: 5,
+    progression: "slow",
+  },
+  balanced_build_up: {
+    id: "balanced_build_up",
+    name: "Balanced Build-Up",
+    description: "Mixes short passing, controlled dribbles, and selective forward passes.",
+    tempo: 5,
+    risk: 5,
+    pressIntensity: 5,
+    defensiveLine: 6,
+    longBallFrequency: 3,
+    restDefenseDepth: 4,
+    progression: "balanced",
+  },
+  direct_play: {
+    id: "direct_play",
+    name: "Direct Play",
+    description: "Gets the ball forward early, looks for vertical passes, and uses long diagonals when space opens.",
+    tempo: 7,
+    risk: 6,
+    pressIntensity: 5,
+    defensiveLine: 6,
+    longBallFrequency: 6,
+    restDefenseDepth: 4,
+    progression: "direct",
+  },
+  counter_press: {
+    id: "counter_press",
+    name: "Counter Press",
+    description: "Aggressive high pressure after losing the ball, fast regain attempts, then quick vertical combinations.",
+    tempo: 7,
+    risk: 7,
+    pressIntensity: 9,
+    defensiveLine: 8,
+    longBallFrequency: 4,
+    restDefenseDepth: 4,
+    progression: "direct",
+  },
+  low_block_counter: {
+    id: "low_block_counter",
+    name: "Low Block Counter",
+    description: "Sits deep, protects the box, then launches direct counters into space.",
+    tempo: 6,
+    risk: 5,
+    pressIntensity: 3,
+    defensiveLine: 3,
+    longBallFrequency: 7,
+    restDefenseDepth: 6,
+    progression: "counter",
+  },
+  quick_counterattack: {
+    id: "quick_counterattack",
+    name: "Quick Counterattack",
+    description: "Fast break football: first look is forward, second look is a runner behind the line.",
+    tempo: 9,
+    risk: 8,
+    pressIntensity: 6,
+    defensiveLine: 5,
+    longBallFrequency: 7,
+    restDefenseDepth: 5,
+    progression: "counter",
+  },
+  wide_crossing: {
+    id: "wide_crossing",
+    name: "Wide Crossing",
+    description: "Moves the ball wide, hits diagonal aerial balls, and attacks the far post.",
+    tempo: 6,
+    risk: 6,
+    pressIntensity: 5,
+    defensiveLine: 5,
+    longBallFrequency: 6,
+    restDefenseDepth: 4,
+    progression: "direct",
+  },
+  long_ball_target: {
+    id: "long_ball_target",
+    name: "Long-Ball Target Man",
+    description: "Goalkeeper and defenders launch aerial balls toward a strong target forward.",
+    tempo: 7,
+    risk: 7,
+    pressIntensity: 4,
+    defensiveLine: 4,
+    longBallFrequency: 9,
+    restDefenseDepth: 6,
+    progression: "direct",
+  },
 };
+
+function player(
+  id: string,
+  name: string,
+  role: PlayerCard["role"],
+  jerseyNumber: number,
+  stats: PlayerStats,
+  ability: PlayerCard["ability"] = "none",
+): PlayerCard {
+  return { id, name, role, jerseyNumber, stats: s(stats), ability };
+}
 
 function mkTeam(
   id: string,
@@ -30,35 +131,96 @@ function mkTeam(
   jerseyColor: string,
   secondaryColor: string,
   crestIcon: string,
-  prefix: string,
-  formationId: string
+  formationId: string,
+  tacticId: TeamTacticId,
+  players: PlayerCard[],
 ): AITeamDef {
   return {
     id,
     name,
     tier: 1,
     formationId,
+    tacticId,
+    tactic: TEAM_TACTICS[tacticId],
     jerseyColor,
     secondaryColor,
     crestIcon,
-    players: TIER1_TEMPLATE.players.map((p, i) => ({
-      ...p,
-      id: `${prefix}${i + 1}`,
-      name: `${p.name}${i + 1}`,
-    })),
+    players,
   };
 }
 
 export const AI_TEAMS: AITeamDef[] = [
-  mkTeam("fc_ironforge",   "FC Ironforge",    "#1a237e", "#ffcc00",  "⚔️", "ig", "2-1-1"), // defensive fortress
-  mkTeam("the_vanguard",   "The Vanguard",    "#880e4f", "#ffffff",  "🛡️", "tv", "2-1-1"), // disciplined block
-  mkTeam("titanium_fc",    "Titanium FC",     "#37474f", "#eceff1",  "⚡", "ti", "1-2-1"), // balanced
-  mkTeam("northern_wolves","Northern Wolves", "#1b5e20", "#ffffff",  "🐺", "nw", "1-1-2"), // aggressive press
-  mkTeam("silver_city",    "Silver City",     "#546e7a", "#cfd8dc",  "🏙️", "sc", "1-2-1"), // balanced
-  mkTeam("river_phoenix",  "River Phoenix",   "#bf360c", "#ffccbc",  "🔥", "rp", "1-1-2"), // attack-minded
-  mkTeam("rooksville_fc",  "Rooksville FC",   "#f57f17", "#ffffff",  "🌱", "rf", "1-2-1"), // balanced default
-  mkTeam("the_underdogs",  "The Underdogs",   "#6a1b9a", "#e1bee7",  "🐕", "ud", "1-1-2"), // nothing to lose
-  mkTeam("coastal_fc",     "Coastal FC",      "#006064", "#b2ebf2",  "🌊", "cf", "2-1-1"), // compact and cautious
+  mkTeam("fc_ironforge", "FC Ironforge", "#1a237e", "#ffcc00", "⚔️", "2-1-1", "low_block_counter", [
+    player("ig_gk", "Bram Vale", "goalkeeper", 1, { attack: 2, defense: 9, passing: 6, speed: 4, luck: 7, shooting: 2, dribbling: 3, tackling: 5, marking: 9, stamina: 8, strength: 9, vision: 6, longPassing: 7, aerial: 9 }, "goalkeeper"),
+    player("ig_cb1", "Otto Forge", "defender", 5, { attack: 3, defense: 10, passing: 5, speed: 5, luck: 5, shooting: 3, dribbling: 4, tackling: 10, marking: 10, stamina: 9, strength: 10, vision: 5, longPassing: 6, aerial: 10 }, "iron_tackle"),
+    player("ig_cb2", "Kellan Pike", "defender", 4, { attack: 4, defense: 9, passing: 6, speed: 6, luck: 5, shooting: 3, dribbling: 5, tackling: 9, marking: 9, stamina: 8, strength: 9, vision: 6, longPassing: 7, aerial: 9 }, "shadow_mark"),
+    player("ig_mid", "Rafe Anvil", "midfielder", 6, { attack: 6, defense: 8, passing: 7, speed: 6, luck: 6, shooting: 5, dribbling: 6, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 7, longPassing: 7, aerial: 7 }, "powerhouse"),
+    player("ig_st", "Milo Hammer", "striker", 9, { attack: 8, defense: 4, passing: 5, speed: 7, luck: 6, shooting: 8, dribbling: 6, tackling: 4, marking: 5, stamina: 7, strength: 9, vision: 5, longPassing: 5, aerial: 9 }, "powerhouse"),
+  ]),
+
+  mkTeam("the_vanguard", "The Vanguard", "#880e4f", "#ffffff", "🛡️", "2-1-1", "slow_possession", [
+    player("tv_gk", "Soren Gate", "goalkeeper", 1, { attack: 3, defense: 9, passing: 8, speed: 4, luck: 7, shooting: 2, dribbling: 4, tackling: 5, marking: 8, stamina: 8, strength: 8, vision: 8, longPassing: 7, aerial: 9 }, "goalkeeper"),
+    player("tv_def1", "Leon Ward", "defender", 2, { attack: 4, defense: 9, passing: 8, speed: 6, luck: 6, shooting: 4, dribbling: 6, tackling: 9, marking: 9, stamina: 9, strength: 8, vision: 8, longPassing: 8, aerial: 8 }, "shadow_mark"),
+    player("tv_def2", "Nico Barr", "defender", 3, { attack: 3, defense: 9, passing: 7, speed: 5, luck: 5, shooting: 3, dribbling: 5, tackling: 9, marking: 10, stamina: 8, strength: 9, vision: 7, longPassing: 7, aerial: 9 }, "iron_tackle"),
+    player("tv_cm", "Ilan Tempo", "midfielder", 8, { attack: 7, defense: 7, passing: 10, speed: 6, luck: 8, shooting: 6, dribbling: 8, tackling: 7, marking: 7, stamina: 9, strength: 6, vision: 10, longPassing: 8, aerial: 5 }, "bullet_pass"),
+    player("tv_fw", "Ezra Link", "forward", 10, { attack: 8, defense: 5, passing: 9, speed: 7, luck: 7, shooting: 8, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 9, longPassing: 7, aerial: 6 }, "eagle_eye"),
+  ]),
+
+  mkTeam("titanium_fc", "Titanium FC", "#37474f", "#eceff1", "⚡", "1-2-1", "balanced_build_up", [
+    player("ti_gk", "Axel Prime", "goalkeeper", 1, { attack: 3, defense: 9, passing: 7, speed: 5, luck: 6, shooting: 2, dribbling: 4, tackling: 5, marking: 8, stamina: 8, strength: 8, vision: 7, longPassing: 8, aerial: 9 }, "goalkeeper"),
+    player("ti_def", "Dane Steel", "defender", 5, { attack: 4, defense: 9, passing: 7, speed: 6, luck: 5, shooting: 4, dribbling: 5, tackling: 9, marking: 9, stamina: 8, strength: 9, vision: 7, longPassing: 7, aerial: 8 }, "iron_tackle"),
+    player("ti_cm1", "Orin Spark", "midfielder", 6, { attack: 7, defense: 7, passing: 8, speed: 8, luck: 7, shooting: 7, dribbling: 8, tackling: 7, marking: 7, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "powerhouse"),
+    player("ti_cm2", "Vik Pulse", "midfielder", 8, { attack: 7, defense: 6, passing: 9, speed: 7, luck: 8, shooting: 6, dribbling: 8, tackling: 6, marking: 7, stamina: 8, strength: 6, vision: 9, longPassing: 8, aerial: 5 }, "bullet_pass"),
+    player("ti_st", "Jett Core", "striker", 9, { attack: 9, defense: 3, passing: 6, speed: 9, luck: 7, shooting: 9, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "ghost_run"),
+  ]),
+
+  mkTeam("northern_wolves", "Northern Wolves", "#1b5e20", "#ffffff", "🐺", "1-1-2", "counter_press", [
+    player("nw_gk", "Rune Frost", "goalkeeper", 1, { attack: 3, defense: 8, passing: 7, speed: 5, luck: 7, shooting: 2, dribbling: 4, tackling: 5, marking: 8, stamina: 8, strength: 8, vision: 7, longPassing: 8, aerial: 8 }, "goalkeeper"),
+    player("nw_def", "Hugo Fang", "defender", 4, { attack: 5, defense: 9, passing: 6, speed: 8, luck: 5, shooting: 4, dribbling: 6, tackling: 9, marking: 8, stamina: 10, strength: 8, vision: 6, longPassing: 7, aerial: 7 }, "shadow_mark"),
+    player("nw_cm", "Koa Hunt", "midfielder", 6, { attack: 7, defense: 9, passing: 7, speed: 9, luck: 6, shooting: 6, dribbling: 7, tackling: 9, marking: 9, stamina: 10, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "iron_tackle"),
+    player("nw_fw1", "Lars Howl", "forward", 11, { attack: 8, defense: 5, passing: 7, speed: 9, luck: 7, shooting: 8, dribbling: 8, tackling: 5, marking: 6, stamina: 9, strength: 7, vision: 7, longPassing: 6, aerial: 6 }, "ghost_run"),
+    player("nw_fw2", "Mika Snow", "striker", 9, { attack: 9, defense: 4, passing: 6, speed: 9, luck: 7, shooting: 9, dribbling: 8, tackling: 4, marking: 5, stamina: 9, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "eagle_eye"),
+  ]),
+
+  mkTeam("silver_city", "Silver City", "#546e7a", "#cfd8dc", "🏙️", "1-2-1", "wide_crossing", [
+    player("sc_gk", "Noah Quay", "goalkeeper", 1, { attack: 3, defense: 8, passing: 7, speed: 5, luck: 6, shooting: 2, dribbling: 4, tackling: 5, marking: 8, stamina: 8, strength: 8, vision: 7, longPassing: 8, aerial: 8 }, "goalkeeper"),
+    player("sc_def", "Arlo Pier", "defender", 3, { attack: 5, defense: 8, passing: 8, speed: 7, luck: 6, shooting: 4, dribbling: 6, tackling: 8, marking: 8, stamina: 8, strength: 7, vision: 8, longPassing: 9, aerial: 7 }, "bullet_pass"),
+    player("sc_wm1", "Ciro Lane", "midfielder", 7, { attack: 7, defense: 6, passing: 8, speed: 9, luck: 7, shooting: 6, dribbling: 9, tackling: 6, marking: 6, stamina: 9, strength: 6, vision: 8, longPassing: 8, aerial: 5 }, "ghost_run"),
+    player("sc_wm2", "Enzo Vale", "midfielder", 11, { attack: 7, defense: 6, passing: 9, speed: 8, luck: 7, shooting: 6, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 6, vision: 9, longPassing: 9, aerial: 5 }, "bullet_pass"),
+    player("sc_st", "Tomas Spire", "striker", 9, { attack: 9, defense: 3, passing: 6, speed: 7, luck: 7, shooting: 9, dribbling: 7, tackling: 3, marking: 4, stamina: 8, strength: 9, vision: 6, longPassing: 6, aerial: 10 }, "powerhouse"),
+  ]),
+
+  mkTeam("river_phoenix", "River Phoenix", "#bf360c", "#ffccbc", "🔥", "1-1-2", "quick_counterattack", [
+    player("rp_gk", "Ash Calder", "goalkeeper", 1, { attack: 4, defense: 8, passing: 7, speed: 5, luck: 7, shooting: 2, dribbling: 4, tackling: 5, marking: 7, stamina: 8, strength: 8, vision: 7, longPassing: 9, aerial: 8 }, "goalkeeper"),
+    player("rp_def", "Bryn Ember", "defender", 4, { attack: 5, defense: 8, passing: 7, speed: 8, luck: 5, shooting: 4, dribbling: 6, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 7, longPassing: 8, aerial: 7 }, "shadow_mark"),
+    player("rp_mid", "Kai Flash", "midfielder", 8, { attack: 8, defense: 6, passing: 8, speed: 9, luck: 7, shooting: 7, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "ghost_run"),
+    player("rp_fw", "Rian Flare", "forward", 7, { attack: 9, defense: 4, passing: 7, speed: 10, luck: 7, shooting: 8, dribbling: 9, tackling: 4, marking: 5, stamina: 9, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "ghost_run"),
+    player("rp_st", "Sol Blaze", "striker", 9, { attack: 10, defense: 3, passing: 6, speed: 9, luck: 8, shooting: 10, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "eagle_eye"),
+  ]),
+
+  mkTeam("rooksville_fc", "Rooksville FC", "#f57f17", "#ffffff", "🌱", "1-2-1", "direct_play", [
+    player("rf_gk", "Pax Reed", "goalkeeper", 1, { attack: 3, defense: 8, passing: 6, speed: 4, luck: 8, shooting: 2, dribbling: 4, tackling: 5, marking: 7, stamina: 8, strength: 8, vision: 6, longPassing: 8, aerial: 8 }, "goalkeeper"),
+    player("rf_def", "Owen Root", "defender", 5, { attack: 4, defense: 8, passing: 7, speed: 6, luck: 7, shooting: 4, dribbling: 5, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 7, longPassing: 8, aerial: 8 }, "iron_tackle"),
+    player("rf_mid1", "Theo Grove", "midfielder", 6, { attack: 7, defense: 7, passing: 8, speed: 7, luck: 7, shooting: 6, dribbling: 7, tackling: 7, marking: 7, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "bullet_pass"),
+    player("rf_mid2", "Jude Acres", "midfielder", 8, { attack: 7, defense: 6, passing: 7, speed: 8, luck: 8, shooting: 7, dribbling: 8, tackling: 6, marking: 6, stamina: 8, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "powerhouse"),
+    player("rf_fw", "Finn Rush", "forward", 9, { attack: 8, defense: 4, passing: 6, speed: 9, luck: 8, shooting: 8, dribbling: 8, tackling: 4, marking: 5, stamina: 8, strength: 7, vision: 7, longPassing: 6, aerial: 7 }, "ghost_run"),
+  ]),
+
+  mkTeam("the_underdogs", "The Underdogs", "#6a1b9a", "#e1bee7", "🐕", "1-1-2", "quick_counterattack", [
+    player("ud_gk", "Remy Scraps", "goalkeeper", 1, { attack: 3, defense: 8, passing: 6, speed: 5, luck: 9, shooting: 2, dribbling: 4, tackling: 5, marking: 7, stamina: 8, strength: 7, vision: 6, longPassing: 7, aerial: 8 }, "goalkeeper"),
+    player("ud_def", "Gus Chain", "defender", 4, { attack: 4, defense: 8, passing: 5, speed: 7, luck: 8, shooting: 4, dribbling: 5, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 5, longPassing: 6, aerial: 8 }, "iron_tackle"),
+    player("ud_mid", "Nash Bite", "midfielder", 6, { attack: 7, defense: 6, passing: 7, speed: 8, luck: 9, shooting: 6, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "powerhouse"),
+    player("ud_fw1", "Zeke Dash", "forward", 7, { attack: 8, defense: 3, passing: 6, speed: 10, luck: 8, shooting: 8, dribbling: 9, tackling: 3, marking: 4, stamina: 8, strength: 6, vision: 6, longPassing: 6, aerial: 5 }, "ghost_run"),
+    player("ud_fw2", "Bo Chance", "striker", 9, { attack: 8, defense: 3, passing: 5, speed: 8, luck: 10, shooting: 8, dribbling: 7, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 6, longPassing: 5, aerial: 8 }, "eagle_eye"),
+  ]),
+
+  mkTeam("coastal_fc", "Coastal FC", "#006064", "#b2ebf2", "🌊", "2-1-1", "long_ball_target", [
+    player("cf_gk", "Marin Deep", "goalkeeper", 1, { attack: 4, defense: 8, passing: 8, speed: 5, luck: 6, shooting: 2, dribbling: 4, tackling: 5, marking: 8, stamina: 8, strength: 8, vision: 8, longPassing: 10, aerial: 9 }, "goalkeeper"),
+    player("cf_cb1", "Cruz Tide", "defender", 5, { attack: 4, defense: 9, passing: 7, speed: 6, luck: 6, shooting: 4, dribbling: 5, tackling: 9, marking: 9, stamina: 8, strength: 9, vision: 7, longPassing: 9, aerial: 9 }, "bullet_pass"),
+    player("cf_cb2", "Ivo Rock", "defender", 3, { attack: 3, defense: 9, passing: 6, speed: 5, luck: 5, shooting: 3, dribbling: 4, tackling: 9, marking: 9, stamina: 8, strength: 10, vision: 6, longPassing: 8, aerial: 10 }, "iron_tackle"),
+    player("cf_mid", "Luca Harbor", "midfielder", 8, { attack: 7, defense: 7, passing: 8, speed: 7, luck: 7, shooting: 6, dribbling: 7, tackling: 7, marking: 7, stamina: 8, strength: 7, vision: 8, longPassing: 9, aerial: 6 }, "bullet_pass"),
+    player("cf_st", "Atlas Bay", "striker", 9, { attack: 9, defense: 4, passing: 5, speed: 7, luck: 7, shooting: 9, dribbling: 6, tackling: 4, marking: 5, stamina: 8, strength: 10, vision: 6, longPassing: 5, aerial: 10 }, "powerhouse"),
+  ]),
 ];
 
 /**

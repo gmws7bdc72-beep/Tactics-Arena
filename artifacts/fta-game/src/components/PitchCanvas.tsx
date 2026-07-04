@@ -527,21 +527,26 @@ export default function PitchCanvas({
     }
 
     // Ball
-    const bp = tp(frame.ball.position);
+    const bpGround = tp(frame.ball.position);
     const bv = frame.ball.velocity;
     const spd = Math.sqrt(bv.x * bv.x + bv.y * bv.y);
+    const ballHeight = frame.ball.height ?? 0;
+    const heightOffset = tr(ballHeight);
+    const bp = { x: bpGround.x, y: bpGround.y - heightOffset };
+    const isLongBall = frame.ball.passStyle === "long" && ballHeight > 1;
 
     if (phase === "simulating" && spd > 25) {
-      const trailEnd = tp({
+      const trailEndGround = tp({
         x: frame.ball.position.x - bv.x * 0.06,
         y: frame.ball.position.y - bv.y * 0.06,
       });
+      const trailEnd = { x: trailEndGround.x, y: trailEndGround.y - heightOffset * 0.65 };
       const grad = ctx.createLinearGradient(trailEnd.x, trailEnd.y, bp.x, bp.y);
       grad.addColorStop(0, "rgba(255,255,255,0)");
-      grad.addColorStop(1, "rgba(255,255,255,0.35)");
+      grad.addColorStop(1, isLongBall ? "rgba(255,235,59,0.48)" : "rgba(255,255,255,0.35)");
       ctx.beginPath();
       ctx.strokeStyle = grad;
-      ctx.lineWidth = tr(BALL_RADIUS * 0.9);
+      ctx.lineWidth = tr(isLongBall ? BALL_RADIUS * 1.25 : BALL_RADIUS * 0.9);
       ctx.lineCap = "round";
       ctx.moveTo(trailEnd.x, trailEnd.y);
       ctx.lineTo(bp.x, bp.y);
@@ -549,14 +554,23 @@ export default function PitchCanvas({
       ctx.lineCap = "butt";
     }
 
-    ctx.shadowColor = "#ffffff";
-    ctx.shadowBlur = 8;
+    if (isLongBall) {
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.ellipse(bpGround.x, bpGround.y + tr(3), tr(BALL_RADIUS * 1.7), tr(BALL_RADIUS * 0.7), 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#000000";
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.shadowColor = isLongBall ? "#ffeb3b" : "#ffffff";
+    ctx.shadowBlur = isLongBall ? 14 : 8;
     ctx.beginPath();
-    ctx.arc(bp.x, bp.y, tr(BALL_RADIUS), 0, Math.PI * 2);
+    ctx.arc(bp.x, bp.y, tr(isLongBall ? BALL_RADIUS * 1.15 : BALL_RADIUS), 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
     ctx.fill();
-    ctx.strokeStyle = "#999";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = isLongBall ? "#ffeb3b" : "#999";
+    ctx.lineWidth = isLongBall ? 2 : 1;
     ctx.stroke();
     ctx.shadowBlur = 0;
   }, [frame, playerTeam, aiTeamColor, aiTeamSecondaryColor, pendingCommands, selectedPlayerId, passTargetMode, passOriginPos, phase, isVertical, buildTileMap]);

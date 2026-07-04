@@ -24,6 +24,8 @@ export enum CommandType {
   SHOOT = "SHOOT",
 }
 
+export type PassStyle = "ground" | "long";
+
 export interface Command {
   type: CommandType;
   targetPosition?: Vec2;
@@ -32,6 +34,8 @@ export interface Command {
   /** When true the pass is a planned coordinated play — skip accuracy deviation so
    *  the ball lands exactly on the announced tile, matching the runner's move target. */
   coordinated?: boolean;
+  /** "long" makes the ball fly over the lane instead of travelling as a floor pass. */
+  passStyle?: PassStyle;
 }
 
 export interface PlayerStats {
@@ -40,6 +44,38 @@ export interface PlayerStats {
   passing: number;
   speed: number;
   luck: number;
+  shooting: number;
+  dribbling: number;
+  tackling: number;
+  marking: number;
+  stamina: number;
+  strength: number;
+  vision: number;
+  longPassing: number;
+  aerial: number;
+}
+
+export type TeamTacticId =
+  | "slow_possession"
+  | "balanced_build_up"
+  | "direct_play"
+  | "counter_press"
+  | "low_block_counter"
+  | "quick_counterattack"
+  | "wide_crossing"
+  | "long_ball_target";
+
+export interface TeamTactic {
+  id: TeamTacticId;
+  name: string;
+  description: string;
+  tempo: number;
+  risk: number;
+  pressIntensity: number;
+  defensiveLine: number;
+  longBallFrequency: number;
+  restDefenseDepth: number;
+  progression: "slow" | "balanced" | "direct" | "counter";
 }
 
 export type AbilityId =
@@ -94,6 +130,10 @@ export interface SimBall {
   /** If set, ball is in a "pass animation" and will snap to this position
    *  when it reaches the closest point or slows to a stop. */
   passTarget?: Vec2;
+  /** Visual height in pixels. Ground passes keep this at 0; long balls arc upward. */
+  height?: number;
+  passStyle?: PassStyle;
+  passStart?: Vec2;
 }
 
 export enum GameEventType {
@@ -139,6 +179,8 @@ export interface FrameSnapshot {
     ownerId: string | null;
     /** Preserved from the previous turn when a pass was still in flight at turn end. */
     passTarget?: Vec2;
+    height?: number;
+    passStyle?: PassStyle;
   };
   events: GameEvent[];
 }
