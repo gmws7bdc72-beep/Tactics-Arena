@@ -70,6 +70,7 @@ function makeInitPlayers(p1Team: TeamSummary, p2Team: TeamSummary): { players: S
     position: { ...kickoffOwner.position },
     velocity: { x: 0, y: 0 },
     ownerId: kickoffOwner.id,
+    height: 0,
   };
   return { players: [...p1Players, ...p2Players], ball };
 }
@@ -139,7 +140,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       if (!fp) return p;
       return { ...p, position: { ...fp.position }, velocity: { ...fp.velocity }, state: fp.state, command: null, commandExecuted: false };
     });
-    const newBall = { position: { ...lastFrame.ball.position }, velocity: { ...lastFrame.ball.velocity }, ownerId: lastFrame.ball.ownerId };
+    const newBall = { position: { ...lastFrame.ball.position }, velocity: { ...lastFrame.ball.velocity }, ownerId: lastFrame.ball.ownerId, height: 0, passStyle: undefined, passStart: undefined };
     setPlayers(newPlayers);
     playersRef.current = newPlayers;
     setBall(newBall);
@@ -407,7 +408,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       role: p.role,
       tileRange: speedToTiles(p.stats.speed),
     })),
-    ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId },
+    ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
     events: [],
   };
 

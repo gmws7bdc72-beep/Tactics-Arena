@@ -178,7 +178,7 @@ function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
 }
 
 interface BallTracker {
-  type: "pass" | "shot" | null;
+  type: "pass" | "long_pass" | "shot" | null;
   teamId: "player" | "ai" | null;
   playerId: string | null;
   name: string | null;
@@ -216,6 +216,14 @@ export function runSimulation(
           targetPosition: p.command.targetPosition
             ? { ...p.command.targetPosition }
             : undefined,
+          followUp: p.command.followUp
+            ? {
+                ...p.command.followUp,
+                targetPosition: p.command.followUp.targetPosition
+                  ? { ...p.command.followUp.targetPosition }
+                  : undefined,
+              }
+            : undefined,
         }
       : null,
   }));
@@ -226,6 +234,9 @@ export function runSimulation(
     ownerId: ball.ownerId,
     // Carry forward any mid-flight pass from the previous turn so it completes.
     passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
+    height: ball.height ?? 0,
+    passStyle: ball.passStyle,
+    passStart: ball.passStart ? { ...ball.passStart } : undefined,
   };
 
   // Snap all players to tile centers at start of turn
@@ -503,6 +514,8 @@ function snapshotFrame(
       velocity: { ...ball.velocity },
       ownerId: ball.ownerId,
       passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
+      height: ball.height ?? 0,
+      passStyle: ball.passStyle,
     },
     events: [...events],
   };
@@ -566,7 +579,7 @@ function updatePlayerMovement(
 
       if (player.stateTimer <= 0) {
         if (player.state === PlayerState.PASSING) {
-          passTracker.type = "pass";
+          passTracker.type = player.command?.passStyle === "long" ? "long_pass" : "pass";
           passTracker.teamId = player.teamId;
           passTracker.playerId = player.id;
           passTracker.name = player.name;
@@ -720,7 +733,7 @@ function updatePlayerMovement(
 
         player.commandExecuted = true;
 
-        passTracker.type = "pass";
+        passTracker.type = player.command?.passStyle === "long" ? "long_pass" : "pass";
         passTracker.teamId = player.teamId;
         passTracker.playerId = player.id;
         passTracker.name = player.name;
@@ -774,22 +787,42 @@ function updatePlayerMovement(
 function executePass(
   player: SimPlayer,
   ball: SimBall,
-  _rng: () => number,
+  rng: () => number,
 ): void {
   const cmd = player.command;
   if (!cmd || cmd.type !== CommandType.PASS) return;
 
-  const targetPos = cmd.targetPosition ?? {
+  const isLongBall = cmd.passStyle === "long";
+  let targetPos = cmd.targetPosition ?? {
     x: PITCH_WIDTH / 2,
     y: PITCH_HEIGHT / 2,
   };
 
+  if (isLongBall && !cmd.coordinated) {
+    const longPassing = typeof player.stats.longPassing === "number" ? player.stats.longPassing : player.stats.passing;
+    const vision = typeof player.stats.vision === "number" ? player.stats.vision : player.stats.passing;
+    const errorTiles = Math.max(0, 3 - Math.floor((longPassing + vision) / 5));
+    if (errorTiles > 0) {
+      const targetTile = posToTile(targetPos);
+      const dc = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
+      const dr = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
+      targetPos = tileToPos(
+        clamp(targetTile.col + dc, 0, GRID_COLS - 1),
+        clamp(targetTile.row + dr, 0, GRID_ROWS - 1),
+      );
+    }
+  }
+
   let passSpd = PASS_SPEED;
   if (player.ability === "bullet_pass") passSpd *= 1.5;
+  if (isLongBall) passSpd *= 1.12;
 
   const dir = vec2Normalize(vec2Sub(targetPos, ball.position));
   ball.velocity = vec2Scale(dir, passSpd);
   ball.passTarget = { ...targetPos };
+  ball.passStart = { ...ball.position };
+  ball.passStyle = isLongBall ? "long" : "ground";
+  ball.height = isLongBall ? 1 : 0;
   ball.ownerId = null;
 }
 
@@ -810,16 +843,33 @@ function executeShot(
   const dir = vec2Normalize(vec2Sub({ x: goalX, y: targetY }, ball.position));
   ball.velocity = vec2Scale(dir, shotSpd);
   ball.ownerId = null;
+  ball.height = 0;
+  ball.passStyle = undefined;
+  ball.passStart = undefined;
 }
 
 function updateBallPhysics(ball: SimBall, dt: number): void {
-  if (ball.ownerId !== null) return;
+  if (ball.ownerId !== null) {
+    ball.height = 0;
+    ball.passStyle = undefined;
+    ball.passStart = undefined;
+    return;
+  }
 
   if (ball.passTarget) {
     const distBefore = vec2Dist(ball.position, ball.passTarget);
 
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
     ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+
+    if (ball.passStyle === "long" && ball.passStart) {
+      const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
+      const travelled = vec2Dist(ball.passStart, ball.position);
+      const progress = clamp(travelled / totalDist, 0, 1);
+      ball.height = Math.sin(progress * Math.PI) * 34;
+    } else {
+      ball.height = 0;
+    }
 
     const distAfter = vec2Dist(ball.position, ball.passTarget);
 
@@ -831,13 +881,20 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
       ball.position = { ...ball.passTarget };
       ball.velocity = { x: 0, y: 0 };
       ball.passTarget = undefined;
+      ball.height = 0;
+      ball.passStyle = undefined;
+      ball.passStart = undefined;
     }
   } else {
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
     ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+    ball.height = Math.max(0, (ball.height ?? 0) * 0.88);
 
     if (vec2Len(ball.velocity) < 2) {
       ball.velocity = { x: 0, y: 0 };
+      ball.passStyle = undefined;
+      ball.passStart = undefined;
+      ball.height = 0;
     }
   }
 }
@@ -854,8 +911,11 @@ function detectAndResolveEvents(
     const candidates: { player: SimPlayer; score: number }[] = [];
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
+      const longBallHigh = ball.passStyle === "long" && (ball.height ?? 0) > 9;
+      const nearLanding = ball.passTarget ? vec2Dist(player.position, ball.passTarget) < INTERCEPTION_RADIUS * 1.15 : true;
       if (
         dist < INTERCEPTION_RADIUS &&
+        (!longBallHigh || nearLanding) &&
         player.state !== PlayerState.RECOVERING
       ) {
         const velTowardBall =
@@ -867,7 +927,14 @@ function detectAndResolveEvents(
             : 0;
         let score = (INTERCEPTION_RADIUS - dist) / INTERCEPTION_RADIUS;
         score += Math.max(0, velTowardBall) * 0.3;
-        score += (player.stats.defense / 10) * 0.2;
+        if (ball.passStyle === "long") {
+          const aerial = typeof player.stats.aerial === "number" ? player.stats.aerial : player.stats.attack;
+          const strength = typeof player.stats.strength === "number" ? player.stats.strength : 5;
+          score += (aerial / 10) * 0.35;
+          score += (strength / 10) * 0.15;
+        } else {
+          score += (player.stats.defense / 10) * 0.2;
+        }
         score += rng() * (player.stats.luck / 10) * 0.2;
         if (player.ability === "iron_tackle") score += 0.15;
         if (player.ability === "goalkeeper") score += 0.35;
@@ -915,6 +982,9 @@ function detectAndResolveEvents(
           ball.ownerId = loser.id;
           ball.velocity = { x: 0, y: 0 };
           ball.passTarget = undefined;
+          ball.height = 0;
+          ball.passStyle = undefined;
+          ball.passStart = undefined;
           loser.state = PlayerState.DRIBBLING;
           winner.state = PlayerState.RECOVERING;
           winner.recoveryTimer = 1.0;
@@ -940,7 +1010,7 @@ function detectAndResolveEvents(
                 playerId: loser.id,
                 targetId: passTracker.playerId ?? undefined,
                 teamId: loser.teamId,
-                message: `${loser.name} intercepts the pass!`,
+                message: passTracker.type === "long_pass" ? `${loser.name} wins the aerial ball!` : `${loser.name} intercepts the pass!`,
               });
             }
           } else {
@@ -964,7 +1034,7 @@ function detectAndResolveEvents(
 
       // Offside check: use snapshot taken at the moment the pass was kicked.
       // Players who were onside when the pass was played can always receive it.
-      if (passTracker.type === "pass" && passTracker.teamId === winner.teamId) {
+      if ((passTracker.type === "pass" || passTracker.type === "long_pass") && passTracker.teamId === winner.teamId) {
         if (passTracker.offsideIds.has(winner.id)) {
           // Capture the exact tile where the offside player received the ball
           const receptionPos = { ...winner.position };
@@ -999,6 +1069,9 @@ function detectAndResolveEvents(
           ball.ownerId = fkTaker.id;
           ball.velocity = { x: 0, y: 0 };
           ball.passTarget = undefined;
+          ball.height = 0;
+          ball.passStyle = undefined;
+          ball.passStart = undefined;
 
           // Return the offside player to their match-start position
           winner.position = { ...winner.startPosition };
@@ -1019,6 +1092,9 @@ function detectAndResolveEvents(
       ball.ownerId = winner.id;
       ball.velocity = { x: 0, y: 0 };
       ball.passTarget = undefined;
+      ball.height = 0;
+      ball.passStyle = undefined;
+      ball.passStart = undefined;
       winner.state = PlayerState.DRIBBLING;
 
       if (loser && loser.teamId !== winner.teamId) {
@@ -1035,7 +1111,7 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
-            message: `${passTracker.name} → ${winner.name}`,
+            message: passTracker.type === "long_pass" ? `${passTracker.name} launches it → ${winner.name}` : `${passTracker.name} → ${winner.name}`,
           });
         } else if (
           passTracker.type === "shot" &&
@@ -1056,7 +1132,7 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
-            message: `${winner.name} intercepts!`,
+            message: passTracker.type === "long_pass" ? `${winner.name} wins the aerial ball!` : `${winner.name} intercepts!`,
           });
         }
         passTracker.type = null;
@@ -1181,6 +1257,9 @@ function detectAndResolveEvents(
         // Tackler wins the ball.
         ball.ownerId = other.id;
         ball.velocity = { x: 0, y: 0 };
+        ball.height = 0;
+        ball.passStyle = undefined;
+        ball.passStart = undefined;
         other.state = PlayerState.DRIBBLING;
         other.command = null;
         other.commandExecuted = false;

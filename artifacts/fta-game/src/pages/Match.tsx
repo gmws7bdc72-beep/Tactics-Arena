@@ -60,7 +60,7 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       role: p.role,
       tileRange: speedToTiles(p.stats.speed),
     })),
-    ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId },
+    ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
     events: [],
   };
 }
@@ -129,7 +129,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     const kickoffGK = Math.random() < 0.5
       ? pl.find(p => p.role === "goalkeeper") ?? pl[0]
       : ai.find(p => p.role === "goalkeeper") ?? ai[0];
-    const ball: SimBall = { position: { ...kickoffGK.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffGK.id };
+    const ball: SimBall = { position: { ...kickoffGK.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffGK.id, height: 0 };
     return { players: [...pl, ...ai], ball };
   })());
 
@@ -329,14 +329,14 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         newSimPlayers.find(p => p.teamId === concedingTeamId && p.role === "goalkeeper") ??
         newSimPlayers.find(p => p.teamId === concedingTeamId);
       newBall = concedingGK
-        ? { position: { ...concedingGK.position }, velocity: { x: 0, y: 0 }, ownerId: concedingGK.id }
-        : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null };
+        ? { position: { ...concedingGK.position }, velocity: { x: 0, y: 0 }, ownerId: concedingGK.id, height: 0 }
+        : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null, height: 0 };
     } else {
       // Zero velocity so the planning phase always starts with a stationary ball.
       // If the simulation ended with the ball still rolling (a pass that didn't
       // reach its target in 60 ticks), snap it to passTarget immediately so the
       // planning UI always shows the ball at the correct destination tile.
-      newBall = { ...lastFrame.ball, velocity: { x: 0, y: 0 } };
+      newBall = { ...lastFrame.ball, velocity: { x: 0, y: 0 }, height: 0, passStyle: undefined, passStart: undefined };
       if (newBall.passTarget) {
         newBall = { ...newBall, position: { ...newBall.passTarget }, passTarget: undefined };
       }
@@ -419,7 +419,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     } else {
       const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
       const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
-      const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current);
+      const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current, opponentTeamDef.tactic);
       withCommands = currentPlayers.map(p => {
         const cmd = p.teamId === "player"
           ? currentPending.get(p.id) ?? null
@@ -431,7 +431,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     const seed = Date.now() % 99999;
     const { frames, events } = runSimulation(withCommands, currentBall, seed);
     playbackFrames(frames, events);
-  }, [playbackFrames, aiTier, twoPlayer]);
+  }, [playbackFrames, aiTier, opponentTeamDef.tactic, twoPlayer]);
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;

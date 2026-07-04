@@ -8,6 +8,7 @@ import Match from "./pages/Match";
 import PostMatch from "./pages/PostMatch";
 import OnlineLobby from "./pages/OnlineLobby";
 import OnlineMatch from "./pages/OnlineMatch";
+import TeamProfiles from "./pages/TeamProfiles";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
   getAITeamDef,
@@ -20,7 +21,7 @@ import {
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
 
-type Screen = "home" | "team-setup" | "customize" | "match" | "post-match" | "two-player-match" | "online-lobby" | "online-match";
+type Screen = "home" | "team-setup" | "customize" | "team-profiles" | "match" | "post-match" | "two-player-match" | "online-lobby" | "online-match";
 
 interface OnlineGameConfig {
   myRole: "p1" | "p2";
@@ -209,9 +210,22 @@ export default function App() {
           onStartMatch={handleStartMatch}
           onGoToTeamSetup={() => setScreen("team-setup")}
           onGoToCustomize={() => setScreen("customize")}
+          onGoToProfiles={() => setScreen("team-profiles")}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
+        />
+      </div>
+    );
+  }
+
+
+  if (screen === "team-profiles") {
+    return (
+      <div className="max-w-md mx-auto min-h-screen">
+        <TeamProfiles
+          playerTeam={team}
+          onBack={() => setScreen("home")}
         />
       </div>
     );
@@ -346,6 +360,7 @@ export default function App() {
         onStartMatch={handleStartMatch}
         onGoToTeamSetup={() => setScreen("team-setup")}
         onGoToCustomize={() => setScreen("customize")}
+        onGoToProfiles={() => setScreen("team-profiles")}
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}
         onOnline={() => setScreen("online-lobby")}
