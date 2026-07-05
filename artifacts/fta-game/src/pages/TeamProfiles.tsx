@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PlayerCard, PlayerStats, TeamConfig, TeamTactic } from "../engine/types";
 import { AI_TEAMS, TEAM_TACTICS } from "../game/league";
 import { STAT_LABELS } from "../game/players";
 
 interface Props {
   playerTeam: TeamConfig;
+  initialTeamId?: string;
   onBack: () => void;
 }
 
@@ -63,7 +64,7 @@ function tacticBar(label: string, value: number, color: string) {
   );
 }
 
-export default function TeamProfiles({ playerTeam, onBack }: Props) {
+export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Props) {
   const teams = useMemo<ProfileTeam[]>(() => [
     {
       id: "player_team",
@@ -88,7 +89,13 @@ export default function TeamProfiles({ playerTeam, onBack }: Props) {
     })),
   ], [playerTeam]);
 
-  const [selectedId, setSelectedId] = useState(teams[0]?.id ?? "player_team");
+  const defaultSelectedId = initialTeamId ?? teams[0]?.id ?? "player_team";
+  const [selectedId, setSelectedId] = useState(defaultSelectedId);
+
+  useEffect(() => {
+    setSelectedId(defaultSelectedId);
+  }, [defaultSelectedId]);
+
   const selected = teams.find((team) => team.id === selectedId) ?? teams[0];
 
   return (
