@@ -329,28 +329,6 @@ export default function Home({
           <div className="text-white text-sm font-bold mb-2">League Table</div>
 
           <div className="flex gap-2 items-stretch">
-            <div
-              style={{
-                width: 32,
-                minHeight: 120,
-                flexShrink: 0,
-                background: "#2563eb",
-                border: "3px solid #38bdf8",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                writingMode: "vertical-rl",
-                color: "#fff",
-                fontSize: 9,
-                fontWeight: 700,
-                letterSpacing: 1,
-                padding: "4px 0",
-              }}
-            >
-              VISIBLE LEAGUE TEST
-            </div>
-
             <div className="flex-1 min-w-0 rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
               <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
                 <span>Club</span>
