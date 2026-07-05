@@ -5,7 +5,7 @@ import type { PlayerCard } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
 import { getFormationById, getAIFormationById } from "../game/formations";
 import {
-  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles,
+  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles, PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
@@ -58,10 +58,10 @@ function makeInitPlayers(p1Team: TeamSummary, p2Team: TeamSummary): { players: S
   const p1Formation = getFormationById(p1Team.formationId);
   const p2Formation = getAIFormationById(p2Team.formationId);
 
-  const p1Players = p1Team.players.slice(0, 5).map((card, i) =>
+  const p1Players = p1Team.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
     makeSimPlayer(card, "player", p1Formation.positions[i] ?? { x: PITCH_WIDTH * 0.2, y: PITCH_HEIGHT / 2 })
   );
-  const p2Players = p2Team.players.slice(0, 5).map((card, i) =>
+  const p2Players = p2Team.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
     makeSimPlayer(card, "ai", p2Formation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
   );
 

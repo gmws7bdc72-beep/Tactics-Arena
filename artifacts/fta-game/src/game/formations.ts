@@ -3,23 +3,23 @@ import { TILE_W, TILE_H } from "../engine/constants";
 
 const tc = (col: number, row: number) => ({ x: (col + 0.5) * TILE_W, y: (row + 0.5) * TILE_H });
 
-// 5v5 formations: GK + 4 outfield (positions[0] = GK)
+// 6v6 formations: GK + 5 outfield (positions[0] = GK)
 // Player team: attacks right (col 15), GK at col 0, own half = cols 0-7
 export const FORMATIONS: Formation[] = [
   {
     id: "1-1-2",
     name: "1-1-2 (Attack)",
-    positions: [tc(0, 4), tc(3, 4), tc(5, 4), tc(7, 2), tc(7, 6)],
+    positions: [tc(0, 4), tc(3, 4), tc(4, 2), tc(5, 4), tc(7, 2), tc(7, 6)],
   },
   {
     id: "2-1-1",
     name: "2-1-1 (Defend)",
-    positions: [tc(0, 4), tc(3, 2), tc(3, 6), tc(5, 4), tc(7, 4)],
+    positions: [tc(0, 4), tc(3, 2), tc(3, 6), tc(5, 4), tc(7, 3), tc(7, 5)],
   },
   {
     id: "1-2-1",
     name: "1-2-1 (Balance)",
-    positions: [tc(0, 4), tc(3, 4), tc(5, 2), tc(5, 6), tc(7, 4)],
+    positions: [tc(0, 4), tc(3, 4), tc(5, 2), tc(5, 6), tc(7, 3), tc(7, 5)],
   },
 ];
 
@@ -28,17 +28,17 @@ export const AI_FORMATIONS: Formation[] = [
   {
     id: "ai-1-1-2",
     name: "1-1-2",
-    positions: [tc(15, 4), tc(12, 4), tc(10, 4), tc(8, 2), tc(8, 6)],
+    positions: [tc(15, 4), tc(12, 4), tc(11, 2), tc(10, 4), tc(8, 2), tc(8, 6)],
   },
   {
     id: "ai-2-1-1",
     name: "2-1-1",
-    positions: [tc(15, 4), tc(12, 2), tc(12, 6), tc(10, 4), tc(8, 4)],
+    positions: [tc(15, 4), tc(12, 2), tc(12, 6), tc(10, 4), tc(8, 3), tc(8, 5)],
   },
   {
     id: "ai-1-2-1",
     name: "1-2-1",
-    positions: [tc(15, 4), tc(12, 4), tc(10, 2), tc(10, 6), tc(8, 4)],
+    positions: [tc(15, 4), tc(12, 4), tc(10, 2), tc(10, 6), tc(8, 3), tc(8, 5)],
   },
 ];
 

@@ -1415,6 +1415,16 @@ export function generateAICommands(
     planRef,
   );
 
+  cmd = shootingBuffCommand(
+    player,
+    cmd,
+    pt,
+    hasBall,
+    aiHasBall,
+    playerPlayers,
+    tactic,
+  );
+
   if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
     cmd = defenseBuffCommand(
       player,
@@ -1627,6 +1637,54 @@ function shouldAttemptLongBall(player: SimPlayer, pt: TilePos, tactic: TeamTacti
   if (tactic.id === "long_ball_target" && pt.col >= 4) return true;
 
   return Math.random() < tactic.longBallFrequency / 18;
+}
+
+
+function isShotLaneOpenForAI(fromTile: TilePos, playerPlayers: SimPlayer[]): boolean {
+  const goalRow = Math.floor(GRID_ROWS / 2);
+  return !playerPlayers.some((opp) => {
+    const ot = posToTile(opp.position);
+    const betweenCarrierAndGoal = ot.col < fromTile.col && ot.col >= 0;
+    const nearGoalLane = Math.abs(ot.row - fromTile.row) <= 1 || Math.abs(ot.row - goalRow) <= 1;
+    return betweenCarrierAndGoal && nearGoalLane && tileDist(ot, fromTile) <= 4;
+  });
+}
+
+function shouldLetItRip(player: SimPlayer, pt: TilePos, playerPlayers: SimPlayer[], tactic: TeamTactic): boolean {
+  if (player.role === "goalkeeper") return false;
+
+  const goalRow = Math.floor(GRID_ROWS / 2);
+  const shooting = statOr(player.stats.shooting, statOr(player.stats.attack, 5));
+  const attack = statOr(player.stats.attack, shooting);
+  const centralBonus = Math.max(0, 3 - Math.abs(pt.row - goalRow)) * 0.08;
+  const openLane = isShotLaneOpenForAI(pt, playerPlayers);
+  const pressure = isHardPressed(pt, playerPlayers);
+
+  if (pt.col <= 2) return true;
+  if (pt.col <= 3 && shooting >= 5) return Math.random() < 0.88;
+  if (pt.col <= 4 && openLane) return Math.random() < Math.min(0.82, 0.46 + shooting * 0.045 + centralBonus);
+  if (pt.col <= 5 && openLane && shooting >= 7) return Math.random() < Math.min(0.62, 0.26 + shooting * 0.035 + centralBonus);
+  if (pt.col <= 6 && openLane && !pressure && shooting >= 8 && attack >= 8) {
+    const tacticBonus = tactic.id === "quick_counterattack" || tactic.id === "direct_play" ? 0.08 : 0;
+    return Math.random() < 0.22 + tacticBonus + centralBonus;
+  }
+
+  return false;
+}
+
+function shootingBuffCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  pt: TilePos,
+  hasBall: boolean,
+  aiHasBall: boolean,
+  playerPlayers: SimPlayer[],
+  tactic: TeamTactic,
+): Command {
+  if (!aiHasBall || !hasBall) return currentCmd;
+  if (currentCmd.type === CommandType.SHOOT) return currentCmd;
+  if (shouldLetItRip(player, pt, playerPlayers, tactic)) return shoot();
+  return currentCmd;
 }
 
 function tacticBuffCommand(

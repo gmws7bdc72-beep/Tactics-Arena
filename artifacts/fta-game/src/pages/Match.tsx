@@ -7,7 +7,7 @@ import { generateAICommands } from "../engine/ai";
 import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS, PLAYERS_PER_TEAM } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
@@ -119,10 +119,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       };
     }
     const p1Players = p1Source ? p1Source.players : team.players;
-    const pl = p1Players.slice(0, 5).map((card, i) =>
+    const pl = p1Players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
       makeSimPlayer(card, "player", playerFormation.positions[i] ?? { x: PITCH_WIDTH * 0.2, y: PITCH_HEIGHT / 2 })
     );
-    const ai = opponentTeamDef.players.slice(0, 5).map((card, i) =>
+    const ai = opponentTeamDef.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
       makeSimPlayer(card, "ai", aiFormation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
     );
     // 50/50 kickoff — random regardless of home/away

@@ -55,12 +55,17 @@ export const ALL_PLAYERS: PlayerCard[] = [
   { id: "p2", name: "Muller",   role: "forward", jerseyNumber: 10, ability: "bullet_pass", stats: createStats({ attack: 8, defense: 5, passing: 9, speed: 7, luck: 8, shooting: 8, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 10, longPassing: 8, aerial: 6 }) },
   { id: "p5", name: "Vinicius", role: "forward", jerseyNumber: 7,  ability: "ghost_run", stats: createStats({ attack: 9, defense: 3, passing: 7, speed: 10, luck: 7, shooting: 8, dribbling: 10, tackling: 3, marking: 4, stamina: 8, strength: 6, vision: 7, longPassing: 6, aerial: 5 }) },
   { id: "p8", name: "Mbappe",   role: "striker", jerseyNumber: 10, ability: "ghost_run", stats: createStats({ attack: 10, defense: 3, passing: 7, speed: 10, luck: 7, shooting: 10, dribbling: 9, tackling: 3, marking: 4, stamina: 9, strength: 8, vision: 8, longPassing: 7, aerial: 7 }) },
+
+  { id: "p13", name: "Gvardiol", role: "defender", jerseyNumber: 24, ability: "shadow_mark", stats: createStats({ attack: 5, defense: 9, passing: 7, speed: 7, luck: 5, shooting: 4, dribbling: 6, tackling: 9, marking: 9, stamina: 8, strength: 8, vision: 7, longPassing: 7, aerial: 8 }) },
+  { id: "p14", name: "Valverde", role: "midfielder", jerseyNumber: 15, ability: "powerhouse", stats: createStats({ attack: 8, defense: 8, passing: 8, speed: 9, luck: 7, shooting: 8, dribbling: 8, tackling: 8, marking: 8, stamina: 10, strength: 8, vision: 8, longPassing: 8, aerial: 7 }) },
+  { id: "p15", name: "Saka", role: "forward", jerseyNumber: 7, ability: "ghost_run", stats: createStats({ attack: 9, defense: 5, passing: 8, speed: 9, luck: 8, shooting: 8, dribbling: 9, tackling: 5, marking: 5, stamina: 9, strength: 6, vision: 8, longPassing: 7, aerial: 5 }) },
 ];
 
 export function getDefaultSquad(): PlayerCard[] {
   return [
     ALL_PLAYERS.find(p => p.id === "gk_neuer")!,
     ALL_PLAYERS.find(p => p.id === "p4")!,
+    ALL_PLAYERS.find(p => p.id === "p7")!,
     ALL_PLAYERS.find(p => p.id === "p3")!,
     ALL_PLAYERS.find(p => p.id === "p5")!,
     ALL_PLAYERS.find(p => p.id === "p1")!,
