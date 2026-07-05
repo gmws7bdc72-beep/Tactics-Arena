@@ -1300,48 +1300,58 @@ export function generateAICommands(
 ): Map<string, Command> {
   const commands = new Map<string, Command>();
 
-  const ballOwner = [...aiPlayers, ...playerPlayers].find(p => p.id === ball.ownerId) ?? null;
+  const ballOwner =
+    [...aiPlayers, ...playerPlayers].find((p) => p.id === ball.ownerId) ??
+    null;
+
   const aiHasBall = ballOwner?.teamId === "ai";
   const playerHasBall = ballOwner?.teamId === "player";
   const ballIsLoose = ball.ownerId === null;
   const ballTile = posToTile(ball.position);
 
-  // Build occupancy sets
   const claimed = new Set<string>();
   const friendly = new Set<string>();
+
   for (const p of aiPlayers) {
     const t = posToTile(p.position);
     friendly.add(tileKey(t.col, t.row));
   }
 
-  // Phase 1 – Project off-ball AI players to their run destinations so the
-  // carrier can pass to those tiles directly (no intercept maths needed).
-  // Only players that are already ahead of the carrier (lower col) get
-  // projected, and only to a lower col than their current position.
-  const carrierTile = aiHasBall && ballOwner ? posToTile(ballOwner.position) : ballTile;
+  const carrierTile =
+    aiHasBall && ballOwner ? posToTile(ballOwner.position) : ballTile;
+
   const projectedAI: SimPlayer[] = aiHasBall
-    ? aiPlayers.map(p => {
-        if (p.id === ball.ownerId) return p;     // carrier: unchanged
-        if (p.role === 'goalkeeper') return p;   // GK: unchanged
+    ? aiPlayers.map((p) => {
+        if (p.id === ball.ownerId) return p;
+        if (p.role === "goalkeeper") return p;
+
         const currentTile = posToTile(p.position);
-        // Players behind or level with the carrier stay put
+
         if (currentTile.col >= carrierTile.col) return p;
-        const roleIdx = aiPlayers.filter(q => q.role === p.role).findIndex(q => q.id === p.id);
+
+        const roleIdx = aiPlayers
+          .filter((q) => q.role === p.role)
+          .findIndex((q) => q.id === p.id);
+
         const projTile = computeRunTarget(p, roleIdx, ballTile, tier);
-        // Only project forward (lower col); never pull a player backward
+
         if (projTile.col >= currentTile.col) return p;
-        return { ...p, position: tileToPos(projTile.col, projTile.row) };
+
+        return {
+          ...p,
+          position: tileToPos(projTile.col, projTile.row),
+        };
       })
     : aiPlayers;
 
-  // Process in priority order: GK → defenders → midfielders → attackers
-  // BUT the ball-carrier always goes first so the pass-to-tile plan is
-  // committed before the designated runner's command is generated.
   const roleOrder = (p: SimPlayer) =>
-    p.role === "goalkeeper" ? 0
-    : p.role === "defender" ? 1
-    : p.role === "midfielder" ? 2
-    : 3;
+    p.role === "goalkeeper"
+      ? 0
+      : p.role === "defender"
+        ? 1
+        : p.role === "midfielder"
+          ? 2
+          : 3;
 
   const sorted = [...aiPlayers].sort((a, b) => {
     if (a.id === ball.ownerId) return -1;
@@ -1349,30 +1359,38 @@ export function generateAICommands(
     return roleOrder(a) - roleOrder(b);
   });
 
-  // Loose ball: all players chase at full speed, closest gets first pick of the ball tile
   if (ballIsLoose) {
     const byProximity = [...sorted].sort(
-      (a, b) => eucDist(a.position, ball.position) - eucDist(b.position, ball.position)
+      (a, b) =>
+        eucDist(a.position, ball.position) -
+        eucDist(b.position, ball.position),
     );
+
     for (const p of byProximity) {
       const pTile = posToTile(p.position);
-      commands.set(p.id, chaseLooseBall(p, pTile, ballTile, claimed, friendly));
+      commands.set(
+        p.id,
+        chaseLooseBall(p, pTile, ballTile, claimed, friendly),
+      );
     }
+
     return commands;
   }
 
-  // Pass-to-tile plan: carrier tier function fills this; runner gets MOVE override.
   const planRef: { current: PassTilePlan | null } = { current: null };
 
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
 
-    // Runner override: if this player was designated as the "run-to-tile" receiver,
-    // send them straight to that tile instead of their normal off-ball movement.
     if (!hasBall && planRef.current?.runnerId === player.id) {
       const { runTile } = planRef.current;
-      commands.set(player.id, { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) });
+
+      commands.set(player.id, {
+        type: CommandType.MOVE,
+        targetPosition: tileToPos(runTile.col, runTile.row),
+      });
+
       continue;
     }
 
@@ -1380,104 +1398,224 @@ export function generateAICommands(
 
     if (aiHasBall) {
       switch (tier) {
-        case 1: cmd = tier1Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
-        case 2: cmd = tier2Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
-        default: cmd = tier3Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
+        case 1:
+          cmd = tier1Possession(
+            player,
+            pt,
+            hasBall,
+            projectedAI,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            planRef,
+          );
+          break;
+
+        case 2:
+          cmd = tier2Possession(
+            player,
+            pt,
+            hasBall,
+            projectedAI,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            planRef,
+          );
+          break;
+
+        default:
+          cmd = tier3Possession(
+            player,
+            pt,
+            hasBall,
+            projectedAI,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            planRef,
+          );
+          break;
       }
     } else if (playerHasBall) {
       switch (tier) {
-        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
-        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
-        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 1:
+          cmd = tier1Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
+
+        case 2:
+          cmd = tier2Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
+
+        default:
+          cmd = tier3Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
       }
     } else {
-      // Transition — treat as defensive
       switch (tier) {
-        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
-        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
-        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 1:
+          cmd = tier1Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
+
+        case 2:
+          cmd = tier2Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
+
+        default:
+          cmd = tier3Defense(
+            player,
+            pt,
+            aiPlayers,
+            playerPlayers,
+            ballTile,
+            claimed,
+            friendly,
+            adaptiveState,
+          );
+          break;
       }
     }
 
-  cmd = tacticBuffCommand(
-    player,
-    cmd,
-    pt,
-    hasBall,
-    aiHasBall,
-    playerHasBall,
-    aiPlayers,
-    playerPlayers,
-    ballTile,
-    claimed,
-    friendly,
-    tactic,
-    planRef,
-  );
-
-  cmd = shootingBuffCommand(
-    player,
-    cmd,
-    pt,
-    hasBall,
-    aiHasBall,
-    playerPlayers,
-    tactic,
-  );
-
-  if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
-    cmd = defenseBuffCommand(
+    cmd = tacticBuffCommand(
       player,
       cmd,
       pt,
+      hasBall,
+      aiHasBall,
+      playerHasBall,
       aiPlayers,
       playerPlayers,
-      ball,
       ballTile,
       claimed,
       friendly,
+      tactic,
+      planRef,
     );
-  }
 
-  // Anti-loopback
-  const cmdTargetId =
-    cmd.type === CommandType.PASS
-      ? ("targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null)
-      : null;
+    cmd = shootingBuffCommand(
+      player,
+      cmd,
+      pt,
+      hasBall,
+      aiHasBall,
+      playerPlayers,
+      tactic,
+    );
 
-  const isLooping =
-    isLoopingPass(player.id, cmd) ||
-    (cmdTargetId !== null && isBilateralPingPong(player.id, cmdTargetId));
+    cmd = creativeCarryBuffCommand(
+      player,
+      cmd,
+      pt,
+      hasBall,
+      aiHasBall,
+      aiPlayers,
+      playerPlayers,
+      claimed,
+      tactic,
+      planRef,
+    );
 
-  if (isLooping && cmdTargetId) {
-    const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
+    if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
+      cmd = defenseBuffCommand(
+        player,
+        cmd,
+        pt,
+        aiPlayers,
+        playerPlayers,
+        ball,
+        ballTile,
+        claimed,
+        friendly,
+      );
+    }
 
-    if (altTarget && altTarget.id !== cmdTargetId) {
-      const altTile = posToTile(altTarget.position);
-      cmd = {
-        type: CommandType.PASS,
-        targetPlayerId: altTarget.id,
-        targetPosition: tileToPos(altTile.col, altTile.row),
-        coordinated: false,
-      };
-    } else {
-      const isGK = player.role === "goalkeeper";
+    const cmdTargetId =
+      cmd.type === CommandType.PASS
+        ? "targetPlayerId" in cmd
+          ? (cmd.targetPlayerId ?? null)
+          : null
+        : null;
 
-      if (!isGK) {
-        const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
+    const isLooping =
+      isLoopingPass(player.id, cmd) ||
+      (cmdTargetId !== null &&
+        isBilateralPingPong(player.id, cmdTargetId));
+
+    if (isLooping && cmdTargetId) {
+      const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
+
+      if (altTarget && altTarget.id !== cmdTargetId) {
+        const altTile = posToTile(altTarget.position);
+
         cmd = {
-          type: CommandType.MOVE,
-          targetPosition: tileToPos(fwd, pt.row),
+          type: CommandType.PASS,
+          targetPlayerId: altTarget.id,
+          targetPosition: tileToPos(altTile.col, altTile.row),
+          coordinated: false,
         };
+      } else {
+        const isGK = player.role === "goalkeeper";
+
+        if (!isGK) {
+          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
+
+          cmd = {
+            type: CommandType.MOVE,
+            targetPosition: tileToPos(fwd, pt.row),
+          };
+        }
       }
     }
-  }
 
-    if (
-      player.role !== "goalkeeper" &&
-      aiHasBall &&
-      hasBall
-    ) {
+    if (player.role !== "goalkeeper" && aiHasBall && hasBall) {
       cmd = possessionRiskBuffCommand(
         player,
         cmd,
@@ -1485,77 +1623,85 @@ export function generateAICommands(
         playerPlayers,
       );
     }
-  
-  logCommand(player.id, cmd);
-  commands.set(player.id, cmd);
+
+    logCommand(player.id, cmd);
+    commands.set(player.id, cmd);
   }
 
-  // FINAL PASS TARGET CLEANUP
   for (const [id, cmd] of commands) {
-  if (cmd.type === CommandType.PASS && cmd.targetPlayerId) {
-    const receiverCmd = commands.get(cmd.targetPlayerId);
-    const receiver = aiPlayers.find((p) => p.id === cmd.targetPlayerId);
+    if (cmd.type === CommandType.PASS && cmd.targetPlayerId) {
+      const receiverCmd = commands.get(cmd.targetPlayerId);
+      const receiver = aiPlayers.find((p) => p.id === cmd.targetPlayerId);
 
-    if (receiver) {
-      const wantedTile =
-        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
-          ? posToTile(receiverCmd.targetPosition)
-          : posToTile(receiver.position);
+      if (receiver) {
+        const wantedTile =
+          receiverCmd?.type === CommandType.MOVE &&
+          receiverCmd.targetPosition
+            ? posToTile(receiverCmd.targetPosition)
+            : posToTile(receiver.position);
 
-      const finalTile = receiverReachableTile(receiver, wantedTile);
-      const finalTarget = tileToPos(finalTile.col, finalTile.row);
+        const finalTile = receiverReachableTile(receiver, wantedTile);
+        const finalTarget = tileToPos(finalTile.col, finalTile.row);
 
-      commands.set(id, {
-        ...cmd,
-        targetPosition: finalTarget,
-      });
-
-      commands.set(cmd.targetPlayerId, {
-        type: CommandType.MOVE,
-        targetPosition: finalTarget,
-      });
-    }
-  }
-
-  if (
-    cmd.type === CommandType.MOVE &&
-    cmd.followUp?.type === CommandType.PASS &&
-    cmd.followUp.targetPlayerId
-  ) {
-    const receiverCmd = commands.get(cmd.followUp.targetPlayerId);
-    const receiver = aiPlayers.find(
-      (p) => p.id === cmd.followUp!.targetPlayerId,
-    );
-
-    if (receiver) {
-      const wantedTile =
-        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
-          ? posToTile(receiverCmd.targetPosition)
-          : posToTile(receiver.position);
-
-      const finalTile = receiverReachableTile(receiver, wantedTile);
-      const finalTarget = tileToPos(finalTile.col, finalTile.row);
-
-      commands.set(id, {
-        ...cmd,
-        followUp: {
-          ...cmd.followUp,
+        commands.set(id, {
+          ...cmd,
           targetPosition: finalTarget,
-        },
-      });
+        });
 
-      commands.set(cmd.followUp.targetPlayerId, {
-        type: CommandType.MOVE,
-        targetPosition: finalTarget,
-      });
+        commands.set(cmd.targetPlayerId, {
+          type: CommandType.MOVE,
+          targetPosition: finalTarget,
+        });
+      }
+    }
+
+    if (
+      cmd.type === CommandType.MOVE &&
+      cmd.followUp?.type === CommandType.PASS &&
+      cmd.followUp.targetPlayerId
+    ) {
+      const receiverCmd = commands.get(cmd.followUp.targetPlayerId);
+      const receiver = aiPlayers.find(
+        (p) => p.id === cmd.followUp!.targetPlayerId,
+      );
+
+      if (receiver) {
+        const wantedTile =
+          receiverCmd?.type === CommandType.MOVE &&
+          receiverCmd.targetPosition
+            ? posToTile(receiverCmd.targetPosition)
+            : posToTile(receiver.position);
+
+        const finalTile = receiverReachableTile(receiver, wantedTile);
+        const finalTarget = tileToPos(finalTile.col, finalTile.row);
+
+        commands.set(id, {
+          ...cmd,
+          followUp: {
+            ...cmd.followUp,
+            targetPosition: finalTarget,
+          },
+        });
+
+        commands.set(cmd.followUp.targetPlayerId, {
+          type: CommandType.MOVE,
+          targetPosition: finalTarget,
+        });
+      }
     }
   }
-  }
 
-  applyRestDefenseAnchor(commands, aiPlayers, ballTile, ballOwner?.teamId ?? null, ballOwner?.id ?? null, tactic);
+  applyRestDefenseAnchor(
+    commands,
+    aiPlayers,
+    ballTile,
+    ballOwner?.teamId ?? null,
+    ballOwner?.id ?? null,
+    tactic,
+  );
 
   return commands;
-  }
+}
 // ─── TACTIC BUFFS + LONG BALLS ──────────────────────────────────────────────
 
 function statOr(value: number | undefined, fallback: number): number {
@@ -2289,4 +2435,338 @@ function getHighestManThreat(playerPlayers: SimPlayer[]): ThreatInfo | null {
     })[0];
 
   return highest ?? null;
+}
+
+// ─── Creative AI Carry Buff ────────────────────────────────────────────────
+// Gives the AI more options when carrying:
+// forward, further forward, diagonal, left/right, backward, or pass.
+// It especially breaks the boring pattern where the carrier only dribbles
+// directly forward 1-2 tiles every turn.
+
+function creativePassCommand(
+  carrier: SimPlayer,
+  target: SimPlayer,
+  planRef?: { current: PassTilePlan | null },
+): Command {
+  const targetTile = posToTile(target.position);
+
+  if (planRef) {
+    planRef.current = {
+      runnerId: target.id,
+      runTile: targetTile,
+    };
+  }
+
+  return {
+    type: CommandType.PASS,
+    targetPlayerId: target.id,
+    targetPosition: tileToPos(targetTile.col, targetTile.row),
+    coordinated: false,
+  };
+}
+
+function pickCreativePassOption(
+  carrier: SimPlayer,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  tactic: TeamTactic,
+  hardPressed: boolean,
+): SimPlayer | null {
+  const forward = bestForwardPass(carrier, aiPlayers, playerPlayers, 9);
+  const lateral = bestLateralPass(carrier, aiPlayers, playerPlayers, 6);
+  const backward = bestBackwardPass(carrier, aiPlayers, playerPlayers, 7);
+  const any = bestAnyPass(carrier, aiPlayers, playerPlayers, 9);
+
+  const options = [forward, lateral, backward, any].filter(
+    (p, index, arr): p is SimPlayer =>
+      !!p && arr.findIndex((x) => x?.id === p.id) === index,
+  );
+
+  if (options.length === 0) return null;
+
+  const carrierTile = posToTile(carrier.position);
+
+  const scored = options.map((target) => {
+    const t = posToTile(target.position);
+    const forwardGain = carrierTile.col - t.col;
+    const sideways = Math.abs(t.row - carrierTile.row);
+    const backwardGain = t.col - carrierTile.col;
+    const threatened = isThreatened(t, playerPlayers);
+    const dist = tileDist(carrierTile, t);
+
+    let score = 0;
+
+    score += statOr(target.stats.passing, 5) * 0.15;
+    score += statOr(target.stats.vision, statOr(target.stats.passing, 5)) * 0.25;
+
+    if (forwardGain > 0) {
+      score += forwardGain * 1.4;
+    }
+
+    if (sideways > 0) {
+      score += 1.5;
+    }
+
+    if (backwardGain > 0) {
+      score += hardPressed ? 4.5 : 0.5;
+    }
+
+    if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
+      score += Math.max(0, forwardGain) * 1.5;
+    }
+
+    if (tactic.id === "slow_possession") {
+      score += backwardGain > 0 || sideways > 0 ? 3 : 0;
+      score -= Math.max(0, forwardGain - 3) * 0.8;
+    }
+
+    if (tactic.id === "wide_crossing") {
+      score += t.row <= 2 || t.row >= GRID_ROWS - 3 ? 2.5 : 0;
+    }
+
+    if (threatened) {
+      score -= 5;
+    }
+
+    score -= Math.max(0, dist - 8) * 0.25;
+
+    return {
+      target,
+      score,
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored[0]?.target ?? null;
+}
+
+function nearestOpponentDistance(tile: TilePos, opponents: SimPlayer[]): number {
+  if (opponents.length === 0) return 99;
+
+  return Math.min(
+    ...opponents.map((opp) => {
+      const ot = posToTile(opp.position);
+      return tileDist(tile, ot);
+    }),
+  );
+}
+
+function isOpponentOnTile(tile: TilePos, opponents: SimPlayer[]): boolean {
+  return opponents.some((opp) => {
+    const ot = posToTile(opp.position);
+    return ot.col === tile.col && ot.row === tile.row;
+  });
+}
+
+function scoreCreativeCarryTile(
+  from: TilePos,
+  tile: TilePos,
+  currentTarget: TilePos,
+  player: SimPlayer,
+  opponents: SimPlayer[],
+  tactic: TeamTactic,
+  hardPressed: boolean,
+): number {
+  const progress = from.col - tile.col; // AI attacks left, so lower col = forward.
+  const backward = tile.col - from.col;
+  const lateral = Math.abs(tile.row - from.row);
+  const space = nearestOpponentDistance(tile, opponents);
+  const threatened = isThreatened(tile, opponents);
+  const opponentOnTile = isOpponentOnTile(tile, opponents);
+
+  const isSameAsCurrent =
+    tile.col === currentTarget.col && tile.row === currentTarget.row;
+
+  const isStraightForward =
+    tile.row === from.row && tile.col < from.col;
+
+  const isShortStraightForward =
+    isStraightForward && progress <= 2;
+
+  let score = 0;
+
+  // Space matters a lot. This helps the AI stop running into easy tackles.
+  score += space * 1.8;
+
+  // It can still go forward, but not blindly every single time.
+  if (progress > 0) {
+    const directness =
+      tactic.progression === "counter" || tactic.id === "quick_counterattack"
+        ? 2.7
+        : tactic.progression === "direct"
+          ? 2.2
+          : 1.35;
+
+    score += progress * directness;
+  }
+
+  // Sideways/diagonal movement is now a real option.
+  if (lateral > 0) {
+    score += 2.2;
+  }
+
+  // Backwards is useful under pressure, bad when totally free.
+  if (backward > 0) {
+    score += hardPressed ? 5.5 : -1.2;
+  }
+
+  // Slow possession should recycle instead of forcing forward dribbles.
+  if (tactic.id === "slow_possession") {
+    score += lateral > 0 ? 2.5 : 0;
+    score += backward > 0 ? 2.5 : 0;
+    score -= Math.max(0, progress - 2) * 1.25;
+  }
+
+  // Counter teams are allowed to be more vertical.
+  if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
+    score += progress > 0 ? 1.5 : 0;
+  }
+
+  // Wide crossing teams should be comfortable going wide.
+  if (tactic.id === "wide_crossing") {
+    score += tile.row <= 2 || tile.row >= GRID_ROWS - 3 ? 2.7 : 0;
+  }
+
+  // Avoid the exact boring pattern: straight forward 1-2 tiles again and again.
+  if (isShortStraightForward) {
+    score -= 3.5;
+  }
+
+  // Still allow the old move if it is genuinely the best option.
+  if (isSameAsCurrent) {
+    score += 0.8;
+  }
+
+  // Do not sprint into occupied/threatened tiles unless desperate.
+  if (threatened) {
+    score -= hardPressed ? 3.5 : 6.5;
+  }
+
+  if (opponentOnTile) {
+    score -= 5.5;
+  }
+
+  // Avoid hugging the top/bottom edge too hard.
+  if (tile.row === 0 || tile.row === GRID_ROWS - 1) {
+    score -= 1.6;
+  }
+
+  // Shooting territory: prefer central lanes.
+  if (tile.col <= 5) {
+    const goalRow = Math.floor(GRID_ROWS / 2);
+    score -= Math.abs(tile.row - goalRow) * 0.5;
+  }
+
+  // Better dribblers get more freedom to choose risky carry tiles.
+  const dribbling = statOr(player.stats.dribbling, statOr(player.stats.attack, 5));
+  score += dribbling * 0.18;
+
+  return score;
+}
+
+function creativeCarryBuffCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  pt: TilePos,
+  hasBall: boolean,
+  aiHasBall: boolean,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  claimed: Set<string>,
+  tactic: TeamTactic,
+  planRef?: { current: PassTilePlan | null },
+): Command {
+  if (!aiHasBall || !hasBall) return currentCmd;
+  if (player.role === "goalkeeper") return currentCmd;
+  if (currentCmd.type !== CommandType.MOVE) return currentCmd;
+  if (!currentCmd.targetPosition) return currentCmd;
+
+  const targetTile = posToTile(currentCmd.targetPosition);
+
+  const straightForwardCarry =
+    targetTile.row === pt.row && targetTile.col < pt.col;
+
+  const shortStraightForwardCarry =
+    straightForwardCarry && pt.col - targetTile.col <= 2;
+
+  const hardPressed = isHardPressed(pt, playerPlayers);
+
+  const passOption = pickCreativePassOption(
+    player,
+    aiPlayers,
+    playerPlayers,
+    tactic,
+    hardPressed,
+  );
+
+  // The carrier has more than one brain cell now:
+  // If pressed or about to do the boring short-forward dribble, check passes first.
+  if (
+    passOption &&
+    (hardPressed ||
+      shortStraightForwardCarry ||
+      Math.random() < 0.28 + tactic.tempo * 0.015)
+  ) {
+    return creativePassCommand(player, passOption, planRef);
+  }
+
+  const range = speedToTiles(player.stats.speed);
+  const reachable = getReachableTiles(
+    pt.col,
+    pt.row,
+    range,
+    false,
+    player.teamId,
+  );
+
+  const candidates = reachable
+    .filter((tile) => !(tile.col === pt.col && tile.row === pt.row))
+    .filter((tile) => {
+      const key = tileKey(tile.col, tile.row);
+      return !claimed.has(key);
+    })
+    .map((tile) => ({
+      tile,
+      score: scoreCreativeCarryTile(
+        pt,
+        tile,
+        targetTile,
+        player,
+        playerPlayers,
+        tactic,
+        hardPressed,
+      ),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0];
+
+  if (!best) return currentCmd;
+
+  const currentScore = scoreCreativeCarryTile(
+    pt,
+    targetTile,
+    targetTile,
+    player,
+    playerPlayers,
+    tactic,
+    hardPressed,
+  );
+
+  const shouldReplace =
+    shortStraightForwardCarry ||
+    hardPressed ||
+    best.score > currentScore + 1.5;
+
+  if (!shouldReplace) {
+    return currentCmd;
+  }
+
+  claimed.add(tileKey(best.tile.col, best.tile.row));
+
+  return {
+    type: CommandType.MOVE,
+    targetPosition: tileToPos(best.tile.col, best.tile.row),
+  };
 }
