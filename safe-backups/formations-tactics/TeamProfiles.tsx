@@ -3,6 +3,7 @@ import type { PlayerCard, PlayerStats, TeamConfig, TeamTactic } from "../engine/
 import { AI_TEAMS, TEAM_TACTICS } from "../game/league";
 import { STAT_LABELS } from "../game/players";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
+import { getFormationById } from "../game/formations";
 
 interface Props {
   playerTeam: TeamConfig;
@@ -140,7 +141,7 @@ export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Prop
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-white font-black text-lg truncate">{selected.name}</div>
-              <div className="text-gray-400 text-xs">Formation {selected.formationId} · {selected.isPlayer ? "Manual controls" : "AI programmed tactic"}</div>
+              <div className="text-gray-400 text-xs">Formation {getFormationById(selected.formationId).name} · {selected.isPlayer ? "Manual controls" : "AI programmed tactic"}</div>
             </div>
           </div>
 
