@@ -112,13 +112,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
   const savedMatch = loadMatch();
   const initState = useRef((() => {
-    if (
-      savedMatch &&
-      savedMatch.version === 1 &&
-      savedMatch.twoPlayer === twoPlayer &&
-      savedMatch.isHome === isHome &&
-      savedMatch.players.length === PLAYERS_PER_TEAM * 2
-    ) {
+    if (savedMatch && savedMatch.version === 1 && savedMatch.twoPlayer === twoPlayer && savedMatch.isHome === isHome) {
       return {
         players: savedMatch.players,
         ball: savedMatch.ball,
