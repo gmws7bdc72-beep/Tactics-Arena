@@ -231,7 +231,6 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <TeamProfiles
           playerTeam={team}
-          initialTeamId={profileTeamId}
           onBack={() => setScreen("home")}
         />
       </div>
