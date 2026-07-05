@@ -899,6 +899,66 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
   }
 }
 
+
+function signTileDelta(v: number): number {
+  if (v > 0) return 1;
+  if (v < 0) return -1;
+  return 0;
+}
+
+function sameTile(a: { col: number; row: number }, b: { col: number; row: number }): boolean {
+  return a.col === b.col && a.row === b.row;
+}
+
+function longBallDirectionalContestAllowed(player: SimPlayer, ball: SimBall, distToBall: number): boolean {
+  if (ball.passStyle !== "long") return true;
+  if (!ball.passStart || !ball.passTarget) return true;
+
+  const startTile = posToTile(ball.passStart);
+  const targetTile = posToTile(ball.passTarget);
+  const dc = signTileDelta(targetTile.col - startTile.col);
+  const dr = signTileDelta(targetTile.row - startTile.row);
+
+  if (dc === 0 && dr === 0) return true;
+
+  const playerTile = posToTile(player.position);
+  const launchBlockTile = {
+    col: clamp(startTile.col + dc, 0, GRID_COLS - 1),
+    row: clamp(startTile.row + dr, 0, GRID_ROWS - 1),
+  };
+  const receiverBlockTile = {
+    col: clamp(targetTile.col - dc, 0, GRID_COLS - 1),
+    row: clamp(targetTile.row - dr, 0, GRID_ROWS - 1),
+  };
+
+  const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
+  const travelled = vec2Dist(ball.passStart, ball.position);
+  const progress = clamp(travelled / totalDist, 0, 1);
+
+  // Long balls are not normal floor passes. They can only be blocked during
+  // the takeoff square in the direction of the kick, or during the landing
+  // square on the incoming side of the receiver. Example: a defender directly
+  // in front of the passer cannot block a long ball launched to the right.
+  const inLaunchWindow =
+    progress <= 0.28 &&
+    sameTile(playerTile, launchBlockTile) &&
+    distToBall < INTERCEPTION_RADIUS * 1.2;
+
+  const inReceiverWindow =
+    progress >= 0.72 &&
+    sameTile(playerTile, receiverBlockTile) &&
+    distToBall < INTERCEPTION_RADIUS * 1.4;
+
+  // The receiver, or anyone exactly on the landing tile, can still contest the
+  // aerial ball once it drops.
+  const onLandingTile =
+    progress >= 0.78 &&
+    sameTile(playerTile, targetTile) &&
+    vec2Dist(player.position, ball.passTarget) < INTERCEPTION_RADIUS * 1.35;
+
+  return inLaunchWindow || inReceiverWindow || onLandingTile;
+}
+
 function detectAndResolveEvents(
   players: SimPlayer[],
   ball: SimBall,
@@ -911,11 +971,10 @@ function detectAndResolveEvents(
     const candidates: { player: SimPlayer; score: number }[] = [];
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
-      const longBallHigh = ball.passStyle === "long" && (ball.height ?? 0) > 9;
-      const nearLanding = ball.passTarget ? vec2Dist(player.position, ball.passTarget) < INTERCEPTION_RADIUS * 1.15 : true;
+      const canContestLongBall = longBallDirectionalContestAllowed(player, ball, dist);
       if (
         dist < INTERCEPTION_RADIUS &&
-        (!longBallHigh || nearLanding) &&
+        canContestLongBall &&
         player.state !== PlayerState.RECOVERING
       ) {
         const velTowardBall =
