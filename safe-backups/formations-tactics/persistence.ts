@@ -107,7 +107,7 @@ export function resetLeague(teamName: string): LeagueState {
 }
 
 export function getDefaultTeam(): TeamConfig {
-  const formation = FORMATIONS.find(f => f.id === "1-2-1") ?? FORMATIONS[0];
+  const formation = FORMATIONS.find(f => f.id === "2-1-2") ?? FORMATIONS[0];
   return {
     name: "My Team",
     jerseyColor: "#00b4d8",
