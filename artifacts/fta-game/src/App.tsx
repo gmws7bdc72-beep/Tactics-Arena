@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { TeamConfig, GameEvent, LeagueState, PlayoffBracket } from "./engine/types";
 import { useGameState } from "./hooks/useGameState";
 import Home from "./pages/Home";
@@ -49,13 +49,34 @@ interface PlayoffContext {
   isHome: boolean;
 }
 
+function hashToScreen(hash: string): { screen: Screen; tab?: "lineup" | "formation" } {
+  const h = hash.replace(/^#\/?/, "");
+  if (h === "team-setup/formation") return { screen: "team-setup", tab: "formation" };
+  if (h === "team-setup") return { screen: "team-setup", tab: "lineup" };
+  if (h === "team-profiles") return { screen: "team-profiles" };
+  if (h === "customize") return { screen: "customize" };
+  return { screen: "home" };
+}
+
 export default function App() {
   const { team, updateTeam, league, updateLeague, startNewSeason, refreshState } = useGameState();
-  const [screen, setScreen] = useState<Screen>("home");
+  const initialHash = hashToScreen(window.location.hash);
+  const [screen, setScreen] = useState<Screen>(initialHash.screen);
+  const [setupTab, setSetupTab] = useState<"lineup" | "formation">(initialHash.tab ?? "lineup");
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(null);
   const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(null);
   const [profileTeamId, setProfileTeamId] = useState<string>(PLAYER_TEAM_ID_CONST);
+
+  useEffect(() => {
+    const onHash = () => {
+      const { screen: s, tab } = hashToScreen(window.location.hash);
+      setScreen(s);
+      if (tab) setSetupTab(tab);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
@@ -231,7 +252,6 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <TeamProfiles
           playerTeam={team}
-          initialTeamId={profileTeamId}
           onBack={() => setScreen("home")}
         />
       </div>
@@ -286,7 +306,7 @@ export default function App() {
   if (screen === "team-setup") {
     return (
       <div className="max-w-md mx-auto min-h-screen">
-        <TeamSetup team={team} onSave={handleTeamSave} onBack={() => setScreen("home")} />
+        <TeamSetup team={team} onSave={handleTeamSave} initialTab={setupTab} onBack={() => { setSetupTab("lineup"); setScreen("home"); }} />
       </div>
     );
   }

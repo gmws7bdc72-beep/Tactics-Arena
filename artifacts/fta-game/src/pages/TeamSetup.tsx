@@ -8,15 +8,16 @@ interface Props {
   team: TeamConfig;
   onSave: (team: TeamConfig) => void;
   onBack: () => void;
+  initialTab?: "lineup" | "formation";
 }
 
 const SLOT_LABELS = ["GK", "DEF", "DEF", "MID", "FWD", "ST"];
 const FORMATION_TOTAL = FORMATIONS.length;
 
-export default function TeamSetup({ team, onSave, onBack }: Props) {
+export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" }: Props) {
   const [currentTeam, setCurrentTeam] = useState<TeamConfig>({ ...team, players: [...team.players] });
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
-  const [tab, setTab] = useState<"lineup" | "formation">("lineup");
+  const [tab, setTab] = useState<"lineup" | "formation">(initialTab);
 
   const selectFormation = (formationId: string) => {
     const f = FORMATIONS.find(f => f.id === formationId);
