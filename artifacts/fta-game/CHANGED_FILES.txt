@@ -41,3 +41,8 @@ Undo plan:
    cd ~/workspace
    rm -rf artifacts/fta-game
    mv artifacts/fta-game-BACKUP artifacts/fta-game
+
+Additional patch: League table rows now open the selected team's profile directly.
+- src/pages/Home.tsx: league-table rows are clickable and pass the clicked team id.
+- src/App.tsx: stores the requested profile team id and sends it to TeamProfiles.
+- src/pages/TeamProfiles.tsx: opens directly to the selected team when provided.

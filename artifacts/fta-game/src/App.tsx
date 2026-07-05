@@ -55,6 +55,7 @@ export default function App() {
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(null);
   const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(null);
+  const [profileTeamId, setProfileTeamId] = useState<string>(PLAYER_TEAM_ID_CONST);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
@@ -199,6 +200,11 @@ export default function App() {
     setScreen("home");
   }, [refreshState, startNewSeason, team.name]);
 
+  const handleOpenProfiles = useCallback((teamId: string = PLAYER_TEAM_ID_CONST) => {
+    setProfileTeamId(teamId);
+    setScreen("team-profiles");
+  }, []);
+
   // ── Screens ───────────────────────────────────────────────────────────────
   if (screen === "home") {
     return (
@@ -210,7 +216,7 @@ export default function App() {
           onStartMatch={handleStartMatch}
           onGoToTeamSetup={() => setScreen("team-setup")}
           onGoToCustomize={() => setScreen("customize")}
-          onGoToProfiles={() => setScreen("team-profiles")}
+          onGoToProfiles={handleOpenProfiles}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
@@ -225,6 +231,7 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <TeamProfiles
           playerTeam={team}
+          initialTeamId={profileTeamId}
           onBack={() => setScreen("home")}
         />
       </div>
@@ -360,7 +367,7 @@ export default function App() {
         onStartMatch={handleStartMatch}
         onGoToTeamSetup={() => setScreen("team-setup")}
         onGoToCustomize={() => setScreen("customize")}
-        onGoToProfiles={() => setScreen("team-profiles")}
+        onGoToProfiles={handleOpenProfiles}
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}
         onOnline={() => setScreen("online-lobby")}
