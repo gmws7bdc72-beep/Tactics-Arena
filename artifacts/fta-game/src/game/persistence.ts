@@ -4,9 +4,9 @@ import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
 
-const TEAM_KEY = "fta_team_v2";
-const LEAGUE_KEY = "fta_league_v3";
-const MATCH_KEY = "fta_match_v2";
+const TEAM_KEY = "fta_team_clean_6v6_v1";
+const LEAGUE_KEY = "fta_league_clean_6v6_v1";
+const MATCH_KEY = "fta_match_clean_6v6_v1";
 
 const PLAYER_TEAM_ID = "player_team";
 
@@ -107,7 +107,7 @@ export function resetLeague(teamName: string): LeagueState {
 }
 
 export function getDefaultTeam(): TeamConfig {
-  const formation = FORMATIONS.find(f => f.id === "1-2-1") ?? FORMATIONS[0];
+  const formation = FORMATIONS.find(f => f.id === "2-1-2") ?? FORMATIONS[0];
   return {
     name: "My Team",
     jerseyColor: "#00b4d8",

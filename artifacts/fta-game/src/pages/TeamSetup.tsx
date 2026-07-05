@@ -11,6 +11,7 @@ interface Props {
 }
 
 const SLOT_LABELS = ["GK", "DEF", "DEF", "MID", "FWD", "ST"];
+const FORMATION_TOTAL = FORMATIONS.length;
 
 export default function TeamSetup({ team, onSave, onBack }: Props) {
   const [currentTeam, setCurrentTeam] = useState<TeamConfig>({ ...team, players: [...team.players] });
@@ -177,7 +178,7 @@ export default function TeamSetup({ team, onSave, onBack }: Props) {
 
         {tab === "formation" && (
           <div>
-            <p className="text-gray-400 text-xs mb-4">Choose your starting formation</p>
+            <p className="text-gray-400 text-xs mb-4">Choose your starting formation · all {FORMATION_TOTAL} legal 6v6 shapes are available</p>
             <div className="grid grid-cols-2 gap-3">
               {FORMATIONS.map(f => (
                 <button

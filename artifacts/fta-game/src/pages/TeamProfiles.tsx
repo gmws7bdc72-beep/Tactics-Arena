@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PlayerCard, PlayerStats, TeamConfig, TeamTactic } from "../engine/types";
 import { AI_TEAMS, TEAM_TACTICS } from "../game/league";
 import { STAT_LABELS } from "../game/players";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
+import { getFormationById } from "../game/formations";
 
 interface Props {
   playerTeam: TeamConfig;
+  initialTeamId?: string;
   onBack: () => void;
 }
 
@@ -64,7 +66,7 @@ function tacticBar(label: string, value: number, color: string) {
   );
 }
 
-export default function TeamProfiles({ playerTeam, onBack }: Props) {
+export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Props) {
   const teams = useMemo<ProfileTeam[]>(() => [
     {
       id: "player_team",
@@ -90,6 +92,12 @@ export default function TeamProfiles({ playerTeam, onBack }: Props) {
   ], [playerTeam]);
 
   const [selectedId, setSelectedId] = useState(teams[0]?.id ?? "player_team");
+  useEffect(() => {
+    if (initialTeamId && teams.some((team) => team.id === initialTeamId)) {
+      setSelectedId(initialTeamId);
+    }
+  }, [initialTeamId, teams]);
+
   const selected = teams.find((team) => team.id === selectedId) ?? teams[0];
 
   return (
@@ -98,7 +106,7 @@ export default function TeamProfiles({ playerTeam, onBack }: Props) {
         <button onClick={onBack} className="text-gray-400 hover:text-white transition-colors text-lg">←</button>
         <div>
           <h1 className="text-white text-lg font-black">Team Profiles</h1>
-          <p className="text-gray-500 text-xs">Every team, tactic, position, and player stat</p>
+          <p className="text-gray-500 text-xs">Clean Rebuild 6v6 · every team, tactic, position, and player stat</p>
         </div>
       </div>
 
@@ -133,7 +141,7 @@ export default function TeamProfiles({ playerTeam, onBack }: Props) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-white font-black text-lg truncate">{selected.name}</div>
-              <div className="text-gray-400 text-xs">Formation {selected.formationId} · {selected.isPlayer ? "Manual controls" : "AI programmed tactic"}</div>
+              <div className="text-gray-400 text-xs">Formation {getFormationById(selected.formationId).name} · {selected.isPlayer ? "Manual controls" : "AI programmed tactic"}</div>
             </div>
           </div>
 

@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Football Tactics Arena"
+version = "1.0.0"
+id = "artifacts/fta-game"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24785
+
+[services.development]
+run = "pnpm --filter @workspace/fta-game run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/fta-game", "run", "build" ]
+publicDir = "artifacts/fta-game/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24785"
+BASE_PATH = "/"

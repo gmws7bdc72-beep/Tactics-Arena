@@ -8,7 +8,7 @@ interface Props {
   onStartMatch: () => void;
   onGoToTeamSetup: () => void;
   onGoToCustomize: () => void;
-  onGoToProfiles: () => void;
+  onGoToProfiles: (teamId?: string) => void;
   onResetSeason: () => void;
   onTwoPlayer: () => void;
   onOnline: () => void;
@@ -132,6 +132,7 @@ export default function Home({
           </div>
           <div className="flex-1">
             <h1 className="text-white text-xl font-black tracking-tight leading-none">{team.name}</h1>
+            <div className="text-[10px] text-cyan-400 font-bold tracking-wide">Build: Clean Rebuild 6v6</div>
             <p className="text-gray-400 text-xs">Football Tactics Arena · League Season</p>
           </div>
           <button
@@ -327,25 +328,25 @@ export default function Home({
         {/* League Table */}
         <div>
           <div className="text-white text-sm font-bold mb-2">League Table</div>
-
-          <div className="flex gap-2 items-stretch">
-            <div className="flex-1 min-w-0 rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
-                <span>Club</span>
-                <span className="text-right w-6">PL</span>
-                <span className="text-right w-6">W</span>
-                <span className="text-right w-6">D</span>
-                <span className="text-right w-6">L</span>
-                <span className="text-right w-8">Pts</span>
-              </div>
-              {standings.map((t, i) => {
+          <div className="rounded-xl overflow-hidden" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-1.5 text-gray-500 text-[10px] font-semibold uppercase border-b border-white/5">
+              <span>Club</span>
+              <span className="text-right w-6">PL</span>
+              <span className="text-right w-6">W</span>
+              <span className="text-right w-6">D</span>
+              <span className="text-right w-6">L</span>
+              <span className="text-right w-8">Pts</span>
+            </div>
+            {standings.map((t, i) => {
               const isPlayer = t.id === PLAYER_ID;
               const isNext = nextMatch?.opponentId === t.id;
               const inTop4 = i < 4 && isLeagueComplete;
               return (
-                <div
+                <button
                   key={t.id}
-                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-2 border-b border-white/5 last:border-0"
+                  type="button"
+                  onClick={() => onGoToProfiles(isPlayer ? PLAYER_ID : t.id)}
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-0 px-3 py-2 border-b border-white/5 last:border-0 w-full text-left transition-all hover:bg-white/5 active:scale-[0.99]"
                   style={{
                     background: isPlayer
                       ? `${team.jerseyColor}18`
@@ -353,6 +354,7 @@ export default function Home({
                       ? "rgba(0,180,255,0.06)"
                       : "transparent",
                   }}
+                  aria-label={`View ${isPlayer ? team.name : t.name} profile`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-gray-600 text-[10px] w-3 flex-shrink-0">{i + 1}</span>
@@ -375,10 +377,9 @@ export default function Home({
                   >
                     {getTeamPoints(t)}
                   </span>
-                </div>
+                </button>
               );
-              })}
-            </div>
+            })}
           </div>
           {isLeagueComplete && (
             <p className="text-[10px] text-gray-600 mt-1 text-center">PO = Playoff qualified (Top 4)</p>
@@ -453,7 +454,7 @@ export default function Home({
         </div>
 
         <button
-          onClick={onGoToProfiles}
+          onClick={() => onGoToProfiles()}
           className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:bg-white/10 active:scale-95"
           style={{ background: "rgba(0,180,216,0.10)", border: "1px solid rgba(0,180,216,0.25)", color: "#67e8f9" }}
         >
