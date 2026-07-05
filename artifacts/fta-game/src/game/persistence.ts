@@ -1,11 +1,12 @@
 import type { TeamConfig, LeagueState, SavedMatchState } from "../engine/types";
 import { getDefaultSquad } from "./players";
 import { FORMATIONS } from "./formations";
+import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
 
 const TEAM_KEY = "fta_team_v2";
 const LEAGUE_KEY = "fta_league_v3";
-const MATCH_KEY = "fta_match_v1";
+const MATCH_KEY = "fta_match_v2";
 
 const PLAYER_TEAM_ID = "player_team";
 
@@ -19,12 +20,44 @@ function hasValidStats(t: TeamConfig): boolean {
   );
 }
 
+function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
+  const formation = FORMATIONS.find(f => f.id === team.formationId) ?? FORMATIONS[0];
+  const defaults = getDefaultSquad();
+  const players = [...(team.players ?? [])];
+
+  for (const fallback of defaults) {
+    if (players.length >= PLAYERS_PER_TEAM) break;
+    if (!players.some((p) => p.id === fallback.id)) {
+      players.push(fallback);
+    }
+  }
+
+  while (players.length < PLAYERS_PER_TEAM) {
+    players.push(defaults[players.length % defaults.length]);
+  }
+
+  return {
+    ...team,
+    players: players.slice(0, PLAYERS_PER_TEAM),
+    startPositions:
+      team.startPositions && team.startPositions.length >= PLAYERS_PER_TEAM
+        ? team.startPositions.slice(0, PLAYERS_PER_TEAM)
+        : formation.positions.map((p) => ({ ...p })),
+  };
+}
+
 export function loadTeam(): TeamConfig {
   try {
     const raw = localStorage.getItem(TEAM_KEY);
     if (raw) {
       const t = JSON.parse(raw) as TeamConfig;
-      if (t.players && t.players.length === 5 && hasValidStats(t)) return t;
+      if (t.players && t.players.length >= 5 && hasValidStats(t)) {
+        const normalized = normalizeTeamForCurrentRules(t);
+        if (normalized.players.length !== t.players.length || normalized.startPositions.length !== (t.startPositions?.length ?? 0)) {
+          saveTeam(normalized);
+        }
+        return normalized;
+      }
     }
   } catch {}
   return getDefaultTeam();

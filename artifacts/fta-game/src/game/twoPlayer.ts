@@ -20,6 +20,7 @@ export const TWO_PLAYER_TEAM_A: AITeamDef = {
     { id: "2pa_md1", name: "Centro", role: "midfielder", jerseyNumber: 8,  stats: s({ speed: 7, attack: 6, defense: 5, passing: 7, luck: 5, shooting: 6, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 7, longPassing: 7, aerial: 5 }), ability: "none" },
     { id: "2pa_md2", name: "Blaze",  role: "midfielder", jerseyNumber: 11, stats: s({ speed: 7, attack: 6, defense: 5, passing: 7, luck: 5, shooting: 6, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 7, longPassing: 7, aerial: 5 }), ability: "none" },
     { id: "2pa_fwd", name: "Rush",   role: "forward",    jerseyNumber: 9,  stats: s({ speed: 8, attack: 7, defense: 3, passing: 5, luck: 5, shooting: 7, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 7, vision: 5, longPassing: 5, aerial: 6 }), ability: "none" },
+    { id: "2pa_st",  name: "Rocket", role: "striker",    jerseyNumber: 10, stats: s({ speed: 8, attack: 8, defense: 3, passing: 5, luck: 5, shooting: 8, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 5, longPassing: 5, aerial: 7 }), ability: "none" },
   ],
 };
 
@@ -39,5 +40,6 @@ export const TWO_PLAYER_TEAM_B: AITeamDef = {
     { id: "2pb_md1", name: "Pivot", role: "midfielder", jerseyNumber: 6, stats: s({ speed: 7, attack: 6, defense: 5, passing: 7, luck: 5, shooting: 6, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 7, longPassing: 7, aerial: 5 }), ability: "none" },
     { id: "2pb_md2", name: "Flux", role: "midfielder", jerseyNumber: 8, stats: s({ speed: 7, attack: 6, defense: 5, passing: 7, luck: 5, shooting: 6, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 7, longPassing: 7, aerial: 5 }), ability: "none" },
     { id: "2pb_fwd", name: "Strike", role: "forward", jerseyNumber: 9, stats: s({ speed: 8, attack: 8, defense: 3, passing: 5, luck: 5, shooting: 8, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 7, vision: 5, longPassing: 5, aerial: 6 }), ability: "none" },
+    { id: "2pb_st",  name: "Cannon", role: "striker", jerseyNumber: 10, stats: s({ speed: 8, attack: 8, defense: 3, passing: 5, luck: 5, shooting: 8, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 5, longPassing: 5, aerial: 7 }), ability: "none" },
   ],
 };

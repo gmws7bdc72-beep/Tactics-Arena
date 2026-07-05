@@ -165,6 +165,45 @@ function snapToTile(pos: Vec2): Vec2 {
   return tileToPos(t.col, t.row);
 }
 
+
+function statValue(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function physiqueStat(player: SimPlayer): number {
+  return statValue(player.stats.strength, statValue(player.stats.defense, 5));
+}
+
+function defenderBallWinStat(player: SimPlayer): number {
+  return (
+    statValue(player.stats.defense, 5) +
+    statValue(player.stats.tackling, statValue(player.stats.defense, 5)) +
+    statValue(player.stats.marking, statValue(player.stats.defense, 5))
+  ) / 3;
+}
+
+function carrierKeepChance(carrier: SimPlayer, defender: SimPlayer): number {
+  const dribbling = statValue(carrier.stats.dribbling, statValue(carrier.stats.attack, 5));
+  const strength = statValue(carrier.stats.strength, 5);
+  const defense = defenderBallWinStat(defender);
+  let chance = 0.58 + (dribbling - defense) * 0.055 + (strength - statValue(defender.stats.strength, 5)) * 0.018;
+
+  if (carrier.ability === "ghost_run") chance += 0.08;
+  if (carrier.ability === "powerhouse") chance += 0.05;
+  if (defender.ability === "iron_tackle") chance -= 0.08;
+  if (defender.ability === "powerhouse") chance -= 0.04;
+  if (defender.ability === "shadow_mark") chance -= 0.05;
+
+  return clamp(chance, 0.14, 0.92);
+}
+
+function noBallTileWinChance(a: SimPlayer, b: SimPlayer): number {
+  const aPhys = physiqueStat(a);
+  const bPhys = physiqueStat(b);
+  if (aPhys === bPhys) return 0.5;
+  return aPhys > bPhys ? 0.85 : 0.15;
+}
+
 // Clamp target tile for GK role
 function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
   const t = posToTile(target);
@@ -323,59 +362,113 @@ export function runSimulation(
     p.position = snapToTile(p.position);
   }
 
-  // Direction-aware tile separation: push each player back toward where they came from.
-  // Run 3 passes to resolve cascading overlaps.
+  // Direction-aware tile separation with stat-based tile ownership.
+  // - No ball: higher physique/strength keeps the tile 85% of the time.
+  // - Ball carrier involved: dribbling vs defense decides whether the carry survives.
+  // Losers are displaced using the same retreat-to-start logic as before.
   for (let iter = 0; iter < 3; iter++) {
-    const occupied = new Map<string, string>(); // "col,row" → playerId
-    // Ball owner claims their tile first — they always win
-    for (const p of simPlayers) {
-      if (p.id === simBall.ownerId) {
-        const t = posToTile(p.position);
-        occupied.set(`${t.col},${t.row}`, p.id);
+    const occupied = new Map<string, SimPlayer>();
+
+    const pushToFreeTile = (loser: SimPlayer, winner: SimPlayer): void => {
+      const t = posToTile(loser.position);
+      const st = startTile.get(loser.id) ?? t;
+      const ddc = st.col - t.col;
+      const ddr = st.row - t.row;
+      const preferCol = Math.abs(ddc) >= Math.abs(ddr);
+      const retreatOffsets: [number, number][] = [];
+
+      if (ddc !== 0 || ddr !== 0) {
+        const sc = ddc !== 0 ? Math.sign(ddc) : 0;
+        const sr = ddr !== 0 ? Math.sign(ddr) : 0;
+        if (preferCol) {
+          retreatOffsets.push([sc, sr], [sc, 0], [0, sr], [-sc, 0], [0, -sr]);
+        } else {
+          retreatOffsets.push([sc, sr], [0, sr], [sc, 0], [0, -sr], [-sc, 0]);
+        }
       }
-    }
+
+      retreatOffsets.push([0, 1], [0, -1], [1, 0], [-1, 0]);
+
+      for (const [dc, dr] of retreatOffsets) {
+        if (dc === 0 && dr === 0) continue;
+        let nc = clamp(t.col + dc, 0, GRID_COLS - 1);
+        const nr = clamp(t.row + dr, 0, GRID_ROWS - 1);
+
+        if (loser.role === "goalkeeper") {
+          nc = loser.teamId === "player"
+            ? clamp(nc, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
+            : clamp(nc, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+        }
+
+        const ak = `${nc},${nr}`;
+        if (!occupied.has(ak)) {
+          loser.position = tileToPos(nc, nr);
+          loser.velocity = { x: 0, y: 0 };
+          occupied.set(ak, loser);
+          return;
+        }
+      }
+
+      // No free tile found; fall back to the old physical retreat helper.
+      retreatFrom(loser, winner);
+    };
+
+    const chooseWinner = (a: SimPlayer, b: SimPlayer): SimPlayer => {
+      const aOwns = a.id === simBall.ownerId;
+      const bOwns = b.id === simBall.ownerId;
+
+      if (aOwns && !bOwns && a.teamId !== b.teamId) {
+        return rng() < carrierKeepChance(a, b) ? a : b;
+      }
+      if (bOwns && !aOwns && a.teamId !== b.teamId) {
+        return rng() < carrierKeepChance(b, a) ? b : a;
+      }
+
+      if (aOwns && !bOwns) return a;
+      if (bOwns && !aOwns) return b;
+
+      if (a.teamId !== b.teamId) {
+        return rng() < noBallTileWinChance(a, b) ? a : b;
+      }
+
+      // Same-team overlap: let the stronger player keep the tile, but without
+      // causing a turnover or tackle-style recovery state.
+      return physiqueStat(a) >= physiqueStat(b) ? a : b;
+    };
+
     for (const p of simPlayers) {
-      if (p.id === simBall.ownerId) continue;
       const t = posToTile(p.position);
       const key = `${t.col},${t.row}`;
-      if (occupied.has(key)) {
-        // Compute retreat direction: from current tile back toward start tile
-        const st = startTile.get(p.id) ?? t;
-        const ddc = st.col - t.col; // direction toward start
-        const ddr = st.row - t.row;
-        // Normalise to ±1 steps, prefer the axis with larger movement
-        const preferCol = Math.abs(ddc) >= Math.abs(ddr);
-        // Build ordered list of retreat offsets (most natural direction first)
-        const retreatOffsets: [number, number][] = [];
-        if (ddc !== 0 || ddr !== 0) {
-          const sc = ddc !== 0 ? Math.sign(ddc) : 0;
-          const sr = ddr !== 0 ? Math.sign(ddr) : 0;
-          if (preferCol) {
-            retreatOffsets.push([sc, sr], [sc, 0], [0, sr], [-sc, 0], [0, -sr]);
-          } else {
-            retreatOffsets.push([sc, sr], [0, sr], [sc, 0], [0, -sr], [-sc, 0]);
-          }
-        }
-        // Fall back to cardinal directions if player didn't move
-        retreatOffsets.push([0, 1], [0, -1], [1, 0], [-1, 0]);
+      const incumbent = occupied.get(key);
 
-        let pushed = false;
-        for (const [dc, dr] of retreatOffsets) {
-          if (dc === 0 && dr === 0) continue;
-          const nc = clamp(t.col + dc, 0, GRID_COLS - 1);
-          const nr = clamp(t.row + dr, 0, GRID_ROWS - 1);
-          const ak = `${nc},${nr}`;
-          if (!occupied.has(ak)) {
-            p.position = tileToPos(nc, nr);
-            occupied.set(ak, p.id);
-            pushed = true;
-            break;
-          }
-        }
-        if (!pushed) occupied.set(key, p.id); // No free tile found; stay put
-      } else {
-        occupied.set(key, p.id);
+      if (!incumbent) {
+        occupied.set(key, p);
+        continue;
       }
+
+      const winner = chooseWinner(incumbent, p);
+      const loser = winner.id === incumbent.id ? p : incumbent;
+
+      if (winner.id !== incumbent.id) {
+        occupied.set(key, winner);
+      }
+
+      // Ball-carrier losing a same-tile duel becomes a real turnover.
+      if (loser.id === simBall.ownerId && winner.teamId !== loser.teamId) {
+        simBall.ownerId = winner.id;
+        simBall.velocity = { x: 0, y: 0 };
+        simBall.passTarget = undefined;
+        simBall.height = 0;
+        simBall.passStyle = undefined;
+        simBall.passStart = undefined;
+        winner.state = PlayerState.DRIBBLING;
+        winner.command = null;
+        winner.commandExecuted = false;
+        loser.state = PlayerState.RECOVERING;
+        loser.recoveryTimer = Math.max(loser.recoveryTimer, 0.7);
+      }
+
+      pushToFreeTile(loser, winner);
     }
   }
 
@@ -393,6 +486,12 @@ export function runSimulation(
     }
   }
 
+  const finalOwner = simBall.ownerId ? simPlayers.find((p) => p.id === simBall.ownerId) : null;
+  if (finalOwner) {
+    simBall.position = { ...finalOwner.position };
+    simBall.velocity = { x: 0, y: 0 };
+  }
+
   // CRITICAL: Patch the last frame so the next turn inherits post-separation positions.
   // Without this, finishSimulation() reads pre-separation positions from the last frame
   // and two players start the next turn on the same tile despite all separation work.
@@ -400,6 +499,15 @@ export function runSimulation(
     const lastF = frames[frames.length - 1];
     frames[frames.length - 1] = {
       ...lastF,
+      ball: {
+        ...lastF.ball,
+        position: { ...simBall.position },
+        velocity: { ...simBall.velocity },
+        ownerId: simBall.ownerId,
+        passTarget: simBall.passTarget ? { ...simBall.passTarget } : undefined,
+        height: simBall.height ?? 0,
+        passStyle: simBall.passStyle,
+      },
       players: lastF.players.map((fp) => {
         const sp = simPlayers.find((p) => p.id === fp.id);
         return sp ? { ...fp, position: { ...sp.position } } : fp;
@@ -1252,50 +1360,39 @@ function detectAndResolveEvents(
       if (dist > ENTER_DIST) continue;
 
       const defSpeed = vec2Len(other.velocity);
-      if (defSpeed < 15) continue; // must be actively moving
+      const carrierSpeed = vec2Len(owner.velocity);
 
-      // The tackler must be moving TOWARD the carrier (not already past them).
       const toOwner = vec2Normalize(vec2Sub(owner.position, other.position));
-      if (vec2Dot(vec2Normalize(other.velocity), toOwner) < 0.25) continue;
+      const defenderMovingTowardCarrier =
+        defSpeed >= 15 && vec2Dot(vec2Normalize(other.velocity), toOwner) >= 0.25;
 
-      // CHECK 1 passed — tackler entered the carrier's tile.
-      // They must retreat regardless of what happens next.
+      const toDefender = vec2Normalize(vec2Sub(other.position, owner.position));
+      const carrierRunningIntoDefender =
+        carrierSpeed >= 15 && vec2Dot(vec2Normalize(owner.velocity), toDefender) >= 0.15;
 
-      // CHECK 2 — is the planned target BEYOND the carrier's tile?
-      // Simple tile-based test: if the tackler's command destination is a
-      // DIFFERENT tile than the carrier's current tile, the carrier's tile is
-      // just a waypoint and the tackler was passing through.
-      // If the destination IS the carrier's tile they were merely stepping in —
-      // no contest.  We skip the commandExecuted guard so a player that just
-      // arrived at their target this same tick can still be caught.
+      // New rule: a stationary defender still exists. If the carrier runs
+      // through that defender's tile, the defender gets a real ball challenge.
+      if (!defenderMovingTowardCarrier && !carrierRunningIntoDefender) continue;
+
       const target = other.command?.targetPosition;
-      let passingThrough = false;
+      let passingThrough = carrierRunningIntoDefender;
       if (target) {
         const targetTile = posToTile(target);
         const ownerTile = posToTile(owner.position);
         passingThrough =
-          targetTile.col !== ownerTile.col || targetTile.row !== ownerTile.row;
+          passingThrough ||
+          targetTile.col !== ownerTile.col ||
+          targetTile.row !== ownerTile.row;
       }
 
       if (!passingThrough) {
-        // Tackler only entered the tile — bounce them back, no contest.
         retreatFrom(other, owner);
         other.command = null;
         other.commandExecuted = false;
         break;
       }
 
-      // CHECK 2 passed — full tackle contest.
-      let keepScore = owner.stats.attack / 10 - other.stats.defense / 10; // -1 … +1
-      if (owner.ability === "ghost_run" || owner.ability === "powerhouse")
-        keepScore += 0.2;
-      if (other.ability === "iron_tackle" || other.ability === "powerhouse")
-        keepScore -= 0.2;
-      // Carrier bonus: dribbling actively through gives slight edge
-      const carrierSpeed = vec2Len(owner.velocity);
-      if (carrierSpeed > defSpeed) keepScore += 0.1;
-
-      const keepChance = Math.max(0.05, Math.min(0.9, 0.3 + keepScore * 0.4));
+      const keepChance = carrierKeepChance(owner, other);
       const carrierKeepsBall = rng() < keepChance;
 
       if (carrierKeepsBall) {

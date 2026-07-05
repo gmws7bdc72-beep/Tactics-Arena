@@ -156,6 +156,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("ig_cb2", "Kellan Pike", "defender", 4, { attack: 4, defense: 9, passing: 6, speed: 6, luck: 5, shooting: 3, dribbling: 5, tackling: 9, marking: 9, stamina: 8, strength: 9, vision: 6, longPassing: 7, aerial: 9 }, "shadow_mark"),
     player("ig_mid", "Rafe Anvil", "midfielder", 6, { attack: 6, defense: 8, passing: 7, speed: 6, luck: 6, shooting: 5, dribbling: 6, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 7, longPassing: 7, aerial: 7 }, "powerhouse"),
     player("ig_st", "Milo Hammer", "striker", 9, { attack: 8, defense: 4, passing: 5, speed: 7, luck: 6, shooting: 8, dribbling: 6, tackling: 4, marking: 5, stamina: 7, strength: 9, vision: 5, longPassing: 5, aerial: 9 }, "powerhouse"),
+    player("ig_wb", "Tor Vale", "defender", 2, { attack: 5, defense: 8, passing: 6, speed: 7, luck: 5, shooting: 4, dribbling: 6, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 6, longPassing: 7, aerial: 7 }, "shadow_mark"),
   ]),
 
   mkTeam("the_vanguard", "The Vanguard", "#880e4f", "#ffffff", "🛡️", "2-1-1", "slow_possession", [
@@ -164,6 +165,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("tv_def2", "Nico Barr", "defender", 3, { attack: 3, defense: 9, passing: 7, speed: 5, luck: 5, shooting: 3, dribbling: 5, tackling: 9, marking: 10, stamina: 8, strength: 9, vision: 7, longPassing: 7, aerial: 9 }, "iron_tackle"),
     player("tv_cm", "Ilan Tempo", "midfielder", 8, { attack: 7, defense: 7, passing: 10, speed: 6, luck: 8, shooting: 6, dribbling: 8, tackling: 7, marking: 7, stamina: 9, strength: 6, vision: 10, longPassing: 8, aerial: 5 }, "bullet_pass"),
     player("tv_fw", "Ezra Link", "forward", 10, { attack: 8, defense: 5, passing: 9, speed: 7, luck: 7, shooting: 8, dribbling: 7, tackling: 5, marking: 6, stamina: 8, strength: 6, vision: 9, longPassing: 7, aerial: 6 }, "eagle_eye"),
+    player("tv_cm2", "Marek Calm", "midfielder", 14, { attack: 6, defense: 8, passing: 9, speed: 6, luck: 7, shooting: 5, dribbling: 7, tackling: 8, marking: 8, stamina: 9, strength: 7, vision: 9, longPassing: 8, aerial: 6 }, "bullet_pass"),
   ]),
 
   mkTeam("titanium_fc", "Titanium FC", "#37474f", "#eceff1", "⚡", "1-2-1", "balanced_build_up", [
@@ -172,6 +174,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("ti_cm1", "Orin Spark", "midfielder", 6, { attack: 7, defense: 7, passing: 8, speed: 8, luck: 7, shooting: 7, dribbling: 8, tackling: 7, marking: 7, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "powerhouse"),
     player("ti_cm2", "Vik Pulse", "midfielder", 8, { attack: 7, defense: 6, passing: 9, speed: 7, luck: 8, shooting: 6, dribbling: 8, tackling: 6, marking: 7, stamina: 8, strength: 6, vision: 9, longPassing: 8, aerial: 5 }, "bullet_pass"),
     player("ti_st", "Jett Core", "striker", 9, { attack: 9, defense: 3, passing: 6, speed: 9, luck: 7, shooting: 9, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "ghost_run"),
+    player("ti_fb", "Nolan Chrome", "defender", 2, { attack: 5, defense: 8, passing: 7, speed: 8, luck: 6, shooting: 4, dribbling: 7, tackling: 8, marking: 8, stamina: 9, strength: 8, vision: 7, longPassing: 8, aerial: 7 }, "shadow_mark"),
   ]),
 
   mkTeam("northern_wolves", "Northern Wolves", "#1b5e20", "#ffffff", "🐺", "1-1-2", "counter_press", [
@@ -180,6 +183,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("nw_cm", "Koa Hunt", "midfielder", 6, { attack: 7, defense: 9, passing: 7, speed: 9, luck: 6, shooting: 6, dribbling: 7, tackling: 9, marking: 9, stamina: 10, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "iron_tackle"),
     player("nw_fw1", "Lars Howl", "forward", 11, { attack: 8, defense: 5, passing: 7, speed: 9, luck: 7, shooting: 8, dribbling: 8, tackling: 5, marking: 6, stamina: 9, strength: 7, vision: 7, longPassing: 6, aerial: 6 }, "ghost_run"),
     player("nw_fw2", "Mika Snow", "striker", 9, { attack: 9, defense: 4, passing: 6, speed: 9, luck: 7, shooting: 9, dribbling: 8, tackling: 4, marking: 5, stamina: 9, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "eagle_eye"),
+    player("nw_wb", "Eli Storm", "midfielder", 12, { attack: 7, defense: 7, passing: 7, speed: 10, luck: 6, shooting: 6, dribbling: 8, tackling: 7, marking: 7, stamina: 10, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "ghost_run"),
   ]),
 
   mkTeam("silver_city", "Silver City", "#546e7a", "#cfd8dc", "🏙️", "1-2-1", "wide_crossing", [
@@ -188,6 +192,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("sc_wm1", "Ciro Lane", "midfielder", 7, { attack: 7, defense: 6, passing: 8, speed: 9, luck: 7, shooting: 6, dribbling: 9, tackling: 6, marking: 6, stamina: 9, strength: 6, vision: 8, longPassing: 8, aerial: 5 }, "ghost_run"),
     player("sc_wm2", "Enzo Vale", "midfielder", 11, { attack: 7, defense: 6, passing: 9, speed: 8, luck: 7, shooting: 6, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 6, vision: 9, longPassing: 9, aerial: 5 }, "bullet_pass"),
     player("sc_st", "Tomas Spire", "striker", 9, { attack: 9, defense: 3, passing: 6, speed: 7, luck: 7, shooting: 9, dribbling: 7, tackling: 3, marking: 4, stamina: 8, strength: 9, vision: 6, longPassing: 6, aerial: 10 }, "powerhouse"),
+    player("sc_wb", "Mateo Shore", "forward", 14, { attack: 8, defense: 5, passing: 8, speed: 9, luck: 7, shooting: 7, dribbling: 9, tackling: 5, marking: 5, stamina: 9, strength: 6, vision: 8, longPassing: 8, aerial: 5 }, "ghost_run"),
   ]),
 
   mkTeam("river_phoenix", "River Phoenix", "#bf360c", "#ffccbc", "🔥", "1-1-2", "quick_counterattack", [
@@ -196,6 +201,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("rp_mid", "Kai Flash", "midfielder", 8, { attack: 8, defense: 6, passing: 8, speed: 9, luck: 7, shooting: 7, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "ghost_run"),
     player("rp_fw", "Rian Flare", "forward", 7, { attack: 9, defense: 4, passing: 7, speed: 10, luck: 7, shooting: 8, dribbling: 9, tackling: 4, marking: 5, stamina: 9, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "ghost_run"),
     player("rp_st", "Sol Blaze", "striker", 9, { attack: 10, defense: 3, passing: 6, speed: 9, luck: 8, shooting: 10, dribbling: 8, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 7, longPassing: 6, aerial: 8 }, "eagle_eye"),
+    player("rp_wing", "Nico Cinder", "forward", 11, { attack: 8, defense: 4, passing: 7, speed: 10, luck: 7, shooting: 8, dribbling: 9, tackling: 4, marking: 5, stamina: 9, strength: 6, vision: 7, longPassing: 7, aerial: 5 }, "ghost_run"),
   ]),
 
   mkTeam("rooksville_fc", "Rooksville FC", "#f57f17", "#ffffff", "🌱", "1-2-1", "direct_play", [
@@ -204,6 +210,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("rf_mid1", "Theo Grove", "midfielder", 6, { attack: 7, defense: 7, passing: 8, speed: 7, luck: 7, shooting: 6, dribbling: 7, tackling: 7, marking: 7, stamina: 9, strength: 7, vision: 8, longPassing: 8, aerial: 6 }, "bullet_pass"),
     player("rf_mid2", "Jude Acres", "midfielder", 8, { attack: 7, defense: 6, passing: 7, speed: 8, luck: 8, shooting: 7, dribbling: 8, tackling: 6, marking: 6, stamina: 8, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "powerhouse"),
     player("rf_fw", "Finn Rush", "forward", 9, { attack: 8, defense: 4, passing: 6, speed: 9, luck: 8, shooting: 8, dribbling: 8, tackling: 4, marking: 5, stamina: 8, strength: 7, vision: 7, longPassing: 6, aerial: 7 }, "ghost_run"),
+    player("rf_st", "Cole Field", "striker", 10, { attack: 8, defense: 4, passing: 6, speed: 8, luck: 8, shooting: 9, dribbling: 7, tackling: 4, marking: 5, stamina: 8, strength: 8, vision: 6, longPassing: 6, aerial: 8 }, "eagle_eye"),
   ]),
 
   mkTeam("the_underdogs", "The Underdogs", "#6a1b9a", "#e1bee7", "🐕", "1-1-2", "quick_counterattack", [
@@ -212,6 +219,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("ud_mid", "Nash Bite", "midfielder", 6, { attack: 7, defense: 6, passing: 7, speed: 8, luck: 9, shooting: 6, dribbling: 8, tackling: 6, marking: 6, stamina: 9, strength: 7, vision: 7, longPassing: 7, aerial: 6 }, "powerhouse"),
     player("ud_fw1", "Zeke Dash", "forward", 7, { attack: 8, defense: 3, passing: 6, speed: 10, luck: 8, shooting: 8, dribbling: 9, tackling: 3, marking: 4, stamina: 8, strength: 6, vision: 6, longPassing: 6, aerial: 5 }, "ghost_run"),
     player("ud_fw2", "Bo Chance", "striker", 9, { attack: 8, defense: 3, passing: 5, speed: 8, luck: 10, shooting: 8, dribbling: 7, tackling: 3, marking: 4, stamina: 8, strength: 8, vision: 6, longPassing: 5, aerial: 8 }, "eagle_eye"),
+    player("ud_wing", "Taz Lucky", "forward", 11, { attack: 8, defense: 3, passing: 6, speed: 10, luck: 10, shooting: 7, dribbling: 9, tackling: 3, marking: 4, stamina: 8, strength: 6, vision: 6, longPassing: 6, aerial: 5 }, "ghost_run"),
   ]),
 
   mkTeam("coastal_fc", "Coastal FC", "#006064", "#b2ebf2", "🌊", "2-1-1", "long_ball_target", [
@@ -220,6 +228,7 @@ export const AI_TEAMS: AITeamDef[] = [
     player("cf_cb2", "Ivo Rock", "defender", 3, { attack: 3, defense: 9, passing: 6, speed: 5, luck: 5, shooting: 3, dribbling: 4, tackling: 9, marking: 9, stamina: 8, strength: 10, vision: 6, longPassing: 8, aerial: 10 }, "iron_tackle"),
     player("cf_mid", "Luca Harbor", "midfielder", 8, { attack: 7, defense: 7, passing: 8, speed: 7, luck: 7, shooting: 6, dribbling: 7, tackling: 7, marking: 7, stamina: 8, strength: 7, vision: 8, longPassing: 9, aerial: 6 }, "bullet_pass"),
     player("cf_st", "Atlas Bay", "striker", 9, { attack: 9, defense: 4, passing: 5, speed: 7, luck: 7, shooting: 9, dribbling: 6, tackling: 4, marking: 5, stamina: 8, strength: 10, vision: 6, longPassing: 5, aerial: 10 }, "powerhouse"),
+    player("cf_wing", "Sami Break", "forward", 11, { attack: 8, defense: 4, passing: 7, speed: 8, luck: 6, shooting: 8, dribbling: 8, tackling: 4, marking: 5, stamina: 8, strength: 7, vision: 7, longPassing: 7, aerial: 7 }, "ghost_run"),
   ]),
 ];
 

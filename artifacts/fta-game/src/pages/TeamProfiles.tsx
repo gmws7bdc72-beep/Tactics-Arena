@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { PlayerCard, PlayerStats, TeamConfig, TeamTactic } from "../engine/types";
 import { AI_TEAMS, TEAM_TACTICS } from "../game/league";
 import { STAT_LABELS } from "../game/players";
+import { PLAYERS_PER_TEAM } from "../engine/constants";
 
 interface Props {
   playerTeam: TeamConfig;
-  initialTeamId?: string;
   onBack: () => void;
 }
 
@@ -64,7 +64,7 @@ function tacticBar(label: string, value: number, color: string) {
   );
 }
 
-export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Props) {
+export default function TeamProfiles({ playerTeam, onBack }: Props) {
   const teams = useMemo<ProfileTeam[]>(() => [
     {
       id: "player_team",
@@ -89,13 +89,7 @@ export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Prop
     })),
   ], [playerTeam]);
 
-  const defaultSelectedId = initialTeamId ?? teams[0]?.id ?? "player_team";
-  const [selectedId, setSelectedId] = useState(defaultSelectedId);
-
-  useEffect(() => {
-    setSelectedId(defaultSelectedId);
-  }, [defaultSelectedId]);
-
+  const [selectedId, setSelectedId] = useState(teams[0]?.id ?? "player_team");
   const selected = teams.find((team) => team.id === selectedId) ?? teams[0];
 
   return (
@@ -157,7 +151,7 @@ export default function TeamProfiles({ playerTeam, initialTeamId, onBack }: Prop
         </div>
 
         <div className="space-y-3">
-          {selected.players.slice(0, 5).map((player) => (
+          {selected.players.slice(0, PLAYERS_PER_TEAM).map((player) => (
             <div
               key={player.id}
               className="rounded-2xl p-3"

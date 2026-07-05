@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { TeamConfig, PlayerCard as PlayerCardType } from "../engine/types";
 import { ALL_PLAYERS } from "../game/players";
 import { FORMATIONS } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, PLAYERS_PER_TEAM } from "../engine/constants";
 
 interface Props {
   team: TeamConfig;
@@ -10,7 +10,7 @@ interface Props {
   onBack: () => void;
 }
 
-const SLOT_LABELS = ["GK", "DEF", "MID", "FWD", "FWD"];
+const SLOT_LABELS = ["GK", "DEF", "DEF", "MID", "FWD", "ST"];
 
 export default function TeamSetup({ team, onSave, onBack }: Props) {
   const [currentTeam, setCurrentTeam] = useState<TeamConfig>({ ...team, players: [...team.players] });
@@ -81,9 +81,9 @@ export default function TeamSetup({ team, onSave, onBack }: Props) {
               Tap a slot to change the player · Slot 1 is Goalkeeper only
             </p>
 
-            {/* Current lineup — 5 slots */}
+            {/* Current lineup — 6 slots */}
             <div className="space-y-2 mb-6">
-              {currentTeam.players.slice(0, 5).map((p, i) => {
+              {currentTeam.players.slice(0, PLAYERS_PER_TEAM).map((p, i) => {
                 const slotLabel = SLOT_LABELS[i] ?? `#${i + 1}`;
                 const isGKSlot = i === 0;
                 return (
