@@ -387,6 +387,21 @@ function isAIPlayerOffside(p: SimPlayer, playerPlayers: SimPlayer[]): boolean {
   return p.position.x < PITCH_WIDTH / 3 && p.position.x < lineX;
 }
 
+// Returns the x-coordinate of the offside line as seen by the player team's attackers.
+// Player attacks rightward, so their offside line = 2nd-to-last AI player sorted by x DESC.
+function playerOffsideLineX(aiPlayers: SimPlayer[]): number {
+  if (aiPlayers.length === 0) return PITCH_WIDTH;
+  const sorted = [...aiPlayers].sort((a, b) => b.position.x - a.position.x);
+  return sorted.length >= 2 ? sorted[1].position.x : sorted[0].position.x;
+}
+
+function isPlayerTeamPlayerOffside(p: SimPlayer, aiPlayers: SimPlayer[]): boolean {
+  if (p.role === "goalkeeper") return false;
+  const lineX = playerOffsideLineX(aiPlayers);
+  // Offside only in the attacking third (x > 2/3 pitch) — middle third is a free zone.
+  return p.position.x > (PITCH_WIDTH * 2) / 3 && p.position.x > lineX;
+}
+
 /**
  * Cap poachers to 1 per team and handle onside retreat.
  * The most-advanced poacher (lowest x, since AI attacks leftward) keeps the role.
@@ -511,6 +526,7 @@ function bestAnyPass(
   const ct = posToTile(carrier.position);
   const candidates = aiPlayers
     .filter(p => p.id !== carrier.id)
+    .filter(p => !isAIPlayerOffside(p, playerPlayers))
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
     .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
@@ -1317,11 +1333,33 @@ export function generateAICommands(
     friendly.add(tileKey(t.col, t.row));
   }
 
+  // ── Offside filtering ────────────────────────────────────────────────────
+  // Compute which players from each team are currently offside.
+  // Offside players are invisible to AI pass/mark decisions.
+  // AI offside players retreat immediately instead of receiving commands.
+  const aiOffsideSet = new Set(
+    aiPlayers
+      .filter(p => p.id !== ball.ownerId && isAIPlayerOffside(p, playerPlayers))
+      .map(p => p.id)
+  );
+  const playerOffsideSet = new Set(
+    playerPlayers
+      .filter(p => p.id !== ball.ownerId && isPlayerTeamPlayerOffside(p, aiPlayers))
+      .map(p => p.id)
+  );
+
+  // Onside-only player lists used for all pass/mark/press decisions.
+  const activeAI = aiPlayers.filter(p => !aiOffsideSet.has(p.id));
+  const activePlayerPlayers = playerPlayers.filter(p => !playerOffsideSet.has(p.id));
+
+  // Column just inside the AI's onside zone (AI attacks leftward, offside zone is col < ~5).
+  const onsideCol = Math.ceil((PITCH_WIDTH / 3) / (PITCH_WIDTH / GRID_COLS)) + 1;
+
   const carrierTile =
     aiHasBall && ballOwner ? posToTile(ballOwner.position) : ballTile;
 
   const projectedAI: SimPlayer[] = aiHasBall
-    ? aiPlayers.map((p) => {
+    ? activeAI.map((p) => {
         if (p.id === ball.ownerId) return p;
         if (p.role === "goalkeeper") return p;
 
@@ -1329,7 +1367,7 @@ export function generateAICommands(
 
         if (currentTile.col >= carrierTile.col) return p;
 
-        const roleIdx = aiPlayers
+        const roleIdx = activeAI
           .filter((q) => q.role === p.role)
           .findIndex((q) => q.id === p.id);
 
@@ -1342,7 +1380,7 @@ export function generateAICommands(
           position: tileToPos(projTile.col, projTile.row),
         };
       })
-    : aiPlayers;
+    : activeAI;
 
   const roleOrder = (p: SimPlayer) =>
     p.role === "goalkeeper"
@@ -1368,6 +1406,14 @@ export function generateAICommands(
 
     for (const p of byProximity) {
       const pTile = posToTile(p.position);
+      // Offside AI players retreat to get onside instead of chasing the ball.
+      if (aiOffsideSet.has(p.id)) {
+        commands.set(p.id, {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(onsideCol, pTile.row),
+        });
+        continue;
+      }
       commands.set(
         p.id,
         chaseLooseBall(p, pTile, ballTile, claimed, friendly),
@@ -1382,6 +1428,15 @@ export function generateAICommands(
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
+
+    // Offside AI players retreat to get onside — invisible to all other logic.
+    if (!hasBall && aiOffsideSet.has(player.id)) {
+      commands.set(player.id, {
+        type: CommandType.MOVE,
+        targetPosition: tileToPos(onsideCol, pt.row),
+      });
+      continue;
+    }
 
     if (!hasBall && planRef.current?.runnerId === player.id) {
       const { runTile } = planRef.current;
@@ -1404,7 +1459,7 @@ export function generateAICommands(
             pt,
             hasBall,
             projectedAI,
-            playerPlayers,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1418,7 +1473,7 @@ export function generateAICommands(
             pt,
             hasBall,
             projectedAI,
-            playerPlayers,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1432,7 +1487,7 @@ export function generateAICommands(
             pt,
             hasBall,
             projectedAI,
-            playerPlayers,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1446,8 +1501,8 @@ export function generateAICommands(
           cmd = tier1Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1459,8 +1514,8 @@ export function generateAICommands(
           cmd = tier2Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1472,8 +1527,8 @@ export function generateAICommands(
           cmd = tier3Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1487,8 +1542,8 @@ export function generateAICommands(
           cmd = tier1Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1500,8 +1555,8 @@ export function generateAICommands(
           cmd = tier2Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
@@ -1513,8 +1568,8 @@ export function generateAICommands(
           cmd = tier3Defense(
             player,
             pt,
-            aiPlayers,
-            playerPlayers,
+            activeAI,
+            activePlayerPlayers,
             ballTile,
             claimed,
             friendly,
