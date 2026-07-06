@@ -35,8 +35,18 @@ interface Props {
   onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
 }
 
-type TileState = "reachable" | "reachable-enemy" | "reachable-friendly" | "current" | "none";
-type ScreenPoint = { x: number; y: number };
+type TileState =
+  | "reachable"
+  | "reachable-enemy"
+  | "reachable-friendly"
+  | "current"
+  | "none";
+
+type ScreenPoint = {
+  x: number;
+  y: number;
+};
+
 type View2_5D = {
   project: (p: Vec2) => ScreenPoint;
   unproject: (p: ScreenPoint) => Vec2;
@@ -52,7 +62,12 @@ function clamp(n: number, min: number, max: number): number {
 function rgba(hex: string, alpha: number): string {
   const clean = hex.replace("#", "");
   const bigint = parseInt(
-    clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean,
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : clean,
     16,
   );
 
@@ -63,27 +78,51 @@ function rgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const radius = Math.min(r, w / 2, h / 2);
+
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
 
-  // Top-down arcade camera like Score! Match / mobile tactics games.
-  // This is LESS isometric, MORE overhead.
-  const CAMERA_ZOOM = isVertical ? 1.22 : 1.18;
+  // Top-down mobile football angle.
+  // This is close to the screenshot: mostly overhead, slightly rotated.
+  const CAMERA_ZOOM = isVertical ? 1.25 : 1.2;
+  const CAMERA_SHIFT_X = isVertical ? 0 : 0;
+  const CAMERA_SHIFT_Y = isVertical ? 0.02 : 0.02;
 
-  // Move the camera slightly down the pitch so the near side feels bigger.
-  const skew = isVertical ? 0.22 : 0.18;
-  const squash = isVertical ? 0.88 : 0.86;
-
-  // Main angle controls:
-  // lower skew = less sideways slant
-  // higher squash = more top-down / less far-away
-    const skew = isVertical ? 0.16 : 0.13;
-    const squash = isVertical ? 0.9 : 0.88;
+  const skew = isVertical ? 0.16 : 0.13;
+  const squash = isVertical ? 0.9 : 0.88;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
-      ? { x: p.y, y: PITCH_WIDTH - p.x }
-      : { x: p.x, y: p.y };
+      ? {
+          x: p.y,
+          y: PITCH_WIDTH - p.x,
+        }
+      : {
+          x: p.x,
+          y: p.y,
+        };
 
   const raw = (p: Vec2): ScreenPoint => {
     const b = base(p);
@@ -106,7 +145,6 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const minY = Math.min(...corners.map((p) => p.y));
   const maxY = Math.max(...corners.map((p) => p.y));
 
-  // Tiny padding so the pitch fills the screen.
   const padX = W * 0.005;
   const padTop = H * 0.005;
   const padBottom = H * 0.005;
@@ -121,15 +159,8 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const fittedW = (maxX - minX) * scale;
   const fittedH = (maxY - minY) * scale;
 
-  const ox =
-    (W - fittedW) / 2 -
-    minX * scale +
-    W * CAMERA_SHIFT_X;
-
-  const oy =
-    (H - fittedH) / 2 -
-    minY * scale +
-    H * CAMERA_SHIFT_Y;
+  const ox = (W - fittedW) / 2 - minX * scale + W * CAMERA_SHIFT_X;
+  const oy = (H - fittedH) / 2 - minY * scale + H * CAMERA_SHIFT_Y;
 
   const project = (p: Vec2): ScreenPoint => {
     const r = raw(p);
@@ -148,8 +179,14 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
     const bx = rx + (by - baseH / 2) * skew;
 
     const pitch = isVertical
-      ? { x: PITCH_WIDTH - by, y: bx }
-      : { x: bx, y: by };
+      ? {
+          x: PITCH_WIDTH - by,
+          y: bx,
+        }
+      : {
+          x: bx,
+          y: by,
+        };
 
     return {
       x: clamp(pitch.x, 0, PITCH_WIDTH - 1),
@@ -165,7 +202,6 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const radius = (r: number, pitchY = PITCH_HEIGHT / 2) => {
     const fakeDepth = isVertical ? 0.5 : clamp(pitchY / PITCH_HEIGHT, 0, 1);
 
-    // Keep players readable, but less fake-3D size distortion.
     return r * scale * (0.95 + fakeDepth * 0.16);
   };
 
@@ -299,6 +335,161 @@ function tileCorners(col: number, row: number): Vec2[] {
   ];
 }
 
+function drawStadiumBackdrop(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+) {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#173c5a");
+  sky.addColorStop(0.32, "#1d5a3a");
+  sky.addColorStop(0.7, "#12351f");
+  sky.addColorStop(1, "#08120c");
+
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  const light1 = ctx.createRadialGradient(
+    W * 0.18,
+    H * 0.08,
+    0,
+    W * 0.18,
+    H * 0.08,
+    W * 0.38,
+  );
+  light1.addColorStop(0, "rgba(255,255,210,0.25)");
+  light1.addColorStop(1, "rgba(255,255,210,0)");
+  ctx.fillStyle = light1;
+  ctx.fillRect(0, 0, W, H);
+
+  const light2 = ctx.createRadialGradient(
+    W * 0.82,
+    H * 0.08,
+    0,
+    W * 0.82,
+    H * 0.08,
+    W * 0.38,
+  );
+  light2.addColorStop(0, "rgba(255,255,210,0.2)");
+  light2.addColorStop(1, "rgba(255,255,210,0)");
+  ctx.fillStyle = light2;
+  ctx.fillRect(0, 0, W, H);
+
+  // Main crowd stand
+  ctx.fillStyle = "rgba(12,18,28,0.94)";
+  ctx.fillRect(W * 0.04, H * 0.025, W * 0.92, H * 0.2);
+
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fillRect(W * 0.05, H * 0.075, W * 0.9, 2);
+  ctx.fillRect(W * 0.05, H * 0.135, W * 0.9, 2);
+  ctx.fillRect(W * 0.05, H * 0.195, W * 0.9, 2);
+
+  const crowdColors = [
+    "#2f80ed",
+    "#eb5757",
+    "#f2c94c",
+    "#27ae60",
+    "#ffffff",
+    "#9b51e0",
+    "#56ccf2",
+    "#f2994a",
+  ];
+
+  for (let row = 0; row < 4; row++) {
+    for (let i = 0; i < 72; i++) {
+      const x = W * 0.07 + i * ((W * 0.86) / 72);
+      const y = H * 0.055 + row * H * 0.043 + ((i + row) % 3) * 1.5;
+
+      ctx.fillStyle = crowdColors[(i + row * 5) % crowdColors.length];
+      ctx.globalAlpha = 0.55 + ((i + row) % 4) * 0.08;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+
+  // Banners
+  const bannerY = H * 0.245;
+  const bannerH = H * 0.055;
+
+  ctx.fillStyle = "#1b5eaa";
+  ctx.fillRect(W * 0.08, bannerY, W * 0.24, bannerH);
+
+  ctx.fillStyle = "#b3312b";
+  ctx.fillRect(W * 0.38, bannerY, W * 0.22, bannerH);
+
+  ctx.fillStyle = "#2d6a4f";
+  ctx.fillRect(W * 0.66, bannerY, W * 0.25, bannerH);
+
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.font = `900 ${Math.max(10, Math.round(H * 0.022))}px Inter, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("PLAY SMART", W * 0.2, bannerY + bannerH / 2);
+  ctx.fillText("FTA ARENA", W * 0.49, bannerY + bannerH / 2);
+  ctx.fillText("WIN THE TURN", W * 0.785, bannerY + bannerH / 2);
+
+  // Side walls
+  ctx.fillStyle = "rgba(70,86,66,0.95)";
+  ctx.fillRect(W * 0.01, H * 0.25, W * 0.05, H * 0.55);
+  ctx.fillRect(W * 0.94, H * 0.25, W * 0.05, H * 0.55);
+
+  // Bottom walkway
+  ctx.fillStyle = "rgba(30,35,38,0.88)";
+  ctx.fillRect(W * 0.02, H * 0.84, W * 0.96, H * 0.13);
+
+  // Benches / little people
+  for (let i = 0; i < 7; i++) {
+    const x = W * 0.08 + i * W * 0.065;
+    const y = H * 0.895;
+
+    ctx.fillStyle = "rgba(120,80,40,0.95)";
+    ctx.fillRect(x - 11, y + 10, 24, 5);
+
+    ctx.fillStyle = crowdColors[i % crowdColors.length];
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#1f2933";
+    ctx.fillRect(x - 4, y + 5, 8, 12);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const x = W * 0.58 + i * W * 0.055;
+    const y = H * 0.895;
+
+    ctx.fillStyle = "rgba(120,80,40,0.95)";
+    ctx.fillRect(x - 11, y + 10, 24, 5);
+
+    ctx.fillStyle = crowdColors[(i + 3) % crowdColors.length];
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#1f2933";
+    ctx.fillRect(x - 4, y + 5, 8, 12);
+  }
+
+  // Warm vignette
+  const vignette = ctx.createRadialGradient(
+    W / 2,
+    H * 0.45,
+    W * 0.1,
+    W / 2,
+    H * 0.55,
+    W * 0.86,
+  );
+
+  vignette.addColorStop(0, "rgba(255,255,255,0.04)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.35)");
+
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+}
+
 export default function PitchCanvas({
   frame,
   playerTeam,
@@ -307,7 +498,6 @@ export default function PitchCanvas({
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
-  passOriginPos,
   phase,
   isVertical = false,
   activePlanningTeam,
@@ -359,10 +549,19 @@ export default function PitchCanvas({
       if (p.id === selectedPlayerId) continue;
 
       const t = posToTile(p.position);
-      occupancy.set(`${t.col},${t.row}`, p.teamId === selPlayer.teamId ? "friendly" : "enemy");
+      occupancy.set(
+        `${t.col},${t.row}`,
+        p.teamId === selPlayer.teamId ? "friendly" : "enemy",
+      );
     }
 
-    const reachable = getReachableTiles(pt.col, pt.row, range, isGK, selPlayer.teamId);
+    const reachable = getReachableTiles(
+      pt.col,
+      pt.row,
+      range,
+      isGK,
+      selPlayer.teamId,
+    );
 
     for (const t of reachable) {
       const key = `${t.col},${t.row}`;
@@ -391,28 +590,7 @@ export default function PitchCanvas({
 
     ctx.clearRect(0, 0, W, H);
 
-    const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, "#08111d");
-    bg.addColorStop(0.55, "#12251d");
-    bg.addColorStop(1, "#070b10");
-
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, W, H);
-
-    const vignette = ctx.createRadialGradient(
-      W / 2,
-      H * 0.45,
-      W * 0.05,
-      W / 2,
-      H * 0.55,
-      W * 0.75,
-    );
-
-    vignette.addColorStop(0, "rgba(255,255,255,0.05)");
-    vignette.addColorStop(1, "rgba(0,0,0,0.42)");
-
-    ctx.fillStyle = vignette;
-    ctx.fillRect(0, 0, W, H);
+    drawStadiumBackdrop(ctx, W, H);
 
     const pitchCorners = [
       view.project({ x: 0, y: 0 }),
@@ -428,7 +606,12 @@ export default function PitchCanvas({
     drawPoly(ctx, pitchCorners, "#243d2b", "rgba(255,255,255,0.15)", 2);
     ctx.restore();
 
-    const pitchGrad = ctx.createLinearGradient(0, pitchCorners[0].y, 0, pitchCorners[2].y);
+    const pitchGrad = ctx.createLinearGradient(
+      0,
+      pitchCorners[0].y,
+      0,
+      pitchCorners[2].y,
+    );
     pitchGrad.addColorStop(0, "#416e31");
     pitchGrad.addColorStop(0.5, "#547f36");
     pitchGrad.addColorStop(1, "#355a29");
@@ -436,16 +619,21 @@ export default function PitchCanvas({
     drawPoly(ctx, pitchCorners, pitchGrad, "rgba(255,255,255,0.28)", 2.2);
 
     for (let col = 0; col < GRID_COLS; col++) {
-      const fill = col % 2 === 0 ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.035)";
+      const fill =
+        col % 2 === 0 ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.035)";
       const x1 = col * TILE_W;
       const x2 = x1 + TILE_W;
 
-      drawPoly(ctx, [
-        view.project({ x: x1, y: 0 }),
-        view.project({ x: x2, y: 0 }),
-        view.project({ x: x2, y: PITCH_HEIGHT }),
-        view.project({ x: x1, y: PITCH_HEIGHT }),
-      ], fill);
+      drawPoly(
+        ctx,
+        [
+          view.project({ x: x1, y: 0 }),
+          view.project({ x: x2, y: 0 }),
+          view.project({ x: x2, y: PITCH_HEIGHT }),
+          view.project({ x: x1, y: PITCH_HEIGHT }),
+        ],
+        fill,
+      );
     }
 
     ctx.save();
@@ -456,7 +644,8 @@ export default function PitchCanvas({
       const ry = (i * 97) % Math.floor(PITCH_HEIGHT);
       const p = view.project({ x: rx, y: ry });
 
-      ctx.fillStyle = i % 3 === 0 ? "rgba(255,230,165,0.35)" : "rgba(30,20,10,0.28)";
+      ctx.fillStyle =
+        i % 3 === 0 ? "rgba(255,230,165,0.35)" : "rgba(30,20,10,0.28)";
       ctx.fillRect(p.x, p.y, 1.1, 1.1);
     }
 
@@ -464,12 +653,19 @@ export default function PitchCanvas({
 
     const line = "rgba(255,255,255,0.78)";
 
-    drawProjectedPath(ctx, view, [
-      { x: 0, y: 0 },
-      { x: PITCH_WIDTH, y: 0 },
-      { x: PITCH_WIDTH, y: PITCH_HEIGHT },
-      { x: 0, y: PITCH_HEIGHT },
-    ], line, 2.2, true);
+    drawProjectedPath(
+      ctx,
+      view,
+      [
+        { x: 0, y: 0 },
+        { x: PITCH_WIDTH, y: 0 },
+        { x: PITCH_WIDTH, y: PITCH_HEIGHT },
+        { x: 0, y: PITCH_HEIGHT },
+      ],
+      line,
+      2.2,
+      true,
+    );
 
     drawProjectedLine(
       ctx,
@@ -510,36 +706,56 @@ export default function PitchCanvas({
     const goalTop = GOAL_TOP_Y;
     const goalBottom = GOAL_TOP_Y + GOAL_WIDTH;
 
-    drawProjectedPath(ctx, view, [
-      { x: 0, y: goalTop },
-      { x: -GOAL_DEPTH, y: goalTop },
-      { x: -GOAL_DEPTH, y: goalBottom },
-      { x: 0, y: goalBottom },
-    ], "rgba(255,255,255,0.72)", 2.4);
+    drawProjectedPath(
+      ctx,
+      view,
+      [
+        { x: 0, y: goalTop },
+        { x: -GOAL_DEPTH, y: goalTop },
+        { x: -GOAL_DEPTH, y: goalBottom },
+        { x: 0, y: goalBottom },
+      ],
+      "rgba(255,255,255,0.72)",
+      2.4,
+    );
 
-    drawProjectedPath(ctx, view, [
-      { x: PITCH_WIDTH, y: goalTop },
-      { x: PITCH_WIDTH + GOAL_DEPTH, y: goalTop },
-      { x: PITCH_WIDTH + GOAL_DEPTH, y: goalBottom },
-      { x: PITCH_WIDTH, y: goalBottom },
-    ], "rgba(255,255,255,0.72)", 2.4);
+    drawProjectedPath(
+      ctx,
+      view,
+      [
+        { x: PITCH_WIDTH, y: goalTop },
+        { x: PITCH_WIDTH + GOAL_DEPTH, y: goalTop },
+        { x: PITCH_WIDTH + GOAL_DEPTH, y: goalBottom },
+        { x: PITCH_WIDTH, y: goalBottom },
+      ],
+      "rgba(255,255,255,0.72)",
+      2.4,
+    );
 
     ctx.save();
     ctx.globalAlpha = 0.08;
 
-    drawPoly(ctx, [
-      view.project({ x: 0, y: 0 }),
-      view.project({ x: PITCH_WIDTH / 3, y: 0 }),
-      view.project({ x: PITCH_WIDTH / 3, y: PITCH_HEIGHT }),
-      view.project({ x: 0, y: PITCH_HEIGHT }),
-    ], "#ffffff");
+    drawPoly(
+      ctx,
+      [
+        view.project({ x: 0, y: 0 }),
+        view.project({ x: PITCH_WIDTH / 3, y: 0 }),
+        view.project({ x: PITCH_WIDTH / 3, y: PITCH_HEIGHT }),
+        view.project({ x: 0, y: PITCH_HEIGHT }),
+      ],
+      "#ffffff",
+    );
 
-    drawPoly(ctx, [
-      view.project({ x: (2 * PITCH_WIDTH) / 3, y: 0 }),
-      view.project({ x: PITCH_WIDTH, y: 0 }),
-      view.project({ x: PITCH_WIDTH, y: PITCH_HEIGHT }),
-      view.project({ x: (2 * PITCH_WIDTH) / 3, y: PITCH_HEIGHT }),
-    ], "#ffffff");
+    drawPoly(
+      ctx,
+      [
+        view.project({ x: (2 * PITCH_WIDTH) / 3, y: 0 }),
+        view.project({ x: PITCH_WIDTH, y: 0 }),
+        view.project({ x: PITCH_WIDTH, y: PITCH_HEIGHT }),
+        view.project({ x: (2 * PITCH_WIDTH) / 3, y: PITCH_HEIGHT }),
+      ],
+      "#ffffff",
+    );
 
     ctx.restore();
 
@@ -563,8 +779,12 @@ export default function PitchCanvas({
       [7, 5],
     );
 
-    const selPlayer = selectedPlayerId ? frame.players.find((p) => p.id === selectedPlayerId) : null;
-    const tileMap = phase === "planning" ? buildTileMap() : new Map<string, TileState>();
+    const selPlayer = selectedPlayerId
+      ? frame.players.find((p) => p.id === selectedPlayerId)
+      : null;
+
+    const tileMap =
+      phase === "planning" ? buildTileMap() : new Map<string, TileState>();
 
     if (phase === "planning") {
       for (let col = 0; col < GRID_COLS; col++) {
@@ -574,13 +794,37 @@ export default function PitchCanvas({
           const corners = tileCorners(col, row).map(view.project);
 
           if (selPlayer && state === "current") {
-            drawPoly(ctx, corners, "rgba(255,220,0,0.25)", "rgba(255,220,0,0.75)", 1.3);
+            drawPoly(
+              ctx,
+              corners,
+              "rgba(255,220,0,0.25)",
+              "rgba(255,220,0,0.75)",
+              1.3,
+            );
           } else if (selPlayer && state === "reachable") {
-            drawPoly(ctx, corners, "rgba(0,230,118,0.16)", "rgba(0,230,118,0.45)", 1.1);
+            drawPoly(
+              ctx,
+              corners,
+              "rgba(0,230,118,0.16)",
+              "rgba(0,230,118,0.45)",
+              1.1,
+            );
           } else if (selPlayer && state === "reachable-enemy") {
-            drawPoly(ctx, corners, "rgba(255,96,0,0.22)", "rgba(255,96,0,0.65)", 1.2);
+            drawPoly(
+              ctx,
+              corners,
+              "rgba(255,96,0,0.22)",
+              "rgba(255,96,0,0.65)",
+              1.2,
+            );
           } else if (selPlayer && state === "reachable-friendly") {
-            drawPoly(ctx, corners, "rgba(120,120,120,0.12)", "rgba(180,180,180,0.32)", 1.0);
+            drawPoly(
+              ctx,
+              corners,
+              "rgba(120,120,120,0.12)",
+              "rgba(180,180,180,0.32)",
+              1,
+            );
           } else {
             drawPoly(ctx, corners, undefined, "rgba(255,255,255,0.055)", 0.6);
           }
@@ -621,7 +865,10 @@ export default function PitchCanvas({
           if (arc) {
             const mid = {
               x: (fromPos.x + to.x) / 2,
-              y: Math.min(fromPos.y, to.y) - Math.abs(to.x - fromPos.x) * 0.18 - 38,
+              y:
+                Math.min(fromPos.y, to.y) -
+                Math.abs(to.x - fromPos.x) * 0.18 -
+                38,
             };
 
             ctx.moveTo(fromPos.x, fromPos.y);
@@ -638,8 +885,14 @@ export default function PitchCanvas({
 
           ctx.beginPath();
           ctx.moveTo(to.x, to.y);
-          ctx.lineTo(to.x - Math.cos(ang - 0.5) * 14, to.y - Math.sin(ang - 0.5) * 14);
-          ctx.lineTo(to.x - Math.cos(ang + 0.5) * 14, to.y - Math.sin(ang + 0.5) * 14);
+          ctx.lineTo(
+            to.x - Math.cos(ang - 0.5) * 14,
+            to.y - Math.sin(ang - 0.5) * 14,
+          );
+          ctx.lineTo(
+            to.x - Math.cos(ang + 0.5) * 14,
+            to.y - Math.sin(ang + 0.5) * 14,
+          );
           ctx.closePath();
           ctx.fill();
 
@@ -649,15 +902,20 @@ export default function PitchCanvas({
         if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
           drawArrow(from, cmd.targetPosition, "#00e676", true, false);
 
-          const to = view.project(cmd.targetPosition);
-
-          if (cmd.followUp?.type === CommandType.PASS && cmd.followUp.targetPosition) {
+          if (
+            cmd.followUp?.type === CommandType.PASS &&
+            cmd.followUp.targetPosition
+          ) {
+            const to = view.project(cmd.targetPosition);
             drawArrow(to, cmd.followUp.targetPosition, "#ff1744", true, true);
           }
         } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
           drawArrow(from, cmd.targetPosition, "#ffeb3b", true, true);
 
-          if (cmd.followUp?.type === CommandType.MOVE && cmd.followUp.targetPosition) {
+          if (
+            cmd.followUp?.type === CommandType.MOVE &&
+            cmd.followUp.targetPosition
+          ) {
             drawArrow(from, cmd.followUp.targetPosition, "#ff9800", true, false);
           }
         } else if (cmd.type === CommandType.SHOOT) {
@@ -688,8 +946,16 @@ export default function PitchCanvas({
       const scale = 0.78 + depth * 0.33;
 
       const baseColor = isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor;
-      const secColor = isPlayerTeam ? playerTeam.secondaryColor : aiTeamSecondaryColor;
-      const ringColor = isSelected ? "#00e5ff" : frame.ball.ownerId === p.id ? "#ffd700" : rgba(baseColor, 0.9);
+      const secColor = isPlayerTeam
+        ? playerTeam.secondaryColor
+        : aiTeamSecondaryColor;
+
+      const ringColor = isSelected
+        ? "#00e5ff"
+        : frame.ball.ownerId === p.id
+          ? "#ffd700"
+          : rgba(baseColor, 0.9);
+
       const r = view.radius(isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS, p.position.y);
       const bodyH = r * (1.9 + scale * 0.25);
       const bodyW = r * 1.05;
@@ -699,7 +965,15 @@ export default function PitchCanvas({
       ctx.globalAlpha = 0.32;
       ctx.fillStyle = "#000000";
       ctx.beginPath();
-      ctx.ellipse(pos.x + r * 0.14, pos.y + r * 0.82, r * 1.15, r * 0.38, -0.12, 0, Math.PI * 2);
+      ctx.ellipse(
+        pos.x + r * 0.14,
+        pos.y + r * 0.82,
+        r * 1.15,
+        r * 0.38,
+        -0.12,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
       ctx.restore();
 
@@ -709,7 +983,15 @@ export default function PitchCanvas({
       ctx.shadowColor = ringColor;
       ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 15 : 4;
       ctx.beginPath();
-      ctx.ellipse(pos.x, pos.y + r * 0.7, r * 1.18, r * 0.45, -0.08, 0, Math.PI * 2);
+      ctx.ellipse(
+        pos.x,
+        pos.y + r * 0.7,
+        r * 1.18,
+        r * 0.45,
+        -0.08,
+        0,
+        Math.PI * 2,
+      );
       ctx.stroke();
       ctx.restore();
 
@@ -730,15 +1012,20 @@ export default function PitchCanvas({
 
       ctx.beginPath();
       ctx.moveTo(pos.x - bodyW * 0.48, pos.y + r * 0.95);
-      ctx.lineTo(pos.x - bodyW * 0.72, pos.y + r * 1.0);
+      ctx.lineTo(pos.x - bodyW * 0.72, pos.y + r * 1);
       ctx.moveTo(pos.x + bodyW * 0.42, pos.y + r * 0.98);
-      ctx.lineTo(pos.x + bodyW * 0.66, pos.y + r * 1.0);
+      ctx.lineTo(pos.x + bodyW * 0.66, pos.y + r * 1);
       ctx.stroke();
 
       ctx.restore();
 
       const torsoY = pos.y - bodyH * 0.32;
-      const jerseyGrad = ctx.createLinearGradient(pos.x - bodyW, torsoY, pos.x + bodyW, torsoY + bodyH);
+      const jerseyGrad = ctx.createLinearGradient(
+        pos.x - bodyW,
+        torsoY,
+        pos.x + bodyW,
+        torsoY + bodyH,
+      );
 
       jerseyGrad.addColorStop(0, rgba("#ffffff", 0.18));
       jerseyGrad.addColorStop(0.25, baseColor);
@@ -748,8 +1035,15 @@ export default function PitchCanvas({
       ctx.fillStyle = jerseyGrad;
       ctx.strokeStyle = isGK ? "#ffd700" : "rgba(0,0,0,0.55)";
       ctx.lineWidth = isGK ? 2.4 : 1.4;
-      ctx.beginPath();
-      ctx.roundRect(pos.x - bodyW / 2, torsoY, bodyW, bodyH * 0.58, r * 0.2);
+
+      roundedRectPath(
+        ctx,
+        pos.x - bodyW / 2,
+        torsoY,
+        bodyW,
+        bodyH * 0.58,
+        r * 0.2,
+      );
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -780,13 +1074,21 @@ export default function PitchCanvas({
 
       ctx.fillStyle = "#1b1714";
       ctx.beginPath();
-      ctx.ellipse(pos.x, torsoY - headR * 1.02, headR * 0.85, headR * 0.35, 0, Math.PI, Math.PI * 2);
+      ctx.ellipse(
+        pos.x,
+        torsoY - headR * 1.02,
+        headR * 0.85,
+        headR * 0.35,
+        0,
+        Math.PI,
+        Math.PI * 2,
+      );
       ctx.fill();
 
       ctx.restore();
 
       ctx.fillStyle = secColor;
-      ctx.font = `900 ${Math.round(r * 0.55)}px 'Inter', sans-serif`;
+      ctx.font = `900 ${Math.round(r * 0.55)}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(String(p.jerseyNumber), pos.x, torsoY + bodyH * 0.28);
@@ -796,15 +1098,25 @@ export default function PitchCanvas({
 
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.72)";
-      ctx.beginPath();
-      ctx.roundRect(pos.x - nameW / 2, torsoY - headR * 2.25, nameW, nameH, 4);
+      roundedRectPath(
+        ctx,
+        pos.x - nameW / 2,
+        torsoY - headR * 2.25,
+        nameW,
+        nameH,
+        4,
+      );
       ctx.fill();
 
       ctx.fillStyle = "#ffffff";
-      ctx.font = `700 ${Math.round(nameH * 0.55)}px 'Inter', sans-serif`;
+      ctx.font = `700 ${Math.round(nameH * 0.55)}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(p.name.slice(0, 10), pos.x, torsoY - headR * 2.25 + nameH / 2);
+      ctx.fillText(
+        p.name.slice(0, 10),
+        pos.x,
+        torsoY - headR * 2.25 + nameH / 2,
+      );
       ctx.restore();
 
       if (p.offside) {
@@ -817,23 +1129,39 @@ export default function PitchCanvas({
         ctx.fillRect(pos.x + r * 0.78, torsoY - headR * 2.2, fw, fh);
 
         ctx.fillStyle = "#fff";
-        ctx.font = `900 ${Math.round(fh * 0.55)}px 'Inter', sans-serif`;
+        ctx.font = `900 ${Math.round(fh * 0.55)}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("OS", pos.x + r * 0.78 + fw / 2, torsoY - headR * 2.2 + fh / 2);
+        ctx.fillText(
+          "OS",
+          pos.x + r * 0.78 + fw / 2,
+          torsoY - headR * 2.2 + fh / 2,
+        );
 
         ctx.restore();
       }
     }
 
+    const visualBall = frame.ball as typeof frame.ball & {
+      height?: number;
+      passStyle?: string;
+    };
+
     const ballGround = view.project(frame.ball.position);
     const bv = frame.ball.velocity;
     const spd = Math.sqrt(bv.x * bv.x + bv.y * bv.y);
-    const ballHeight = frame.ball.height ?? 0;
+    const ballHeight = visualBall.height ?? 0;
     const lift = view.radius(ballHeight * 1.15, frame.ball.position.y);
-    const ballPos = { x: ballGround.x, y: ballGround.y - lift };
-    const isLongBall = frame.ball.passStyle === "long" && ballHeight > 1;
-    const br = view.radius(isLongBall ? BALL_RADIUS * 1.18 : BALL_RADIUS, frame.ball.position.y);
+    const ballPos = {
+      x: ballGround.x,
+      y: ballGround.y - lift,
+    };
+
+    const isLongBall = visualBall.passStyle === "long" && ballHeight > 1;
+    const br = view.radius(
+      isLongBall ? BALL_RADIUS * 1.18 : BALL_RADIUS,
+      frame.ball.position.y,
+    );
 
     if (phase === "simulating" && spd > 25) {
       const trailGround = view.project({
@@ -844,9 +1172,17 @@ export default function PitchCanvas({
       ctx.save();
       ctx.globalAlpha = 0.85;
 
-      const grad = ctx.createLinearGradient(trailGround.x, trailGround.y, ballPos.x, ballPos.y);
+      const grad = ctx.createLinearGradient(
+        trailGround.x,
+        trailGround.y,
+        ballPos.x,
+        ballPos.y,
+      );
       grad.addColorStop(0, "rgba(255,255,255,0)");
-      grad.addColorStop(1, isLongBall ? "rgba(0,229,255,0.62)" : "rgba(255,255,255,0.38)");
+      grad.addColorStop(
+        1,
+        isLongBall ? "rgba(0,229,255,0.62)" : "rgba(255,255,255,0.38)",
+      );
 
       ctx.strokeStyle = grad;
       ctx.lineWidth = isLongBall ? br * 1.15 : br * 0.8;
@@ -864,7 +1200,15 @@ export default function PitchCanvas({
     ctx.globalAlpha = isLongBall ? 0.22 : 0.3;
     ctx.fillStyle = "#000000";
     ctx.beginPath();
-    ctx.ellipse(ballGround.x, ballGround.y + br * 0.55, br * 1.35, br * 0.45, -0.1, 0, Math.PI * 2);
+    ctx.ellipse(
+      ballGround.x,
+      ballGround.y + br * 0.55,
+      br * 1.35,
+      br * 0.45,
+      -0.1,
+      0,
+      Math.PI * 2,
+    );
     ctx.fill();
     ctx.restore();
 
@@ -895,7 +1239,6 @@ export default function PitchCanvas({
     pendingCommands,
     selectedPlayerId,
     passTargetMode,
-    passOriginPos,
     phase,
     isVertical,
     buildTileMap,
@@ -912,7 +1255,9 @@ export default function PitchCanvas({
         for (const p of frame.players) {
           const isGK = p.role === "goalkeeper";
           const hitR = PLAYER_RADIUS + (isGK ? 4 : 2) + 8;
-          const d = Math.sqrt((p.position.x - pos.x) ** 2 + (p.position.y - pos.y) ** 2);
+          const d = Math.sqrt(
+            (p.position.x - pos.x) ** 2 + (p.position.y - pos.y) ** 2,
+          );
 
           if (d < hitR && p.teamId === selectableTeam) {
             onPlayerClick(p.id, pos);
@@ -937,8 +1282,16 @@ export default function PitchCanvas({
       if (!passTargetMode) {
         const isGK = selPlayer.role === "goalkeeper";
         const range = selPlayer.tileRange;
-        const reachable = getReachableTiles(selTile.col, selTile.row, range, isGK, selPlayer.teamId);
-        const isReachable = reachable.some((t) => t.col === clickedCol && t.row === clickedRow);
+        const reachable = getReachableTiles(
+          selTile.col,
+          selTile.row,
+          range,
+          isGK,
+          selPlayer.teamId,
+        );
+        const isReachable = reachable.some(
+          (t) => t.col === clickedCol && t.row === clickedRow,
+        );
 
         if (!isReachable) return;
       }
@@ -948,9 +1301,12 @@ export default function PitchCanvas({
         return t.col === clickedCol && t.row === clickedRow;
       });
 
-      if (occupant?.teamId === selectableTeam && occupant.id !== selectedPlayerId) return;
+      if (occupant?.teamId === selectableTeam && occupant.id !== selectedPlayerId) {
+        return;
+      }
 
-      const isEnemy = occupant?.teamId !== undefined && occupant.teamId !== selectableTeam;
+      const isEnemy =
+        occupant?.teamId !== undefined && occupant.teamId !== selectableTeam;
       const tileCenter = tileToPos(clickedCol, clickedRow);
 
       onTileClick(tileCenter, isEnemy);
