@@ -2552,10 +2552,17 @@ function nearestOpponentDistance(tile: TilePos, opponents: SimPlayer[]): number 
   );
 }
 
-function isOpponentOnTile(tile: TilePos, opponents: SimPlayer[]): boolean {
-  return opponents.some((opp) => {
-    const ot = posToTile(opp.position);
-    return ot.col === tile.col && ot.row === tile.row;
+function isAnyOtherPlayerOnTile(
+  tile: TilePos,
+  allPlayers: SimPlayer[],
+  currentPlayerId: string,
+): boolean {
+  return allPlayers.some((other) => {
+    if (other.id === currentPlayerId) return false;
+
+    const otherTile = posToTile(other.position);
+
+    return otherTile.col === tile.col && otherTile.row === tile.row;
   });
 }
 
@@ -2573,7 +2580,6 @@ function scoreCreativeCarryTile(
   const lateral = Math.abs(tile.row - from.row);
   const space = nearestOpponentDistance(tile, opponents);
   const threatened = isThreatened(tile, opponents);
-  const opponentOnTile = isOpponentOnTile(tile, opponents);
 
   const isSameAsCurrent =
     tile.col === currentTarget.col && tile.row === currentTarget.row;
@@ -2601,12 +2607,12 @@ function scoreCreativeCarryTile(
     score += progress * directness;
   }
 
-  // Sideways/diagonal movement is now a real option.
+  // Sideways and diagonal movement is now a real option.
   if (lateral > 0) {
     score += 2.2;
   }
 
-  // Backwards is useful under pressure, bad when totally free.
+  // Backward is useful under pressure, bad when totally free.
   if (backward > 0) {
     score += hardPressed ? 5.5 : -1.2;
   }
@@ -2638,13 +2644,9 @@ function scoreCreativeCarryTile(
     score += 0.8;
   }
 
-  // Do not sprint into occupied/threatened tiles unless desperate.
+  // Avoid threatened tiles unless desperate.
   if (threatened) {
     score -= hardPressed ? 3.5 : 6.5;
-  }
-
-  if (opponentOnTile) {
-    score -= 5.5;
   }
 
   // Avoid hugging the top/bottom edge too hard.
@@ -2659,7 +2661,11 @@ function scoreCreativeCarryTile(
   }
 
   // Better dribblers get more freedom to choose risky carry tiles.
-  const dribbling = statOr(player.stats.dribbling, statOr(player.stats.attack, 5));
+  const dribbling = statOr(
+    player.stats.dribbling,
+    statOr(player.stats.attack, 5),
+  );
+
   score += dribbling * 0.18;
 
   return score;
@@ -2682,7 +2688,15 @@ function creativeCarryBuffCommand(
   if (currentCmd.type !== CommandType.MOVE) return currentCmd;
   if (!currentCmd.targetPosition) return currentCmd;
 
+  const allPlayers = [...aiPlayers, ...playerPlayers];
+
   const targetTile = posToTile(currentCmd.targetPosition);
+
+  const currentTargetOccupied = isAnyOtherPlayerOnTile(
+    targetTile,
+    allPlayers,
+    player.id,
+  );
 
   const straightForwardCarry =
     targetTile.row === pt.row && targetTile.col < pt.col;
@@ -2697,10 +2711,17 @@ function creativeCarryBuffCommand(
     aiPlayers,
     playerPlayers,
     tactic,
-    hardPressed,
+    hardPressed || currentTargetOccupied,
   );
 
-  // The carrier has more than one brain cell now:
+  // Absolute rule:
+  // AI should NEVER dribble toward a tile where another player currently is.
+  // If the chosen move is occupied, try a pass before choosing a new carry tile.
+  if (passOption && currentTargetOccupied) {
+    return creativePassCommand(player, passOption, planRef);
+  }
+
+  // The carrier has more than one option now:
   // If pressed or about to do the boring short-forward dribble, check passes first.
   if (
     passOption &&
@@ -2712,6 +2733,7 @@ function creativeCarryBuffCommand(
   }
 
   const range = speedToTiles(player.stats.speed);
+
   const reachable = getReachableTiles(
     pt.col,
     pt.row,
@@ -2722,10 +2744,15 @@ function creativeCarryBuffCommand(
 
   const candidates = reachable
     .filter((tile) => !(tile.col === pt.col && tile.row === pt.row))
-    .filter((tile) => {
-      const key = tileKey(tile.col, tile.row);
-      return !claimed.has(key);
-    })
+    .filter((tile) => !claimed.has(tileKey(tile.col, tile.row)))
+    .filter(
+      (tile) =>
+        !isAnyOtherPlayerOnTile(
+          tile,
+          allPlayers,
+          player.id,
+        ),
+    )
     .map((tile) => ({
       tile,
       score: scoreCreativeCarryTile(
@@ -2742,19 +2769,29 @@ function creativeCarryBuffCommand(
 
   const best = candidates[0];
 
-  if (!best) return currentCmd;
+  // If every possible carry tile is occupied/bad, do NOT dribble into someone.
+  // Stay in place instead.
+  if (!best) {
+    return {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(pt.col, pt.row),
+    };
+  }
 
-  const currentScore = scoreCreativeCarryTile(
-    pt,
-    targetTile,
-    targetTile,
-    player,
-    playerPlayers,
-    tactic,
-    hardPressed,
-  );
+  const currentScore = currentTargetOccupied
+    ? -999
+    : scoreCreativeCarryTile(
+        pt,
+        targetTile,
+        targetTile,
+        player,
+        playerPlayers,
+        tactic,
+        hardPressed,
+      );
 
   const shouldReplace =
+    currentTargetOccupied ||
     shortStraightForwardCarry ||
     hardPressed ||
     best.score > currentScore + 1.5;
