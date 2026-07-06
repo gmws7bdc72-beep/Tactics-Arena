@@ -1,12 +1,12 @@
 export const PITCH_WIDTH = 744;
-export const PITCH_HEIGHT = 512;
+export const PITCH_HEIGHT = 460;
 
 export const GRID_COLS = 17;
-export const GRID_ROWS = 10;
+export const GRID_ROWS = 9;
 export const TILE_W = PITCH_WIDTH / GRID_COLS;
 export const TILE_H = PITCH_HEIGHT / GRID_ROWS;
 
-export const GOAL_WIDTH = 240;
+export const GOAL_WIDTH = 220;
 export const GOAL_DEPTH = 20;
 
 export const GOAL_LEFT_X = 0;
@@ -15,7 +15,7 @@ export const GOAL_TOP_Y = (PITCH_HEIGHT - GOAL_WIDTH) / 2;
 export const GOAL_BOTTOM_Y = GOAL_TOP_Y + GOAL_WIDTH;
 
 export const PENALTY_AREA_WIDTH = 128;
-export const PENALTY_AREA_HEIGHT = 224;
+export const PENALTY_AREA_HEIGHT = 200;
 
 export const TICKS_PER_TURN = 60;
 export const DELTA = 0.05;
