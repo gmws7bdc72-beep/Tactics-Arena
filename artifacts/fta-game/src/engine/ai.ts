@@ -1622,6 +1622,23 @@ export function generateAICommands(
         aiPlayers,
         playerPlayers,
       );
+
+      // FINAL SAFETY CHECK:
+      // possessionRiskBuffCommand runs late and can re-create the stupid
+      // straight-forward dribble into a defender. Run creativeCarry LAST
+      // so occupied tiles and direct-forward spam get blocked after every AI buff.
+      cmd = creativeCarryBuffCommand(
+        player,
+        cmd,
+        pt,
+        hasBall,
+        aiHasBall,
+        aiPlayers,
+        playerPlayers,
+        claimed,
+        tactic,
+        planRef,
+      );
     }
 
     logCommand(player.id, cmd);
