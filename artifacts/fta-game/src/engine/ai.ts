@@ -2726,14 +2726,18 @@ function creativeCarryBuffCommand(
   // New pass bias:
   // AI now looks for a pass more often, especially if it was about to do
   // that boring straight-forward dribble.
-  const passChance =
-    0.42 +
-    tactic.tempo * 0.012 +
-    (shortStraightForwardCarry ? 0.28 : 0) +
-    (straightForwardCarry ? 0.12 : 0) +
-    (hardPressed ? 0.24 : 0);
+  // Hard cap: if a pass exists, AI should dribble less than 20% of the time.
+  const passChance = currentTargetOccupied
+    ? 1
+    : shortStraightForwardCarry
+      ? 0.9
+      : straightForwardCarry
+        ? 0.86
+        : hardPressed
+          ? 0.88
+          : 0.82;
 
-  if (passOption && Math.random() < Math.min(0.78, passChance)) {
+  if (passOption && Math.random() < passChance) {
     return creativePassCommand(player, passOption, planRef);
   }
 
