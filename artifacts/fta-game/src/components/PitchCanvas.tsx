@@ -71,8 +71,8 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const CAMERA_ZOOM = isVertical ? 1.22 : 1.18;
 
   // Move the camera slightly down the pitch so the near side feels bigger.
-  const CAMERA_SHIFT_X = isVertical ? 0 : 0;
-  const CAMERA_SHIFT_Y = isVertical ? 0.02 : 0.02;
+  const skew = isVertical ? 0.22 : 0.18;
+  const squash = isVertical ? 0.88 : 0.86;
 
   // Main angle controls:
   // lower skew = less sideways slant
