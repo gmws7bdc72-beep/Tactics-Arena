@@ -65,8 +65,17 @@ function rgba(hex: string, alpha: number): string {
 
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
-  const skew = 0.28;
-  const squash = 0.72;
+
+  // Broadcast / arcade 2.5D camera.
+  // Bigger zoom = closer camera.
+  // More squash = flatter pitch.
+  // More skew = stronger angled camera.
+  const CAMERA_ZOOM = 1.42;
+  const CAMERA_SHIFT_X = isVertical ? -0.02 : 0;
+  const CAMERA_SHIFT_Y = isVertical ? 0.08 : 0.04;
+
+  const skew = isVertical ? 0.34 : 0.28;
+  const squash = isVertical ? 0.66 : 0.68;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
@@ -94,17 +103,32 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const minY = Math.min(...corners.map((p) => p.y));
   const maxY = Math.max(...corners.map((p) => p.y));
 
-  const padX = W * 0.04;
-  const padTop = H * 0.06;
-  const padBottom = H * 0.07;
+  // Smaller padding = pitch uses more screen.
+  const padX = W * 0.01;
+  const padTop = H * 0.01;
+  const padBottom = H * 0.01;
 
-  const scale = Math.min(
+  const fitScale = Math.min(
     (W - padX * 2) / (maxX - minX),
     (H - padTop - padBottom) / (maxY - minY),
   );
 
-  const ox = (W - (maxX - minX) * scale) / 2 - minX * scale;
-  const oy = padTop - minY * scale;
+  // This is the main size fix.
+  // Instead of fitting the whole field, we zoom in like the screenshot.
+  const scale = fitScale * CAMERA_ZOOM;
+
+  const fittedW = (maxX - minX) * scale;
+  const fittedH = (maxY - minY) * scale;
+
+  const ox =
+    (W - fittedW) / 2 -
+    minX * scale +
+    W * CAMERA_SHIFT_X;
+
+  const oy =
+    (H - fittedH) / 2 -
+    minY * scale +
+    H * CAMERA_SHIFT_Y;
 
   const project = (p: Vec2): ScreenPoint => {
     const r = raw(p);
@@ -138,8 +162,10 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   };
 
   const radius = (r: number, pitchY = PITCH_HEIGHT / 2) => {
-    const fakeDepth = isVertical ? 0.5 : clamp(pitchY / PITCH_HEIGHT, 0, 1);
-    return r * scale * (0.82 + fakeDepth * 0.24);
+    const fakeDepth = isVertical ? 0.58 : clamp(pitchY / PITCH_HEIGHT, 0, 1);
+
+    // Bigger player size so they read more like the screenshot.
+    return r * scale * (0.9 + fakeDepth * 0.34);
   };
 
   return {
