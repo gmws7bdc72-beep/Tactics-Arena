@@ -77,8 +77,8 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   // Main angle controls:
   // lower skew = less sideways slant
   // higher squash = more top-down / less far-away
-  const skew = isVertical ? 0.08 : 0.06;
-  const squash = isVertical ? 0.92 : 0.9;
+    const skew = isVertical ? 0.16 : 0.13;
+    const squash = isVertical ? 0.9 : 0.88;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
