@@ -39,6 +39,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 1,
     restDefenseDepth: 5,
     progression: "slow",
+
+    outOfPossessionName: "Compact Zonal Mid Block",
+    outOfPossessionDescription:
+      "Drops into a calm mid block, protects central passing lanes, and avoids reckless chasing. Midfielders screen, defenders hold shape.",
+    markingStyle: "zonal",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "bad_touch",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   balanced_build_up: {
@@ -53,6 +66,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 3,
     restDefenseDepth: 4,
     progression: "balanced",
+
+    outOfPossessionName: "Balanced Hybrid Block",
+    outOfPossessionDescription:
+      "Starts zonal, then picks up nearby runners when the ball enters dangerous areas. No extreme pressing, no parking the bus.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "back_pass",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   direct_play: {
@@ -67,6 +93,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 6,
     restDefenseDepth: 4,
     progression: "direct",
+
+    outOfPossessionName: "Direct Mid Block",
+    outOfPossessionDescription:
+      "Keeps two players ready to break, while defenders and midfielders protect the center. Presses loose touches but does not overcommit.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "bad_touch",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   counter_press: {
@@ -81,6 +120,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 4,
     restDefenseDepth: 4,
     progression: "direct",
+
+    outOfPossessionName: "High Counter-Press",
+    outOfPossessionDescription:
+      "Hunts the ball immediately, presses high, and uses man-oriented pressure around the carrier. Risky, fast, and chaotic.",
+    markingStyle: "hybrid",
+    blockHeight: "high",
+    defensiveShape: "aggressive",
+    pressTrigger: "always",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   low_block_counter: {
@@ -95,6 +147,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 7,
     restDefenseDepth: 6,
     progression: "counter",
+
+    outOfPossessionName: "Low Block Man Protection",
+    outOfPossessionDescription:
+      "Defenders stay deep, protect the box, and man-mark the biggest forward threat. They invite pressure, then counter.",
+    markingStyle: "man_marking",
+    blockHeight: "low",
+    defensiveShape: "protect_box",
+    pressTrigger: "none",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   quick_counterattack: {
@@ -109,6 +174,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 7,
     restDefenseDepth: 5,
     progression: "counter",
+
+    outOfPossessionName: "Trap-and-Sprint Defense",
+    outOfPossessionDescription:
+      "Lets the opponent enter bait zones, then jumps passing lanes and immediately releases runners. More aggressive than a low block.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "aggressive",
+    pressTrigger: "wide_trap",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   wide_crossing: {
@@ -123,6 +201,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 6,
     restDefenseDepth: 4,
     progression: "direct",
+
+    outOfPossessionName: "Wide Trap Zonal Defense",
+    outOfPossessionDescription:
+      "Protects the middle, allows the ball wide, then traps near the sideline with nearby defenders and midfielders.",
+    markingStyle: "zonal",
+    blockHeight: "mid",
+    defensiveShape: "wide",
+    pressTrigger: "wide_trap",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 
   long_ball_target: {
@@ -137,6 +228,19 @@ export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
     longBallFrequency: 9,
     restDefenseDepth: 6,
     progression: "direct",
+
+    outOfPossessionName: "Deep Aerial Protection",
+    outOfPossessionDescription:
+      "Stays deep, wins headers, protects the central lane, and keeps strong defenders close to dangerous forwards.",
+    markingStyle: "man_marking",
+    blockHeight: "low",
+    defensiveShape: "protect_box",
+    pressTrigger: "back_pass",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
   },
 };
 
