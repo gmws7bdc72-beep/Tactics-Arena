@@ -261,6 +261,106 @@ export default function TeamProfiles({
             {tacticBar("Press", selected.tactic.pressIntensity, "#ef4444")}
             {tacticBar("Long Ball", selected.tactic.longBallFrequency, "#ffeb3b")}
           </div>
+
+          {selected.tactic.outOfPossessionName && (
+            <div
+              className="rounded-xl p-3 mt-3"
+              style={{
+                background: "rgba(0,0,0,0.22)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span style={{ fontSize: 13 }}>🛡️</span>
+                <span
+                  className="text-xs font-black"
+                  style={{ color: "#94a3b8" }}
+                >
+                  Out of Possession
+                </span>
+                <span
+                  className="text-xs font-bold ml-auto"
+                  style={{ color: selected.jerseyColor }}
+                >
+                  {selected.tactic.outOfPossessionName}
+                </span>
+              </div>
+
+              {selected.tactic.outOfPossessionDescription && (
+                <p className="text-gray-400 text-xs leading-relaxed">
+                  {selected.tactic.outOfPossessionDescription}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-2 mt-2">
+                {selected.tactic.markingStyle && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                    style={{
+                      background: "rgba(255,255,255,0.07)",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    {selected.tactic.markingStyle === "man_marking"
+                      ? "Man Marking"
+                      : selected.tactic.markingStyle === "hybrid"
+                        ? "Hybrid"
+                        : "Zonal"}
+                  </span>
+                )}
+                {selected.tactic.blockHeight && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                    style={{
+                      background: "rgba(255,255,255,0.07)",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    {selected.tactic.blockHeight === "high"
+                      ? "High Block"
+                      : selected.tactic.blockHeight === "low"
+                        ? "Low Block"
+                        : "Mid Block"}
+                  </span>
+                )}
+                {selected.tactic.pressTrigger &&
+                  selected.tactic.pressTrigger !== "none" && (
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                      style={{
+                        background: "rgba(255,255,255,0.07)",
+                        color: "#cbd5e1",
+                      }}
+                    >
+                      {selected.tactic.pressTrigger === "always"
+                        ? "Always Press"
+                        : selected.tactic.pressTrigger === "bad_touch"
+                          ? "Press Bad Touch"
+                          : selected.tactic.pressTrigger === "back_pass"
+                            ? "Press Back Pass"
+                            : "Wide Trap"}
+                    </span>
+                  )}
+                {selected.tactic.defensiveShape && (
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                    style={{
+                      background: "rgba(255,255,255,0.07)",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    {selected.tactic.defensiveShape === "protect_box"
+                      ? "Protect Box"
+                      : selected.tactic.defensiveShape === "aggressive"
+                        ? "Aggressive"
+                        : selected.tactic.defensiveShape === "wide"
+                          ? "Wide Shape"
+                          : "Compact"}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
