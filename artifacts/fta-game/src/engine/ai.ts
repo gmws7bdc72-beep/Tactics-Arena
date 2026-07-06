@@ -2592,66 +2592,71 @@ function scoreCreativeCarryTile(
 
   let score = 0;
 
-  // Space matters a lot. This helps the AI stop running into easy tackles.
-  score += space * 1.8;
+  // Space still matters, but not enough to make the AI dribble constantly.
+  score += space * 1.45;
 
-  // It can still go forward, but not blindly every single time.
+  // Forward dribbling is still allowed, just toned down.
   if (progress > 0) {
     const directness =
       tactic.progression === "counter" || tactic.id === "quick_counterattack"
-        ? 2.7
+        ? 2.05
         : tactic.progression === "direct"
-          ? 2.2
-          : 1.35;
+          ? 1.7
+          : 1.0;
 
     score += progress * directness;
   }
 
-  // Sideways and diagonal movement is now a real option.
+  // Sideways and diagonal movement should be a real alternative.
   if (lateral > 0) {
-    score += 2.2;
+    score += 2.9;
   }
 
-  // Backward is useful under pressure, bad when totally free.
+  // Backward movement becomes a normal recycle option when pressed.
   if (backward > 0) {
-    score += hardPressed ? 5.5 : -1.2;
+    score += hardPressed ? 6.2 : -0.4;
   }
 
-  // Slow possession should recycle instead of forcing forward dribbles.
+  // Slow possession should pass/recycle instead of carrying forward.
   if (tactic.id === "slow_possession") {
-    score += lateral > 0 ? 2.5 : 0;
-    score += backward > 0 ? 2.5 : 0;
-    score -= Math.max(0, progress - 2) * 1.25;
+    score += lateral > 0 ? 3.2 : 0;
+    score += backward > 0 ? 3.4 : 0;
+    score -= Math.max(0, progress - 1) * 1.65;
   }
 
-  // Counter teams are allowed to be more vertical.
+  // Counter teams may still drive forward, but not every possession.
   if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
-    score += progress > 0 ? 1.5 : 0;
+    score += progress > 0 ? 0.9 : 0;
   }
 
-  // Wide crossing teams should be comfortable going wide.
+  // Wide teams should be willing to go around instead of straight ahead.
   if (tactic.id === "wide_crossing") {
-    score += tile.row <= 2 || tile.row >= GRID_ROWS - 3 ? 2.7 : 0;
+    score += tile.row <= 2 || tile.row >= GRID_ROWS - 3 ? 3.1 : 0;
   }
 
-  // Avoid the exact boring pattern: straight forward 1-2 tiles again and again.
+  // Main nerf: stop the repeated 1-2 tile straight-forward carry.
   if (isShortStraightForward) {
-    score -= 3.5;
+    score -= 6.2;
   }
 
-  // Still allow the old move if it is genuinely the best option.
+  // Also nerf direct forward carries in general a bit.
+  if (isStraightForward) {
+    score -= 2.1;
+  }
+
+  // If it was already the chosen move, give it only a tiny loyalty bonus.
   if (isSameAsCurrent) {
-    score += 0.8;
+    score += 0.25;
   }
 
   // Avoid threatened tiles unless desperate.
   if (threatened) {
-    score -= hardPressed ? 3.5 : 6.5;
+    score -= hardPressed ? 4.5 : 7.2;
   }
 
   // Avoid hugging the top/bottom edge too hard.
   if (tile.row === 0 || tile.row === GRID_ROWS - 1) {
-    score -= 1.6;
+    score -= 1.8;
   }
 
   // Shooting territory: prefer central lanes.
@@ -2660,13 +2665,13 @@ function scoreCreativeCarryTile(
     score -= Math.abs(tile.row - goalRow) * 0.5;
   }
 
-  // Better dribblers get more freedom to choose risky carry tiles.
+  // Better dribblers still get some freedom, but less than before.
   const dribbling = statOr(
     player.stats.dribbling,
     statOr(player.stats.attack, 5),
   );
 
-  score += dribbling * 0.18;
+  score += dribbling * 0.1;
 
   return score;
 }
@@ -2689,7 +2694,6 @@ function creativeCarryBuffCommand(
   if (!currentCmd.targetPosition) return currentCmd;
 
   const allPlayers = [...aiPlayers, ...playerPlayers];
-
   const targetTile = posToTile(currentCmd.targetPosition);
 
   const currentTargetOccupied = isAnyOtherPlayerOnTile(
@@ -2711,24 +2715,25 @@ function creativeCarryBuffCommand(
     aiPlayers,
     playerPlayers,
     tactic,
-    hardPressed || currentTargetOccupied,
+    hardPressed || currentTargetOccupied || shortStraightForwardCarry,
   );
 
-  // Absolute rule:
-  // AI should NEVER dribble toward a tile where another player currently is.
-  // If the chosen move is occupied, try a pass before choosing a new carry tile.
+  // Absolute rule: never dribble into an occupied tile.
   if (passOption && currentTargetOccupied) {
     return creativePassCommand(player, passOption, planRef);
   }
 
-  // The carrier has more than one option now:
-  // If pressed or about to do the boring short-forward dribble, check passes first.
-  if (
-    passOption &&
-    (hardPressed ||
-      shortStraightForwardCarry ||
-      Math.random() < 0.28 + tactic.tempo * 0.015)
-  ) {
+  // New pass bias:
+  // AI now looks for a pass more often, especially if it was about to do
+  // that boring straight-forward dribble.
+  const passChance =
+    0.42 +
+    tactic.tempo * 0.012 +
+    (shortStraightForwardCarry ? 0.28 : 0) +
+    (straightForwardCarry ? 0.12 : 0) +
+    (hardPressed ? 0.24 : 0);
+
+  if (passOption && Math.random() < Math.min(0.78, passChance)) {
     return creativePassCommand(player, passOption, planRef);
   }
 
@@ -2769,8 +2774,7 @@ function creativeCarryBuffCommand(
 
   const best = candidates[0];
 
-  // If every possible carry tile is occupied/bad, do NOT dribble into someone.
-  // Stay in place instead.
+  // If every possible carry tile is occupied/bad, do not dribble into someone.
   if (!best) {
     return {
       type: CommandType.MOVE,
@@ -2790,13 +2794,34 @@ function creativeCarryBuffCommand(
         hardPressed,
       );
 
+  // Dribble less in general:
+  // Before, the AI replaced carries too easily.
+  // Now it only changes to a carry if the new tile is clearly better.
   const shouldReplace =
     currentTargetOccupied ||
-    shortStraightForwardCarry ||
     hardPressed ||
-    best.score > currentScore + 1.5;
+    shortStraightForwardCarry ||
+    best.score > currentScore + 3.2;
 
   if (!shouldReplace) {
+    return currentCmd;
+  }
+
+  // Extra anti-direct-forward rule:
+  // If the best option is still straight forward, require it to be really good.
+  const bestIsStraightForward =
+    best.tile.row === pt.row && best.tile.col < pt.col;
+
+  if (
+    bestIsStraightForward &&
+    !hardPressed &&
+    !currentTargetOccupied &&
+    best.score < currentScore + 5.2
+  ) {
+    if (passOption) {
+      return creativePassCommand(player, passOption, planRef);
+    }
+
     return currentCmd;
   }
 
