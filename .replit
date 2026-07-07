@@ -6,10 +6,6 @@ id = "artifacts/api-server"
 [[artifacts]]
 id = "artifacts/mockup-sandbox"
 
-[deployment]
-router = "application"
-deploymentTarget = "cloudrun"
-
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
@@ -39,3 +35,8 @@ externalPort = 80
 
 [nix]
 packages = ["zip"]
+
+[deployment]
+build = ["bash", "-lc", "cd artifacts/fta-game && pnpm build"]
+run = ["bash", "-lc", "cd artifacts/fta-game && pnpm serve -- --port $PORT"]
+deploymentTarget = "cloudrun"
