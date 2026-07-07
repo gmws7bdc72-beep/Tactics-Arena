@@ -104,12 +104,13 @@ function roundedRectPath(
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
 
-  // Top-down mobile football angle.
-  // This is close to the screenshot: mostly overhead, slightly rotated.
-  const CAMERA_ZOOM = isVertical ? 1.25 : 1.2;
-  const CAMERA_SHIFT_X = isVertical ? 0 : 0;
-  const CAMERA_SHIFT_Y = isVertical ? 0.02 : 0.02;
+  // Slightly zoomed out from the previous version.
+  // Still angled, but not so close that the outside breaks.
+  const CAMERA_ZOOM = isVertical ? 1.12 : 1.08;
+  const CAMERA_SHIFT_X = 0;
+  const CAMERA_SHIFT_Y = isVertical ? 0.015 : 0.015;
 
+  // Mobile football angle: mostly top-down, slightly rotated.
   const skew = isVertical ? 0.16 : 0.13;
   const squash = isVertical ? 0.9 : 0.88;
 
@@ -145,9 +146,9 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const minY = Math.min(...corners.map((p) => p.y));
   const maxY = Math.max(...corners.map((p) => p.y));
 
-  const padX = W * 0.005;
-  const padTop = H * 0.005;
-  const padBottom = H * 0.005;
+  const padX = W * 0.012;
+  const padTop = H * 0.012;
+  const padBottom = H * 0.012;
 
   const fitScale = Math.min(
     (W - padX * 2) / (maxX - minX),
@@ -335,55 +336,168 @@ function tileCorners(col: number, row: number): Vec2[] {
   ];
 }
 
+function drawCrowdDot(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string,
+  r: number,
+) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawStadiumBackdrop(
   ctx: CanvasRenderingContext2D,
   W: number,
   H: number,
+  pitchCorners: ScreenPoint[],
 ) {
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, "#173c5a");
-  sky.addColorStop(0.32, "#1d5a3a");
-  sky.addColorStop(0.7, "#12351f");
-  sky.addColorStop(1, "#08120c");
+  const [topLeft, topRight, bottomRight, bottomLeft] = pitchCorners;
 
-  ctx.fillStyle = sky;
+  // Full canvas fill first. No more black void.
+  const outside = ctx.createLinearGradient(0, 0, 0, H);
+  outside.addColorStop(0, "#3a7748");
+  outside.addColorStop(0.5, "#2c643c");
+  outside.addColorStop(1, "#1e4a31");
+
+  ctx.fillStyle = outside;
   ctx.fillRect(0, 0, W, H);
 
-  const light1 = ctx.createRadialGradient(
-    W * 0.18,
-    H * 0.08,
-    0,
-    W * 0.18,
-    H * 0.08,
-    W * 0.38,
+  // Stadium/floor texture everywhere outside pitch.
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+
+  for (let i = 0; i < 260; i++) {
+    const x = (i * 137) % Math.floor(W);
+    const y = (i * 89) % Math.floor(H);
+
+    ctx.fillStyle = i % 2 === 0 ? "#67a85a" : "#173a28";
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  ctx.restore();
+
+  const sideGap = Math.max(14, W * 0.025);
+  const standDepth = Math.max(58, W * 0.095);
+  const boardDepth = Math.max(13, W * 0.019);
+
+  // Grass apron around pitch.
+  drawPoly(
+    ctx,
+    [
+      { x: Math.max(0, topLeft.x - standDepth * 0.65), y: Math.max(0, topLeft.y - standDepth * 0.55) },
+      { x: Math.min(W, topRight.x + standDepth * 0.65), y: Math.max(0, topRight.y - standDepth * 0.55) },
+      { x: Math.min(W, bottomRight.x + standDepth * 0.65), y: Math.min(H, bottomRight.y + standDepth * 0.5) },
+      { x: Math.max(0, bottomLeft.x - standDepth * 0.65), y: Math.min(H, bottomLeft.y + standDepth * 0.5) },
+    ],
+    "rgba(37,92,51,0.74)",
   );
-  light1.addColorStop(0, "rgba(255,255,210,0.25)");
-  light1.addColorStop(1, "rgba(255,255,210,0)");
-  ctx.fillStyle = light1;
-  ctx.fillRect(0, 0, W, H);
 
-  const light2 = ctx.createRadialGradient(
-    W * 0.82,
-    H * 0.08,
-    0,
-    W * 0.82,
-    H * 0.08,
-    W * 0.38,
+  // Left side stand, beside pitch.
+  drawPoly(
+    ctx,
+    [
+      { x: topLeft.x - sideGap, y: topLeft.y },
+      { x: bottomLeft.x - sideGap, y: bottomLeft.y },
+      { x: bottomLeft.x - standDepth, y: bottomLeft.y + standDepth * 0.24 },
+      { x: topLeft.x - standDepth, y: topLeft.y - standDepth * 0.18 },
+    ],
+    "#1d3037",
+    "rgba(255,255,255,0.13)",
+    2,
   );
-  light2.addColorStop(0, "rgba(255,255,210,0.2)");
-  light2.addColorStop(1, "rgba(255,255,210,0)");
-  ctx.fillStyle = light2;
-  ctx.fillRect(0, 0, W, H);
 
-  // Main crowd stand
-  ctx.fillStyle = "rgba(12,18,28,0.94)";
-  ctx.fillRect(W * 0.04, H * 0.025, W * 0.92, H * 0.2);
+  // Right side stand, beside pitch.
+  drawPoly(
+    ctx,
+    [
+      { x: topRight.x + sideGap, y: topRight.y },
+      { x: topRight.x + standDepth, y: topRight.y - standDepth * 0.18 },
+      { x: bottomRight.x + standDepth, y: bottomRight.y + standDepth * 0.24 },
+      { x: bottomRight.x + sideGap, y: bottomRight.y },
+    ],
+    "#1d3037",
+    "rgba(255,255,255,0.13)",
+    2,
+  );
 
-  ctx.fillStyle = "rgba(255,255,255,0.08)";
-  ctx.fillRect(W * 0.05, H * 0.075, W * 0.9, 2);
-  ctx.fillRect(W * 0.05, H * 0.135, W * 0.9, 2);
-  ctx.fillRect(W * 0.05, H * 0.195, W * 0.9, 2);
+  // Far stand above far touchline.
+  drawPoly(
+    ctx,
+    [
+      { x: topLeft.x - sideGap, y: topLeft.y - boardDepth },
+      { x: topRight.x + sideGap, y: topRight.y - boardDepth },
+      { x: topRight.x + sideGap * 1.5, y: Math.max(0, topRight.y - standDepth * 0.72) },
+      { x: topLeft.x - sideGap * 1.5, y: Math.max(0, topLeft.y - standDepth * 0.72) },
+    ],
+    "#172832",
+    "rgba(255,255,255,0.1)",
+    2,
+  );
 
+  // Near walkway below pitch.
+  drawPoly(
+    ctx,
+    [
+      { x: bottomLeft.x - sideGap, y: bottomLeft.y + boardDepth },
+      { x: bottomRight.x + sideGap, y: bottomRight.y + boardDepth },
+      { x: Math.min(W, bottomRight.x + standDepth * 0.88), y: Math.min(H, bottomRight.y + standDepth * 0.52) },
+      { x: Math.max(0, bottomLeft.x - standDepth * 0.88), y: Math.min(H, bottomLeft.y + standDepth * 0.52) },
+    ],
+    "#333b3d",
+    "rgba(255,255,255,0.08)",
+    2,
+  );
+
+  // Boards tight to pitch sides.
+  drawPoly(
+    ctx,
+    [
+      { x: topLeft.x - boardDepth, y: topLeft.y + 3 },
+      { x: bottomLeft.x - boardDepth, y: bottomLeft.y - 3 },
+      { x: bottomLeft.x - boardDepth * 2.3, y: bottomLeft.y - 1 },
+      { x: topLeft.x - boardDepth * 2.3, y: topLeft.y + 1 },
+    ],
+    "#1b5eaa",
+  );
+
+  drawPoly(
+    ctx,
+    [
+      { x: topRight.x + boardDepth, y: topRight.y + 3 },
+      { x: topRight.x + boardDepth * 2.3, y: topRight.y + 1 },
+      { x: bottomRight.x + boardDepth * 2.3, y: bottomRight.y - 1 },
+      { x: bottomRight.x + boardDepth, y: bottomRight.y - 3 },
+    ],
+    "#b3312b",
+  );
+
+  drawPoly(
+    ctx,
+    [
+      { x: topLeft.x + W * 0.08, y: topLeft.y - boardDepth },
+      { x: topLeft.x + W * 0.31, y: topLeft.y - boardDepth },
+      { x: topLeft.x + W * 0.31, y: topLeft.y - boardDepth * 2.5 },
+      { x: topLeft.x + W * 0.08, y: topLeft.y - boardDepth * 2.5 },
+    ],
+    "#2d6a4f",
+  );
+
+  drawPoly(
+    ctx,
+    [
+      { x: topRight.x - W * 0.31, y: topRight.y - boardDepth },
+      { x: topRight.x - W * 0.08, y: topRight.y - boardDepth },
+      { x: topRight.x - W * 0.08, y: topRight.y - boardDepth * 2.5 },
+      { x: topRight.x - W * 0.31, y: topRight.y - boardDepth * 2.5 },
+    ],
+    "#6a2db3",
+  );
+
+  // Crowd dots in side stands.
   const crowdColors = [
     "#2f80ed",
     "#eb5757",
@@ -395,96 +509,101 @@ function drawStadiumBackdrop(
     "#f2994a",
   ];
 
-  for (let row = 0; row < 4; row++) {
-    for (let i = 0; i < 72; i++) {
-      const x = W * 0.07 + i * ((W * 0.86) / 72);
-      const y = H * 0.055 + row * H * 0.043 + ((i + row) % 3) * 1.5;
+  function crowdStrip(
+    a: ScreenPoint,
+    b: ScreenPoint,
+    offsetX: number,
+    count: number,
+  ) {
+    for (let i = 0; i < count; i++) {
+      const t = i / Math.max(1, count - 1);
+      const x = a.x + (b.x - a.x) * t + offsetX + ((i % 3) - 1) * 4;
+      const y = a.y + (b.y - a.y) * t + ((i % 5) - 2) * 5;
 
-      ctx.fillStyle = crowdColors[(i + row * 5) % crowdColors.length];
-      ctx.globalAlpha = 0.55 + ((i + row) % 4) * 0.08;
-      ctx.beginPath();
-      ctx.arc(x, y, 2.15, 0, Math.PI * 2);
-      ctx.fill();
+      if (x < 0 || x > W || y < 0 || y > H) continue;
+
+      drawCrowdDot(ctx, x, y, crowdColors[i % crowdColors.length], 2.4);
     }
   }
 
-  ctx.globalAlpha = 1;
+  ctx.save();
+  ctx.globalAlpha = 0.68;
 
-  // Banners
-  const bannerY = H * 0.245;
-  const bannerH = H * 0.055;
+  for (let row = 0; row < 4; row++) {
+    crowdStrip(topLeft, bottomLeft, -standDepth * (0.32 + row * 0.13), 40);
+    crowdStrip(topRight, bottomRight, standDepth * (0.32 + row * 0.13), 40);
+  }
 
-  ctx.fillStyle = "#1b5eaa";
-  ctx.fillRect(W * 0.08, bannerY, W * 0.24, bannerH);
+  // Top crowd row.
+  for (let row = 0; row < 4; row++) {
+    for (let i = 0; i < 70; i++) {
+      const t = i / 69;
+      const x = topLeft.x + (topRight.x - topLeft.x) * t + ((i % 3) - 1) * 3;
+      const y =
+        topLeft.y +
+        (topRight.y - topLeft.y) * t -
+        standDepth * (0.18 + row * 0.12);
 
-  ctx.fillStyle = "#b3312b";
-  ctx.fillRect(W * 0.38, bannerY, W * 0.22, bannerH);
+      if (x < 0 || x > W || y < 0 || y > H) continue;
 
-  ctx.fillStyle = "#2d6a4f";
-  ctx.fillRect(W * 0.66, bannerY, W * 0.25, bannerH);
+      drawCrowdDot(ctx, x, y, crowdColors[(i + row * 9) % crowdColors.length], 2.25);
+    }
+  }
 
-  ctx.fillStyle = "rgba(255,255,255,0.9)";
-  ctx.font = `900 ${Math.max(10, Math.round(H * 0.022))}px Inter, sans-serif`;
+  ctx.restore();
+
+  // Board text.
+  ctx.fillStyle = "rgba(255,255,255,0.88)";
+  ctx.font = `900 ${Math.max(10, Math.round(H * 0.021))}px Inter, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("PLAY SMART", W * 0.2, bannerY + bannerH / 2);
-  ctx.fillText("FTA ARENA", W * 0.49, bannerY + bannerH / 2);
-  ctx.fillText("WIN THE TURN", W * 0.785, bannerY + bannerH / 2);
 
-  // Side walls
-  ctx.fillStyle = "rgba(70,86,66,0.95)";
-  ctx.fillRect(W * 0.01, H * 0.25, W * 0.05, H * 0.55);
-  ctx.fillRect(W * 0.94, H * 0.25, W * 0.05, H * 0.55);
-
-  // Bottom walkway
-  ctx.fillStyle = "rgba(30,35,38,0.88)";
-  ctx.fillRect(W * 0.02, H * 0.84, W * 0.96, H * 0.13);
-
-  // Benches / little people
-  for (let i = 0; i < 7; i++) {
-    const x = W * 0.08 + i * W * 0.065;
-    const y = H * 0.895;
-
-    ctx.fillStyle = "rgba(120,80,40,0.95)";
-    ctx.fillRect(x - 11, y + 10, 24, 5);
-
-    ctx.fillStyle = crowdColors[i % crowdColors.length];
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#1f2933";
-    ctx.fillRect(x - 4, y + 5, 8, 12);
-  }
-
-  for (let i = 0; i < 7; i++) {
-    const x = W * 0.58 + i * W * 0.055;
-    const y = H * 0.895;
-
-    ctx.fillStyle = "rgba(120,80,40,0.95)";
-    ctx.fillRect(x - 11, y + 10, 24, 5);
-
-    ctx.fillStyle = crowdColors[(i + 3) % crowdColors.length];
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#1f2933";
-    ctx.fillRect(x - 4, y + 5, 8, 12);
-  }
-
-  // Warm vignette
-  const vignette = ctx.createRadialGradient(
-    W / 2,
-    H * 0.45,
-    W * 0.1,
-    W / 2,
-    H * 0.55,
-    W * 0.86,
+  ctx.fillText(
+    "PLAY SMART",
+    topLeft.x + W * 0.195,
+    topLeft.y - boardDepth * 1.75,
   );
 
-  vignette.addColorStop(0, "rgba(255,255,255,0.04)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.35)");
+  ctx.fillText(
+    "FTA ARENA",
+    W / 2,
+    Math.max(18, topLeft.y - standDepth * 0.38),
+  );
+
+  ctx.fillText(
+    "WIN THE TURN",
+    topRight.x - W * 0.195,
+    topRight.y - boardDepth * 1.75,
+  );
+
+  // Warm lights.
+  const lightTop = ctx.createRadialGradient(
+    W * 0.5,
+    H * 0.05,
+    0,
+    W * 0.5,
+    H * 0.05,
+    W * 0.72,
+  );
+
+  lightTop.addColorStop(0, "rgba(255,255,210,0.18)");
+  lightTop.addColorStop(1, "rgba(255,255,210,0)");
+
+  ctx.fillStyle = lightTop;
+  ctx.fillRect(0, 0, W, H);
+
+  // Gentle vignette only. No black void.
+  const vignette = ctx.createRadialGradient(
+    W / 2,
+    H * 0.52,
+    W * 0.14,
+    W / 2,
+    H * 0.52,
+    W * 0.94,
+  );
+
+  vignette.addColorStop(0, "rgba(255,255,255,0.03)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.16)");
 
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, W, H);
@@ -590,8 +709,6 @@ export default function PitchCanvas({
 
     ctx.clearRect(0, 0, W, H);
 
-    drawStadiumBackdrop(ctx, W, H);
-
     const pitchCorners = [
       view.project({ x: 0, y: 0 }),
       view.project({ x: PITCH_WIDTH, y: 0 }),
@@ -599,10 +716,12 @@ export default function PitchCanvas({
       view.project({ x: 0, y: PITCH_HEIGHT }),
     ];
 
+    drawStadiumBackdrop(ctx, W, H, pitchCorners);
+
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 26;
-    ctx.shadowOffsetY = 18;
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 14;
     drawPoly(ctx, pitchCorners, "#243d2b", "rgba(255,255,255,0.15)", 2);
     ctx.restore();
 
@@ -612,6 +731,7 @@ export default function PitchCanvas({
       0,
       pitchCorners[2].y,
     );
+
     pitchGrad.addColorStop(0, "#416e31");
     pitchGrad.addColorStop(0.5, "#547f36");
     pitchGrad.addColorStop(1, "#355a29");
@@ -956,7 +1076,11 @@ export default function PitchCanvas({
           ? "#ffd700"
           : rgba(baseColor, 0.9);
 
-      const r = view.radius(isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS, p.position.y);
+      const r = view.radius(
+        isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
+        p.position.y,
+      );
+
       const bodyH = r * (1.9 + scale * 0.25);
       const bodyW = r * 1.05;
       const headR = r * 0.42;
@@ -1331,7 +1455,7 @@ export default function PitchCanvas({
       className="w-full h-full cursor-pointer rounded-lg"
       style={{
         imageRendering: "auto",
-        background: "#08111d",
+        background: "#255c33",
       }}
       onClick={handleClick}
     />

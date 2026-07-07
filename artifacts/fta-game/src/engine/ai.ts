@@ -2536,6 +2536,7 @@ function creativePassCommand(
   carrier: SimPlayer,
   target: SimPlayer,
   planRef?: { current: PassTilePlan | null },
+  passStyle: "ground" | "long" = "ground",
 ): Command {
   const targetTile = posToTile(target.position);
 
@@ -2551,8 +2552,10 @@ function creativePassCommand(
     targetPlayerId: target.id,
     targetPosition: tileToPos(targetTile.col, targetTile.row),
     coordinated: false,
-  };
+    passStyle,
+  } as Command;
 }
+
 
 function pickCreativePassOption(
   carrier: SimPlayer,
@@ -2561,10 +2564,10 @@ function pickCreativePassOption(
   tactic: TeamTactic,
   hardPressed: boolean,
 ): SimPlayer | null {
-  const forward = bestForwardPass(carrier, aiPlayers, playerPlayers, 9);
-  const lateral = bestLateralPass(carrier, aiPlayers, playerPlayers, 6);
+  const forward = bestForwardPass(carrier, aiPlayers, playerPlayers, 10);
+  const lateral = bestLateralPass(carrier, aiPlayers, playerPlayers, 7);
   const backward = bestBackwardPass(carrier, aiPlayers, playerPlayers, 7);
-  const any = bestAnyPass(carrier, aiPlayers, playerPlayers, 9);
+  const any = bestAnyPass(carrier, aiPlayers, playerPlayers, 10);
 
   const options = [forward, lateral, backward, any].filter(
     (p, index, arr): p is SimPlayer =>
@@ -2577,36 +2580,74 @@ function pickCreativePassOption(
 
   const scored = options.map((target) => {
     const t = posToTile(target.position);
-    const forwardGain = carrierTile.col - t.col;
+    const forwardGain = carrierTile.col - t.col; // AI attacks left
     const sideways = Math.abs(t.row - carrierTile.row);
     const backwardGain = t.col - carrierTile.col;
     const threatened = isThreatened(t, playerPlayers);
     const dist = tileDist(carrierTile, t);
 
+    const targetForwardTile = {
+      col: Math.max(0, t.col - 1),
+      row: t.row,
+    };
+
+    const targetHasSpaceAhead =
+      nearestOpponentDistance(targetForwardTile, playerPlayers) >= 2.5 &&
+      !isThreatened(targetForwardTile, playerPlayers);
+
     let score = 0;
 
-    score += statOr(target.stats.passing, 5) * 0.15;
+    score += statOr(target.stats.passing, 5) * 0.12;
     score += statOr(target.stats.vision, statOr(target.stats.passing, 5)) * 0.25;
 
+    // Forward passes are the default good option.
     if (forwardGain > 0) {
-      score += forwardGain * 1.4;
+      score += forwardGain * 2.4;
     }
 
+    // Passing into a player who can keep moving forward is very good.
+    if (forwardGain > 0 && targetHasSpaceAhead) {
+      score += 4.5;
+    }
+
+    // Sideways is okay for possession, but not better than forward space.
     if (sideways > 0) {
-      score += 1.5;
+      score += tactic.id === "slow_possession" ? 1.8 : 1.1;
     }
 
+    // Back passes are now heavily punished unless the carrier is actually trapped.
     if (backwardGain > 0) {
-      score += hardPressed ? 4.5 : 0.5;
+      score -= hardPressed ? 1.2 : 8.5;
+
+      // Extra punishment for passing back near the AI keeper.
+      if (carrierTile.col >= GRID_COLS - 6) {
+        score -= 8;
+      }
+
+      if (t.col >= GRID_COLS - 5) {
+        score -= 7;
+      }
     }
 
-    if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
-      score += Math.max(0, forwardGain) * 1.5;
+    // Stop keeper/CB ping-pong. Keeper is emergency outlet only.
+    if (target.role === "goalkeeper") {
+      score -= hardPressed ? 7 : 18;
     }
 
+    // Slow possession still wants control, but not nonsense back-and-forth.
     if (tactic.id === "slow_possession") {
-      score += backwardGain > 0 || sideways > 0 ? 3 : 0;
-      score -= Math.max(0, forwardGain - 3) * 0.8;
+      score += sideways > 0 ? 2.2 : 0;
+      score += forwardGain > 0 && forwardGain <= 4 ? 3.2 : 0;
+      score -= backwardGain > 0 ? 5.8 : 0;
+    }
+
+    // Direct/counter teams should really value breaking lines.
+    if (
+      tactic.progression === "counter" ||
+      tactic.progression === "direct" ||
+      tactic.id === "quick_counterattack"
+    ) {
+      score += Math.max(0, forwardGain) * 1.6;
     }
 
     if (tactic.id === "wide_crossing") {
@@ -2617,7 +2658,7 @@ function pickCreativePassOption(
       score -= 5;
     }
 
-    score -= Math.max(0, dist - 8) * 0.25;
+    score -= Math.max(0, dist - 8) * 0.3;
 
     return {
       target,
@@ -2628,6 +2669,66 @@ function pickCreativePassOption(
   scored.sort((a, b) => b.score - a.score);
 
   return scored[0]?.target ?? null;
+}
+
+function shouldUseChipPass(
+  carrier: SimPlayer,
+  target: SimPlayer,
+  opponents: SimPlayer[],
+  hardPressed: boolean,
+  tactic: TeamTactic,
+): boolean {
+  const c = posToTile(carrier.position);
+  const t = posToTile(target.position);
+
+  const forwardGain = c.col - t.col;
+
+  if (forwardGain < 2) return false;
+
+  const closeBlocker = opponents.some((opp) => {
+    const o = posToTile(opp.position);
+
+    const betweenCols = o.col < c.col && o.col > t.col;
+    const closeRow =
+      Math.abs(o.row - c.row) <= 1 ||
+      Math.abs(o.row - t.row) <= 1;
+
+    return betweenCols && closeRow && tileDist(c, o) <= 4;
+  });
+
+  return (
+    closeBlocker ||
+    hardPressed ||
+    tactic.longBallFrequency >= 6 ||
+    tactic.id === "long_ball_target"
+  );
+}
+
+function isBadBackPass(
+  carrier: SimPlayer,
+  target: SimPlayer,
+  hardPressed: boolean,
+): boolean {
+  const c = posToTile(carrier.position);
+  const t = posToTile(target.position);
+
+  const backwardGain = t.col - c.col;
+
+  if (backwardGain <= 0) return false;
+
+  if (target.role === "goalkeeper") {
+    return !hardPressed;
+  }
+
+  if (c.col >= GRID_COLS - 6) {
+    return true;
+  }
+
+  if (t.col >= GRID_COLS - 5) {
+    return true;
+  }
+
+  return !hardPressed && backwardGain >= 2;
 }
 
 function nearestOpponentDistance(tile: TilePos, opponents: SimPlayer[]): number {
@@ -2799,37 +2900,6 @@ function creativeCarryBuffCommand(
 
   const hardPressed = isHardPressed(pt, playerPlayers);
 
-  const passOption = pickCreativePassOption(
-    player,
-    aiPlayers,
-    playerPlayers,
-    tactic,
-    hardPressed || currentTargetOccupied || shortStraightForwardCarry,
-  );
-
-  // Absolute rule: never dribble into an occupied tile.
-  if (passOption && currentTargetOccupied) {
-    return creativePassCommand(player, passOption, planRef);
-  }
-
-  // New pass bias:
-  // AI now looks for a pass more often, especially if it was about to do
-  // that boring straight-forward dribble.
-  // Hard cap: if a pass exists, AI should dribble less than 20% of the time.
-  const passChance = currentTargetOccupied
-    ? 1
-    : shortStraightForwardCarry
-      ? 0.9
-      : straightForwardCarry
-        ? 0.86
-        : hardPressed
-          ? 0.88
-          : 0.82;
-
-  if (passOption && Math.random() < passChance) {
-    return creativePassCommand(player, passOption, planRef);
-  }
-
   const range = speedToTiles(player.stats.speed);
 
   const reachable = getReachableTiles(
@@ -2862,59 +2932,152 @@ function creativeCarryBuffCommand(
         tactic,
         hardPressed,
       ),
+      space: nearestOpponentDistance(tile, playerPlayers),
+      threatened: isThreatened(tile, playerPlayers),
+      forwardGain: pt.col - tile.col,
     }))
     .sort((a, b) => b.score - a.score);
 
   const best = candidates[0];
 
-  // If every possible carry tile is occupied/bad, do not dribble into someone.
-  if (!best) {
+  const passOptionRaw = pickCreativePassOption(
+    player,
+    aiPlayers,
+    playerPlayers,
+    tactic,
+    hardPressed || currentTargetOccupied || shortStraightForwardCarry,
+  );
+
+  const passOption =
+    passOptionRaw && !isBadBackPass(player, passOptionRaw, hardPressed)
+      ? passOptionRaw
+      : null;
+
+  // Absolute rule: never dribble into an occupied tile.
+  if (currentTargetOccupied) {
+    if (passOption) {
+      const chip = shouldUseChipPass(
+        player,
+        passOption,
+        playerPlayers,
+        true,
+        tactic,
+      );
+
+      return creativePassCommand(
+        player,
+        passOption,
+        planRef,
+        chip ? "long" : "ground",
+      );
+    }
+
     return {
       type: CommandType.MOVE,
       targetPosition: tileToPos(pt.col, pt.row),
     };
   }
 
-  const currentScore = currentTargetOccupied
-    ? -999
-    : scoreCreativeCarryTile(
-        pt,
-        targetTile,
-        targetTile,
-        player,
-        playerPlayers,
-        tactic,
-        hardPressed,
-      );
+  // If there is obvious open forward space, take it.
+  // This fixes the "pass back instead of using space" problem.
+  if (
+    best &&
+    best.forwardGain > 0 &&
+    best.space >= 3 &&
+    !best.threatened
+  ) {
+    claimed.add(tileKey(best.tile.col, best.tile.row));
 
-  // Dribble less in general:
-  // Before, the AI replaced carries too easily.
-  // Now it only changes to a carry if the new tile is clearly better.
-  const shouldReplace =
-    currentTargetOccupied ||
-    hardPressed ||
-    shortStraightForwardCarry ||
-    best.score > currentScore + 3.2;
-
-  if (!shouldReplace) {
-    return currentCmd;
+    return {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(best.tile.col, best.tile.row),
+    };
   }
 
-  // Extra anti-direct-forward rule:
-  // If the best option is still straight forward, require it to be really good.
-  const bestIsStraightForward =
-    best.tile.row === pt.row && best.tile.col < pt.col;
-
+  // If the best move is diagonal/sideways into real space, allow it too.
   if (
-    bestIsStraightForward &&
-    !hardPressed &&
-    !currentTargetOccupied &&
-    best.score < currentScore + 5.2
+    best &&
+    best.space >= 3.5 &&
+    !best.threatened &&
+    best.score > 7
   ) {
+    claimed.add(tileKey(best.tile.col, best.tile.row));
+
+    return {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(best.tile.col, best.tile.row),
+    };
+  }
+
+  // Passing is still preferred when there is no clean space,
+  // but now it should prefer forward/sideways passes, not keeper ping-pong.
+  const passChance =
+    shortStraightForwardCarry
+      ? 0.88
+      : straightForwardCarry
+        ? 0.82
+        : hardPressed
+          ? 0.84
+          : 0.68;
+
+  if (passOption && Math.random() < passChance) {
+    const chip = shouldUseChipPass(
+      player,
+      passOption,
+      playerPlayers,
+      hardPressed,
+      tactic,
+    );
+
+    return creativePassCommand(
+      player,
+      passOption,
+      planRef,
+      chip ? "long" : "ground",
+    );
+  }
+
+  // If every possible carry tile is occupied/bad, do not force a back-pass loop.
+  if (!best) {
     if (passOption) {
-      return creativePassCommand(player, passOption, planRef);
+      const chip = shouldUseChipPass(
+        player,
+        passOption,
+        playerPlayers,
+        hardPressed,
+        tactic,
+      );
+
+      return creativePassCommand(
+        player,
+        passOption,
+        planRef,
+        chip ? "long" : "ground",
+      );
     }
 
+    return {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(pt.col, pt.row),
+    };
+  }
+
+  const currentScore = scoreCreativeCarryTile(
+    pt,
+    targetTile,
+    targetTile,
+    player,
+    playerPlayers,
+    tactic,
+    hardPressed,
+  );
+
+  const shouldReplace =
+    hardPressed ||
+    shortStraightForwardCarry ||
+    best.score > currentScore + 3.8;
+
+  if (!shouldReplace) {
     return currentCmd;
   }
 
