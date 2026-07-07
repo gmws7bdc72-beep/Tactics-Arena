@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const port = Number(process.env.PORT) || 4173;
+
 export default defineConfig({
   plugins: [react()],
 
@@ -16,14 +18,14 @@ export default defineConfig({
 
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    port: Number(process.env.PORT) || 5173,
     strictPort: false,
     allowedHosts: true,
   },
 
   preview: {
     host: "0.0.0.0",
-    port: 4173,
+    port,
     strictPort: false,
     allowedHosts: true,
   },
