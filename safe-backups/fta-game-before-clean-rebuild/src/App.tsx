@@ -205,8 +205,12 @@ export default function App() {
     setScreen("team-profiles");
   }, []);
 
-  // ── Screens ───────────────────────────────────────────────────────────────
-  if (screen === "home") {
+      // ── Screens ───────────────────────────────────────────────────────────────
+      if (screen === "pitch3d-preview") {
+        return <Pitch3DPreview />;
+      }
+
+      if (screen === "home") {
     return (
       <div className="max-w-md mx-auto min-h-screen">
         <Home
