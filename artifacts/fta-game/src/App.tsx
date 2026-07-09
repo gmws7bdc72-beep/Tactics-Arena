@@ -1,10 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import type {
-  TeamConfig,
-  GameEvent,
-  LeagueState,
-  PlayoffBracket,
-} from "./engine/types";
+import type { TeamConfig, GameEvent, PlayoffBracket } from "./engine/types";
 import { useGameState } from "./hooks/useGameState";
 import Home from "./pages/Home";
 import TeamSetup from "./pages/TeamSetup";
@@ -65,33 +60,15 @@ interface PlayoffContext {
   isHome: boolean;
 }
 
-function hashToScreen(hash: string): {
-  screen: Screen;
-  tab?: "lineup" | "formation";
-} {
+function hashToScreen(hash: string): Screen {
   const h = hash.replace(/^#\/?/, "");
 
-  if (h === "pitch3d-preview") {
-    return { screen: "pitch3d-preview" };
-  }
+  if (h === "pitch3d-preview") return "pitch3d-preview";
+  if (h === "team-setup") return "team-setup";
+  if (h === "team-profiles") return "team-profiles";
+  if (h === "customize") return "customize";
 
-  if (h === "team-setup/formation") {
-    return { screen: "team-setup", tab: "formation" };
-  }
-
-  if (h === "team-setup") {
-    return { screen: "team-setup", tab: "lineup" };
-  }
-
-  if (h === "team-profiles") {
-    return { screen: "team-profiles" };
-  }
-
-  if (h === "customize") {
-    return { screen: "customize" };
-  }
-
-  return { screen: "home" };
+  return "home";
 }
 
 export default function App() {
@@ -104,36 +81,36 @@ export default function App() {
     refreshState,
   } = useGameState();
 
-  const initialHash = hashToScreen(window.location.hash);
-
-  const [screen, setScreen] = useState<Screen>(initialHash.screen);
-  const [setupTab, setSetupTab] = useState<"lineup" | "formation">(
-    initialHash.tab ?? "lineup",
-  );
+  const [screen, setScreen] = useState<Screen>(() => hashToScreen(window.location.hash));
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [playoffContext, setPlayoffContext] =
-    useState<PlayoffContext | null>(null);
-  const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(
-    null,
-  );
-  const [profileTeamId, setProfileTeamId] = useState<string>(
-    PLAYER_TEAM_ID_CONST,
-  );
+  const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(null);
+  const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(null);
+  const [profileTeamId, setProfileTeamId] = useState<string>(PLAYER_TEAM_ID_CONST);
 
   useEffect(() => {
     const onHash = () => {
-      const { screen: s, tab } = hashToScreen(window.location.hash);
-
-      setScreen(s);
-
-      if (tab) {
-        setSetupTab(tab);
-      }
+      setScreen(hashToScreen(window.location.hash));
     };
 
     window.addEventListener("hashchange", onHash);
 
     return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const goToScreen = useCallback((next: Screen) => {
+    if (next === "pitch3d-preview") {
+      window.location.hash = "/pitch3d-preview";
+    } else if (next === "team-setup") {
+      window.location.hash = "/team-setup";
+    } else if (next === "team-profiles") {
+      window.location.hash = "/team-profiles";
+    } else if (next === "customize") {
+      window.location.hash = "/customize";
+    } else if (next === "home") {
+      window.location.hash = "/";
+    }
+
+    setScreen(next);
   }, []);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
@@ -179,7 +156,6 @@ export default function App() {
 
       const seed = Date.now() % 99999;
       const { stage, isHome } = playoffContext;
-
       const homeGoals = isHome ? result.playerScore : result.aiScore;
       const awayGoals = isHome ? result.aiScore : result.playerScore;
 
@@ -193,8 +169,7 @@ export default function App() {
 
       updateLeague(newLeague);
 
-      const oppName =
-        getAITeamDef(playoffContext.opponentId)?.name ?? "Opponent";
+      const oppName = getAITeamDef(playoffContext.opponentId)?.name ?? "Opponent";
 
       setPlayoffContext(null);
 
@@ -213,10 +188,7 @@ export default function App() {
 
   const handleStartMatch = useCallback(() => {
     if (!isLeagueComplete) {
-      if (currentOpponentDef) {
-        setScreen("match");
-      }
-
+      if (currentOpponentDef) setScreen("match");
       return;
     }
 
@@ -228,7 +200,6 @@ export default function App() {
     }
 
     const po = current.playoff!;
-
     if (po.stage === "complete") return;
 
     const playerInfo = getPlayerPlayoffMatch(po, PLAYER_TEAM_ID_CONST);
@@ -268,18 +239,14 @@ export default function App() {
         autoSimAwayName: simmedMatch.awayName,
         autoSimHomeGoals: (() => {
           const np = newLeague.playoff!;
-
           if (po.stage === "sf1") return np.sf1.homeGoals;
           if (po.stage === "sf2") return np.sf2.homeGoals;
-
           return np.final?.homeGoals;
         })(),
         autoSimAwayGoals: (() => {
           const np = newLeague.playoff!;
-
           if (po.stage === "sf1") return np.sf1.awayGoals;
           if (po.stage === "sf2") return np.sf2.awayGoals;
-
           return np.final?.awayGoals;
         })(),
       });
@@ -290,36 +257,28 @@ export default function App() {
 
   const handleForfeit = useCallback(() => {
     if (!currentScheduledMatch || !currentOpponentDef) {
-      setScreen("home");
+      goToScreen("home");
       return;
     }
 
-    handleMatchEnd({
-      playerScore: 0,
-      aiScore: 3,
-      events: [],
-    });
-  }, [handleMatchEnd, currentScheduledMatch, currentOpponentDef]);
+    handleMatchEnd({ playerScore: 0, aiScore: 3, events: [] });
+  }, [handleMatchEnd, currentScheduledMatch, currentOpponentDef, goToScreen]);
 
   const handlePlayoffForfeit = useCallback(() => {
     if (!playoffContext) {
-      setScreen("home");
+      goToScreen("home");
       return;
     }
 
-    handlePlayoffMatchEnd({
-      playerScore: 0,
-      aiScore: 3,
-      events: [],
-    });
-  }, [handlePlayoffMatchEnd, playoffContext]);
+    handlePlayoffMatchEnd({ playerScore: 0, aiScore: 3, events: [] });
+  }, [handlePlayoffMatchEnd, playoffContext, goToScreen]);
 
   const handleTeamSave = useCallback(
     (t: TeamConfig) => {
       updateTeam(t);
-      setScreen("home");
+      goToScreen("home");
     },
-    [updateTeam],
+    [updateTeam, goToScreen],
   );
 
   const handleNewSeason = useCallback(() => {
@@ -327,15 +286,15 @@ export default function App() {
     refreshState();
     setMatchResult(null);
     setPlayoffContext(null);
-    setScreen("home");
-  }, [refreshState, startNewSeason, team.name]);
+    goToScreen("home");
+  }, [refreshState, startNewSeason, team.name, goToScreen]);
 
   const handleOpenProfiles = useCallback(
     (teamId: string = PLAYER_TEAM_ID_CONST) => {
       setProfileTeamId(teamId);
-      setScreen("team-profiles");
+      goToScreen("team-profiles");
     },
-    [],
+    [goToScreen],
   );
 
   if (screen === "pitch3d-preview") {
@@ -345,13 +304,22 @@ export default function App() {
   if (screen === "home") {
     return (
       <div className="max-w-md mx-auto min-h-screen">
+        <div className="px-4 pt-4">
+          <button
+            className="mb-3 w-full rounded-2xl border border-cyan-300/40 bg-cyan-500 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-500/20 active:scale-[0.99]"
+            onClick={() => goToScreen("pitch3d-preview")}
+          >
+            🧪 Open 3D Arena Preview
+          </button>
+        </div>
+
         <Home
           team={team}
           league={league}
           isLeagueComplete={isLeagueComplete}
           onStartMatch={handleStartMatch}
-          onGoToTeamSetup={() => setScreen("team-setup")}
-          onGoToCustomize={() => setScreen("customize")}
+          onGoToTeamSetup={() => goToScreen("team-setup")}
+          onGoToCustomize={() => goToScreen("customize")}
           onGoToProfiles={handleOpenProfiles}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
@@ -364,25 +332,26 @@ export default function App() {
   if (screen === "team-profiles") {
     return (
       <div className="max-w-md mx-auto min-h-screen">
-        <TeamProfiles playerTeam={team} onBack={() => setScreen("home")} />
+        <TeamProfiles
+          playerTeam={team}
+          initialTeamId={profileTeamId}
+          onBack={() => goToScreen("home")}
+        />
       </div>
     );
   }
 
   if (screen === "two-player-match") {
     return (
-      <div
-        className="max-w-2xl mx-auto min-h-screen"
-        style={{ maxWidth: "min(100vw, 760px)" }}
-      >
+      <div className="max-w-2xl mx-auto min-h-screen" style={{ maxWidth: "min(100vw, 760px)" }}>
         <Match
           team={team}
           opponentTeamDef={TWO_PLAYER_TEAM_B}
           isHome={true}
           twoPlayer={true}
           p1TeamDef={TWO_PLAYER_TEAM_A}
-          onMatchEnd={() => setScreen("home")}
-          onForfeit={() => setScreen("home")}
+          onMatchEnd={() => goToScreen("home")}
+          onForfeit={() => goToScreen("home")}
         />
       </div>
     );
@@ -397,7 +366,7 @@ export default function App() {
             setOnlineConfig(config);
             setScreen("online-match");
           }}
-          onBack={() => setScreen("home")}
+          onBack={() => goToScreen("home")}
         />
       </div>
     );
@@ -405,10 +374,7 @@ export default function App() {
 
   if (screen === "online-match" && onlineConfig) {
     return (
-      <div
-        className="max-w-2xl mx-auto min-h-screen"
-        style={{ maxWidth: "min(100vw, 760px)" }}
-      >
+      <div className="max-w-2xl mx-auto min-h-screen" style={{ maxWidth: "min(100vw, 760px)" }}>
         <OnlineMatch
           myRole={onlineConfig.myRole}
           p1Team={onlineConfig.p1Team}
@@ -416,7 +382,7 @@ export default function App() {
           roomCode={onlineConfig.roomCode}
           onLeave={() => {
             setOnlineConfig(null);
-            setScreen("home");
+            goToScreen("home");
           }}
         />
       </div>
@@ -426,15 +392,7 @@ export default function App() {
   if (screen === "team-setup") {
     return (
       <div className="max-w-md mx-auto min-h-screen">
-        <TeamSetup
-          team={team}
-          onSave={handleTeamSave}
-          initialTab={setupTab}
-          onBack={() => {
-            setSetupTab("lineup");
-            setScreen("home");
-          }}
-        />
+        <TeamSetup team={team} onSave={handleTeamSave} onBack={() => goToScreen("home")} />
       </div>
     );
   }
@@ -446,9 +404,9 @@ export default function App() {
           team={team}
           onSave={(t) => {
             updateTeam(t);
-            setScreen("home");
+            goToScreen("home");
           }}
-          onBack={() => setScreen("home")}
+          onBack={() => goToScreen("home")}
         />
       </div>
     );
@@ -456,21 +414,16 @@ export default function App() {
 
   if (screen === "match") {
     const isPlayoff = !!playoffContext;
-
     const opponentDef = isPlayoff
       ? getAITeamDef(playoffContext!.opponentId)
       : currentOpponentDef;
-
     const isHomeForMatch = isPlayoff
       ? playoffContext!.isHome
       : currentScheduledMatch?.isHome !== false;
 
     if (opponentDef) {
       return (
-        <div
-          className="max-w-2xl mx-auto min-h-screen"
-          style={{ maxWidth: "min(100vw, 760px)" }}
-        >
+        <div className="max-w-2xl mx-auto min-h-screen" style={{ maxWidth: "min(100vw, 760px)" }}>
           <Match
             team={team}
             opponentTeamDef={opponentDef}
@@ -507,11 +460,11 @@ export default function App() {
           showNewSeason={showNewSeason}
           onNextMatch={() => {
             setMatchResult(null);
-            setScreen("home");
+            goToScreen("home");
           }}
           onHome={() => {
             setMatchResult(null);
-            setScreen("home");
+            goToScreen("home");
           }}
           onNewSeason={handleNewSeason}
         />
@@ -526,8 +479,8 @@ export default function App() {
         league={league}
         isLeagueComplete={isLeagueComplete}
         onStartMatch={handleStartMatch}
-        onGoToTeamSetup={() => setScreen("team-setup")}
-        onGoToCustomize={() => setScreen("customize")}
+        onGoToTeamSetup={() => goToScreen("team-setup")}
+        onGoToCustomize={() => goToScreen("customize")}
         onGoToProfiles={handleOpenProfiles}
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}

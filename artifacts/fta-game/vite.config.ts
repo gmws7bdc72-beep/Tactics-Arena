@@ -12,7 +12,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      "@assets": path.resolve(__dirname, "..", "..", "attached_assets"),
     },
+    dedupe: ["react", "react-dom"],
   },
 
   server: {
@@ -28,7 +30,7 @@ export default defineConfig({
   },
 
   build: {
-    outDir: "dist/public",
+    outDir: "dist",
     emptyOutDir: true,
   },
 });

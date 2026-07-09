@@ -387,21 +387,6 @@ function isAIPlayerOffside(p: SimPlayer, playerPlayers: SimPlayer[]): boolean {
   return p.position.x < PITCH_WIDTH / 3 && p.position.x < lineX;
 }
 
-// Returns the x-coordinate of the offside line as seen by the player team's attackers.
-// Player attacks rightward, so their offside line = 2nd-to-last AI player sorted by x DESC.
-function playerOffsideLineX(aiPlayers: SimPlayer[]): number {
-  if (aiPlayers.length === 0) return PITCH_WIDTH;
-  const sorted = [...aiPlayers].sort((a, b) => b.position.x - a.position.x);
-  return sorted.length >= 2 ? sorted[1].position.x : sorted[0].position.x;
-}
-
-function isPlayerTeamPlayerOffside(p: SimPlayer, aiPlayers: SimPlayer[]): boolean {
-  if (p.role === "goalkeeper") return false;
-  const lineX = playerOffsideLineX(aiPlayers);
-  // Offside only in the attacking third (x > 2/3 pitch) — middle third is a free zone.
-  return p.position.x > (PITCH_WIDTH * 2) / 3 && p.position.x > lineX;
-}
-
 /**
  * Cap poachers to 1 per team and handle onside retreat.
  * The most-advanced poacher (lowest x, since AI attacks leftward) keeps the role.
@@ -526,7 +511,6 @@ function bestAnyPass(
   const ct = posToTile(carrier.position);
   const candidates = aiPlayers
     .filter(p => p.id !== carrier.id)
-    .filter(p => !isAIPlayerOffside(p, playerPlayers))
     .map(p => ({ p, t: posToTile(p.position) }))
     .filter(({ t }) => tileDist(t, ct) <= maxDist)
     .filter(({ t }) => !isLaneBlocked(ct, t, playerPlayers))
@@ -1316,80 +1300,48 @@ export function generateAICommands(
 ): Map<string, Command> {
   const commands = new Map<string, Command>();
 
-  const ballOwner =
-    [...aiPlayers, ...playerPlayers].find((p) => p.id === ball.ownerId) ??
-    null;
-
+  const ballOwner = [...aiPlayers, ...playerPlayers].find(p => p.id === ball.ownerId) ?? null;
   const aiHasBall = ballOwner?.teamId === "ai";
   const playerHasBall = ballOwner?.teamId === "player";
   const ballIsLoose = ball.ownerId === null;
   const ballTile = posToTile(ball.position);
 
+  // Build occupancy sets
   const claimed = new Set<string>();
   const friendly = new Set<string>();
-
   for (const p of aiPlayers) {
     const t = posToTile(p.position);
     friendly.add(tileKey(t.col, t.row));
   }
 
-  // ── Offside filtering ────────────────────────────────────────────────────
-  // Compute which players from each team are currently offside.
-  // Offside players are invisible to AI pass/mark decisions.
-  // AI offside players retreat immediately instead of receiving commands.
-  const aiOffsideSet = new Set(
-    aiPlayers
-      .filter(p => p.id !== ball.ownerId && isAIPlayerOffside(p, playerPlayers))
-      .map(p => p.id)
-  );
-  const playerOffsideSet = new Set(
-    playerPlayers
-      .filter(p => p.id !== ball.ownerId && isPlayerTeamPlayerOffside(p, aiPlayers))
-      .map(p => p.id)
-  );
-
-  // Onside-only player lists used for all pass/mark/press decisions.
-  const activeAI = aiPlayers.filter(p => !aiOffsideSet.has(p.id));
-  const activePlayerPlayers = playerPlayers.filter(p => !playerOffsideSet.has(p.id));
-
-  // Column just inside the AI's onside zone (AI attacks leftward, offside zone is col < ~5).
-  const onsideCol = Math.ceil((PITCH_WIDTH / 3) / (PITCH_WIDTH / GRID_COLS)) + 1;
-
-  const carrierTile =
-    aiHasBall && ballOwner ? posToTile(ballOwner.position) : ballTile;
-
+  // Phase 1 – Project off-ball AI players to their run destinations so the
+  // carrier can pass to those tiles directly (no intercept maths needed).
+  // Only players that are already ahead of the carrier (lower col) get
+  // projected, and only to a lower col than their current position.
+  const carrierTile = aiHasBall && ballOwner ? posToTile(ballOwner.position) : ballTile;
   const projectedAI: SimPlayer[] = aiHasBall
-    ? activeAI.map((p) => {
-        if (p.id === ball.ownerId) return p;
-        if (p.role === "goalkeeper") return p;
-
+    ? aiPlayers.map(p => {
+        if (p.id === ball.ownerId) return p;     // carrier: unchanged
+        if (p.role === 'goalkeeper') return p;   // GK: unchanged
         const currentTile = posToTile(p.position);
-
+        // Players behind or level with the carrier stay put
         if (currentTile.col >= carrierTile.col) return p;
-
-        const roleIdx = activeAI
-          .filter((q) => q.role === p.role)
-          .findIndex((q) => q.id === p.id);
-
+        const roleIdx = aiPlayers.filter(q => q.role === p.role).findIndex(q => q.id === p.id);
         const projTile = computeRunTarget(p, roleIdx, ballTile, tier);
-
+        // Only project forward (lower col); never pull a player backward
         if (projTile.col >= currentTile.col) return p;
-
-        return {
-          ...p,
-          position: tileToPos(projTile.col, projTile.row),
-        };
+        return { ...p, position: tileToPos(projTile.col, projTile.row) };
       })
-    : activeAI;
+    : aiPlayers;
 
+  // Process in priority order: GK → defenders → midfielders → attackers
+  // BUT the ball-carrier always goes first so the pass-to-tile plan is
+  // committed before the designated runner's command is generated.
   const roleOrder = (p: SimPlayer) =>
-    p.role === "goalkeeper"
-      ? 0
-      : p.role === "defender"
-        ? 1
-        : p.role === "midfielder"
-          ? 2
-          : 3;
+    p.role === "goalkeeper" ? 0
+    : p.role === "defender" ? 1
+    : p.role === "midfielder" ? 2
+    : 3;
 
   const sorted = [...aiPlayers].sort((a, b) => {
     if (a.id === ball.ownerId) return -1;
@@ -1397,55 +1349,30 @@ export function generateAICommands(
     return roleOrder(a) - roleOrder(b);
   });
 
+  // Loose ball: all players chase at full speed, closest gets first pick of the ball tile
   if (ballIsLoose) {
     const byProximity = [...sorted].sort(
-      (a, b) =>
-        eucDist(a.position, ball.position) -
-        eucDist(b.position, ball.position),
+      (a, b) => eucDist(a.position, ball.position) - eucDist(b.position, ball.position)
     );
-
     for (const p of byProximity) {
       const pTile = posToTile(p.position);
-      // Offside AI players retreat to get onside instead of chasing the ball.
-      if (aiOffsideSet.has(p.id)) {
-        commands.set(p.id, {
-          type: CommandType.MOVE,
-          targetPosition: tileToPos(onsideCol, pTile.row),
-        });
-        continue;
-      }
-      commands.set(
-        p.id,
-        chaseLooseBall(p, pTile, ballTile, claimed, friendly),
-      );
+      commands.set(p.id, chaseLooseBall(p, pTile, ballTile, claimed, friendly));
     }
-
     return commands;
   }
 
+  // Pass-to-tile plan: carrier tier function fills this; runner gets MOVE override.
   const planRef: { current: PassTilePlan | null } = { current: null };
 
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
 
-    // Offside AI players retreat to get onside — invisible to all other logic.
-    if (!hasBall && aiOffsideSet.has(player.id)) {
-      commands.set(player.id, {
-        type: CommandType.MOVE,
-        targetPosition: tileToPos(onsideCol, pt.row),
-      });
-      continue;
-    }
-
+    // Runner override: if this player was designated as the "run-to-tile" receiver,
+    // send them straight to that tile instead of their normal off-ball movement.
     if (!hasBall && planRef.current?.runnerId === player.id) {
       const { runTile } = planRef.current;
-
-      commands.set(player.id, {
-        type: CommandType.MOVE,
-        targetPosition: tileToPos(runTile.col, runTile.row),
-      });
-
+      commands.set(player.id, { type: CommandType.MOVE, targetPosition: tileToPos(runTile.col, runTile.row) });
       continue;
     }
 
@@ -1453,344 +1380,195 @@ export function generateAICommands(
 
     if (aiHasBall) {
       switch (tier) {
-        case 1:
-          cmd = tier1Possession(
-            player,
-            pt,
-            hasBall,
-            projectedAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            planRef,
-          );
-          break;
-
-        case 2:
-          cmd = tier2Possession(
-            player,
-            pt,
-            hasBall,
-            projectedAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            planRef,
-          );
-          break;
-
-        default:
-          cmd = tier3Possession(
-            player,
-            pt,
-            hasBall,
-            projectedAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            planRef,
-          );
-          break;
+        case 1: cmd = tier1Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
+        case 2: cmd = tier2Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
+        default: cmd = tier3Possession(player, pt, hasBall, projectedAI, playerPlayers, ballTile, claimed, friendly, planRef); break;
       }
     } else if (playerHasBall) {
       switch (tier) {
-        case 1:
-          cmd = tier1Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
-
-        case 2:
-          cmd = tier2Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
-
-        default:
-          cmd = tier3Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
+        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
       }
     } else {
+      // Transition — treat as defensive
       switch (tier) {
-        case 1:
-          cmd = tier1Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
-
-        case 2:
-          cmd = tier2Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
-
-        default:
-          cmd = tier3Defense(
-            player,
-            pt,
-            activeAI,
-            activePlayerPlayers,
-            ballTile,
-            claimed,
-            friendly,
-            adaptiveState,
-          );
-          break;
+        case 1: cmd = tier1Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        case 2: cmd = tier2Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
+        default: cmd = tier3Defense(player, pt, aiPlayers, playerPlayers, ballTile, claimed, friendly, adaptiveState); break;
       }
     }
 
-    cmd = tacticBuffCommand(
+  cmd = tacticBuffCommand(
+    player,
+    cmd,
+    pt,
+    hasBall,
+    aiHasBall,
+    playerHasBall,
+    aiPlayers,
+    playerPlayers,
+    ballTile,
+    claimed,
+    friendly,
+    tactic,
+    planRef,
+  );
+
+  cmd = shootingBuffCommand(
+    player,
+    cmd,
+    pt,
+    hasBall,
+    aiHasBall,
+    playerPlayers,
+    tactic,
+  );
+
+  cmd = creativeCarryBuffCommand(
+    player,
+    cmd,
+    pt,
+    hasBall,
+    aiHasBall,
+    aiPlayers,
+    playerPlayers,
+    claimed,
+    tactic,
+    planRef,
+  );
+
+  if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
+    cmd = defenseBuffCommand(
       player,
       cmd,
       pt,
-      hasBall,
-      aiHasBall,
-      playerHasBall,
       aiPlayers,
       playerPlayers,
+      ball,
       ballTile,
       claimed,
       friendly,
-      tactic,
-      planRef,
     );
+  }
 
-    cmd = shootingBuffCommand(
-      player,
-      cmd,
-      pt,
-      hasBall,
-      aiHasBall,
-      playerPlayers,
-      tactic,
-    );
+  // Anti-loopback
+  const cmdTargetId =
+    cmd.type === CommandType.PASS
+      ? ("targetPlayerId" in cmd ? (cmd.targetPlayerId ?? null) : null)
+      : null;
 
-    cmd = creativeCarryBuffCommand(
-      player,
-      cmd,
-      pt,
-      hasBall,
-      aiHasBall,
-      aiPlayers,
-      playerPlayers,
-      claimed,
-      tactic,
-      planRef,
-    );
+  const isLooping =
+    isLoopingPass(player.id, cmd) ||
+    (cmdTargetId !== null && isBilateralPingPong(player.id, cmdTargetId));
 
-    if (playerHasBall || (!aiHasBall && !ballIsLoose)) {
-      cmd = defenseBuffCommand(
-        player,
-        cmd,
-        pt,
-        aiPlayers,
-        playerPlayers,
-        ball,
-        ballTile,
-        claimed,
-        friendly,
-      );
+  if (isLooping && cmdTargetId) {
+    const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
 
-      cmd = outOfPossessionTacticCommand(
-        player,
-        cmd,
-        pt,
-        aiPlayers,
-        playerPlayers,
-        ball,
-        ballTile,
-        claimed,
-        friendly,
-        tactic,
-      );
-    }
+    if (altTarget && altTarget.id !== cmdTargetId) {
+      const altTile = posToTile(altTarget.position);
+      cmd = {
+        type: CommandType.PASS,
+        targetPlayerId: altTarget.id,
+        targetPosition: tileToPos(altTile.col, altTile.row),
+        coordinated: false,
+      };
+    } else {
+      const isGK = player.role === "goalkeeper";
 
-    const cmdTargetId =
-      cmd.type === CommandType.PASS
-        ? "targetPlayerId" in cmd
-          ? (cmd.targetPlayerId ?? null)
-          : null
-        : null;
-
-    const isLooping =
-      isLoopingPass(player.id, cmd) ||
-      (cmdTargetId !== null &&
-        isBilateralPingPong(player.id, cmdTargetId));
-
-    if (isLooping && cmdTargetId) {
-      const altTarget = bestAnyPass(player, aiPlayers, playerPlayers, 12);
-
-      if (altTarget && altTarget.id !== cmdTargetId) {
-        const altTile = posToTile(altTarget.position);
-
+      if (!isGK) {
+        const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
         cmd = {
-          type: CommandType.PASS,
-          targetPlayerId: altTarget.id,
-          targetPosition: tileToPos(altTile.col, altTile.row),
-          coordinated: false,
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(fwd, pt.row),
         };
-      } else {
-        const isGK = player.role === "goalkeeper";
-
-        if (!isGK) {
-          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
-
-          cmd = {
-            type: CommandType.MOVE,
-            targetPosition: tileToPos(fwd, pt.row),
-          };
-        }
       }
     }
+  }
 
-    if (player.role !== "goalkeeper" && aiHasBall && hasBall) {
+    if (
+      player.role !== "goalkeeper" &&
+      aiHasBall &&
+      hasBall
+    ) {
       cmd = possessionRiskBuffCommand(
         player,
         cmd,
         aiPlayers,
         playerPlayers,
       );
-
-      // FINAL SAFETY CHECK:
-      // possessionRiskBuffCommand runs late and can re-create the stupid
-      // straight-forward dribble into a defender. Run creativeCarry LAST
-      // so occupied tiles and direct-forward spam get blocked after every AI buff.
-      cmd = creativeCarryBuffCommand(
-        player,
-        cmd,
-        pt,
-        hasBall,
-        aiHasBall,
-        aiPlayers,
-        playerPlayers,
-        claimed,
-        tactic,
-        planRef,
-      );
     }
-
-    logCommand(player.id, cmd);
-    commands.set(player.id, cmd);
+  
+  logCommand(player.id, cmd);
+  commands.set(player.id, cmd);
   }
 
+  // FINAL PASS TARGET CLEANUP
   for (const [id, cmd] of commands) {
-    if (cmd.type === CommandType.PASS && cmd.targetPlayerId) {
-      const receiverCmd = commands.get(cmd.targetPlayerId);
-      const receiver = aiPlayers.find((p) => p.id === cmd.targetPlayerId);
+  if (cmd.type === CommandType.PASS && cmd.targetPlayerId) {
+    const receiverCmd = commands.get(cmd.targetPlayerId);
+    const receiver = aiPlayers.find((p) => p.id === cmd.targetPlayerId);
 
-      if (receiver) {
-        const wantedTile =
-          receiverCmd?.type === CommandType.MOVE &&
-          receiverCmd.targetPosition
-            ? posToTile(receiverCmd.targetPosition)
-            : posToTile(receiver.position);
+    if (receiver) {
+      const wantedTile =
+        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
+          ? posToTile(receiverCmd.targetPosition)
+          : posToTile(receiver.position);
 
-        const finalTile = receiverReachableTile(receiver, wantedTile);
-        const finalTarget = tileToPos(finalTile.col, finalTile.row);
+      const finalTile = receiverReachableTile(receiver, wantedTile);
+      const finalTarget = tileToPos(finalTile.col, finalTile.row);
 
-        commands.set(id, {
-          ...cmd,
-          targetPosition: finalTarget,
-        });
+      commands.set(id, {
+        ...cmd,
+        targetPosition: finalTarget,
+      });
 
-        commands.set(cmd.targetPlayerId, {
-          type: CommandType.MOVE,
-          targetPosition: finalTarget,
-        });
-      }
-    }
-
-    if (
-      cmd.type === CommandType.MOVE &&
-      cmd.followUp?.type === CommandType.PASS &&
-      cmd.followUp.targetPlayerId
-    ) {
-      const receiverCmd = commands.get(cmd.followUp.targetPlayerId);
-      const receiver = aiPlayers.find(
-        (p) => p.id === cmd.followUp!.targetPlayerId,
-      );
-
-      if (receiver) {
-        const wantedTile =
-          receiverCmd?.type === CommandType.MOVE &&
-          receiverCmd.targetPosition
-            ? posToTile(receiverCmd.targetPosition)
-            : posToTile(receiver.position);
-
-        const finalTile = receiverReachableTile(receiver, wantedTile);
-        const finalTarget = tileToPos(finalTile.col, finalTile.row);
-
-        commands.set(id, {
-          ...cmd,
-          followUp: {
-            ...cmd.followUp,
-            targetPosition: finalTarget,
-          },
-        });
-
-        commands.set(cmd.followUp.targetPlayerId, {
-          type: CommandType.MOVE,
-          targetPosition: finalTarget,
-        });
-      }
+      commands.set(cmd.targetPlayerId, {
+        type: CommandType.MOVE,
+        targetPosition: finalTarget,
+      });
     }
   }
 
-  // Rest defense should only apply when AI has the ball.
-  // When AI is out of possession, outOfPossessionTacticCommand controls the shape.
-  if (aiHasBall) {
-    applyRestDefenseAnchor(
-      commands,
-      aiPlayers,
-      ballTile,
-      ballOwner?.teamId ?? null,
-      ballOwner?.id ?? null,
-      tactic,
+  if (
+    cmd.type === CommandType.MOVE &&
+    cmd.followUp?.type === CommandType.PASS &&
+    cmd.followUp.targetPlayerId
+  ) {
+    const receiverCmd = commands.get(cmd.followUp.targetPlayerId);
+    const receiver = aiPlayers.find(
+      (p) => p.id === cmd.followUp!.targetPlayerId,
     );
+
+    if (receiver) {
+      const wantedTile =
+        receiverCmd?.type === CommandType.MOVE && receiverCmd.targetPosition
+          ? posToTile(receiverCmd.targetPosition)
+          : posToTile(receiver.position);
+
+      const finalTile = receiverReachableTile(receiver, wantedTile);
+      const finalTarget = tileToPos(finalTile.col, finalTile.row);
+
+      commands.set(id, {
+        ...cmd,
+        followUp: {
+          ...cmd.followUp,
+          targetPosition: finalTarget,
+        },
+      });
+
+      commands.set(cmd.followUp.targetPlayerId, {
+        type: CommandType.MOVE,
+        targetPosition: finalTarget,
+      });
+    }
   }
+  }
+
+  applyRestDefenseAnchor(commands, aiPlayers, ballTile, ballOwner?.teamId ?? null, ballOwner?.id ?? null, tactic);
 
   return commands;
-}
+  }
 // ─── TACTIC BUFFS + LONG BALLS ──────────────────────────────────────────────
 
 function statOr(value: number | undefined, fallback: number): number {
@@ -2527,16 +2305,15 @@ function getHighestManThreat(playerPlayers: SimPlayer[]): ThreatInfo | null {
 }
 
 // ─── Creative AI Carry Buff ────────────────────────────────────────────────
-// Gives the AI more options when carrying:
+// Gives the AI more options when carrying the ball:
 // forward, further forward, diagonal, left/right, backward, or pass.
-// It especially breaks the boring pattern where the carrier only dribbles
-// directly forward 1-2 tiles every turn.
+// This breaks the boring pattern where the carrier only dribbles directly
+// forward 1-2 tiles every turn.
 
 function creativePassCommand(
-  carrier: SimPlayer,
+  _carrier: SimPlayer,
   target: SimPlayer,
   planRef?: { current: PassTilePlan | null },
-  passStyle: "ground" | "long" = "ground",
 ): Command {
   const targetTile = posToTile(target.position);
 
@@ -2552,10 +2329,8 @@ function creativePassCommand(
     targetPlayerId: target.id,
     targetPosition: tileToPos(targetTile.col, targetTile.row),
     coordinated: false,
-    passStyle,
-  } as Command;
+  };
 }
-
 
 function pickCreativePassOption(
   carrier: SimPlayer,
@@ -2564,10 +2339,10 @@ function pickCreativePassOption(
   tactic: TeamTactic,
   hardPressed: boolean,
 ): SimPlayer | null {
-  const forward = bestForwardPass(carrier, aiPlayers, playerPlayers, 10);
-  const lateral = bestLateralPass(carrier, aiPlayers, playerPlayers, 7);
+  const forward = bestForwardPass(carrier, aiPlayers, playerPlayers, 9);
+  const lateral = bestLateralPass(carrier, aiPlayers, playerPlayers, 6);
   const backward = bestBackwardPass(carrier, aiPlayers, playerPlayers, 7);
-  const any = bestAnyPass(carrier, aiPlayers, playerPlayers, 10);
+  const any = bestAnyPass(carrier, aiPlayers, playerPlayers, 9);
 
   const options = [forward, lateral, backward, any].filter(
     (p, index, arr): p is SimPlayer =>
@@ -2580,155 +2355,42 @@ function pickCreativePassOption(
 
   const scored = options.map((target) => {
     const t = posToTile(target.position);
-    const forwardGain = carrierTile.col - t.col; // AI attacks left
+    const forwardGain = carrierTile.col - t.col;
     const sideways = Math.abs(t.row - carrierTile.row);
     const backwardGain = t.col - carrierTile.col;
     const threatened = isThreatened(t, playerPlayers);
     const dist = tileDist(carrierTile, t);
 
-    const targetForwardTile = {
-      col: Math.max(0, t.col - 1),
-      row: t.row,
-    };
-
-    const targetHasSpaceAhead =
-      nearestOpponentDistance(targetForwardTile, playerPlayers) >= 2.5 &&
-      !isThreatened(targetForwardTile, playerPlayers);
-
     let score = 0;
 
-    score += statOr(target.stats.passing, 5) * 0.12;
+    score += statOr(target.stats.passing, 5) * 0.15;
     score += statOr(target.stats.vision, statOr(target.stats.passing, 5)) * 0.25;
 
-    // Forward passes are the default good option.
-    if (forwardGain > 0) {
-      score += forwardGain * 2.4;
+    if (forwardGain > 0) score += forwardGain * 1.4;
+    if (sideways > 0) score += 1.5;
+    if (backwardGain > 0) score += hardPressed ? 4.5 : 0.5;
+
+    if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
+      score += Math.max(0, forwardGain) * 1.5;
     }
 
-    // Passing into a player who can keep moving forward is very good.
-    if (forwardGain > 0 && targetHasSpaceAhead) {
-      score += 4.5;
-    }
-
-    // Sideways is okay for possession, but not better than forward space.
-    if (sideways > 0) {
-      score += tactic.id === "slow_possession" ? 1.8 : 1.1;
-    }
-
-    // Back passes are now heavily punished unless the carrier is actually trapped.
-    if (backwardGain > 0) {
-      score -= hardPressed ? 1.2 : 8.5;
-
-      // Extra punishment for passing back near the AI keeper.
-      if (carrierTile.col >= GRID_COLS - 6) {
-        score -= 8;
-      }
-
-      if (t.col >= GRID_COLS - 5) {
-        score -= 7;
-      }
-    }
-
-    // Stop keeper/CB ping-pong. Keeper is emergency outlet only.
-    if (target.role === "goalkeeper") {
-      score -= hardPressed ? 7 : 18;
-    }
-
-    // Slow possession still wants control, but not nonsense back-and-forth.
     if (tactic.id === "slow_possession") {
-      score += sideways > 0 ? 2.2 : 0;
-      score += forwardGain > 0 && forwardGain <= 4 ? 3.2 : 0;
-      score -= backwardGain > 0 ? 5.8 : 0;
-    }
-
-    // Direct/counter teams should really value breaking lines.
-    if (
-      tactic.progression === "counter" ||
-      tactic.progression === "direct" ||
-      tactic.id === "quick_counterattack"
-    ) {
-      score += Math.max(0, forwardGain) * 1.6;
+      score += backwardGain > 0 || sideways > 0 ? 3 : 0;
+      score -= Math.max(0, forwardGain - 3) * 0.8;
     }
 
     if (tactic.id === "wide_crossing") {
       score += t.row <= 2 || t.row >= GRID_ROWS - 3 ? 2.5 : 0;
     }
 
-    if (threatened) {
-      score -= 5;
-    }
+    if (threatened) score -= 5;
+    score -= Math.max(0, dist - 8) * 0.25;
 
-    score -= Math.max(0, dist - 8) * 0.3;
-
-    return {
-      target,
-      score,
-    };
+    return { target, score };
   });
 
   scored.sort((a, b) => b.score - a.score);
-
   return scored[0]?.target ?? null;
-}
-
-function shouldUseChipPass(
-  carrier: SimPlayer,
-  target: SimPlayer,
-  opponents: SimPlayer[],
-  hardPressed: boolean,
-  tactic: TeamTactic,
-): boolean {
-  const c = posToTile(carrier.position);
-  const t = posToTile(target.position);
-
-  const forwardGain = c.col - t.col;
-
-  if (forwardGain < 2) return false;
-
-  const closeBlocker = opponents.some((opp) => {
-    const o = posToTile(opp.position);
-
-    const betweenCols = o.col < c.col && o.col > t.col;
-    const closeRow =
-      Math.abs(o.row - c.row) <= 1 ||
-      Math.abs(o.row - t.row) <= 1;
-
-    return betweenCols && closeRow && tileDist(c, o) <= 4;
-  });
-
-  return (
-    closeBlocker ||
-    hardPressed ||
-    tactic.longBallFrequency >= 6 ||
-    tactic.id === "long_ball_target"
-  );
-}
-
-function isBadBackPass(
-  carrier: SimPlayer,
-  target: SimPlayer,
-  hardPressed: boolean,
-): boolean {
-  const c = posToTile(carrier.position);
-  const t = posToTile(target.position);
-
-  const backwardGain = t.col - c.col;
-
-  if (backwardGain <= 0) return false;
-
-  if (target.role === "goalkeeper") {
-    return !hardPressed;
-  }
-
-  if (c.col >= GRID_COLS - 6) {
-    return true;
-  }
-
-  if (t.col >= GRID_COLS - 5) {
-    return true;
-  }
-
-  return !hardPressed && backwardGain >= 2;
 }
 
 function nearestOpponentDistance(tile: TilePos, opponents: SimPlayer[]): number {
@@ -2742,17 +2404,10 @@ function nearestOpponentDistance(tile: TilePos, opponents: SimPlayer[]): number 
   );
 }
 
-function isAnyOtherPlayerOnTile(
-  tile: TilePos,
-  allPlayers: SimPlayer[],
-  currentPlayerId: string,
-): boolean {
-  return allPlayers.some((other) => {
-    if (other.id === currentPlayerId) return false;
-
-    const otherTile = posToTile(other.position);
-
-    return otherTile.col === tile.col && otherTile.row === tile.row;
+function isOpponentOnTile(tile: TilePos, opponents: SimPlayer[]): boolean {
+  return opponents.some((opp) => {
+    const ot = posToTile(opp.position);
+    return ot.col === tile.col && ot.row === tile.row;
   });
 }
 
@@ -2770,84 +2425,63 @@ function scoreCreativeCarryTile(
   const lateral = Math.abs(tile.row - from.row);
   const space = nearestOpponentDistance(tile, opponents);
   const threatened = isThreatened(tile, opponents);
-
-  const isSameAsCurrent =
-    tile.col === currentTarget.col && tile.row === currentTarget.row;
-
-  const isStraightForward =
-    tile.row === from.row && tile.col < from.col;
-
-  const isShortStraightForward =
-    isStraightForward && progress <= 2;
+  const opponentOnTile = isOpponentOnTile(tile, opponents);
+  const isSameAsCurrent = tile.col === currentTarget.col && tile.row === currentTarget.row;
+  const isStraightForward = tile.row === from.row && tile.col < from.col;
+  const isShortStraightForward = isStraightForward && progress <= 2;
 
   let score = 0;
 
-  // Space still matters, but not enough to make the AI dribble constantly.
-  score += space * 1.45;
+  // Space matters a lot. This helps the AI stop running into easy tackles.
+  score += space * 1.8;
 
-  // Forward dribbling is still allowed, just toned down.
+  // It can still go forward, but not blindly every single time.
   if (progress > 0) {
     const directness =
       tactic.progression === "counter" || tactic.id === "quick_counterattack"
-        ? 2.05
+        ? 2.7
         : tactic.progression === "direct"
-          ? 1.7
-          : 1.0;
+          ? 2.2
+          : 1.35;
 
     score += progress * directness;
   }
 
-  // Sideways and diagonal movement should be a real alternative.
-  if (lateral > 0) {
-    score += 2.9;
-  }
+  // Sideways and diagonal movement is now a real option.
+  if (lateral > 0) score += 2.2;
 
-  // Backward movement becomes a normal recycle option when pressed.
-  if (backward > 0) {
-    score += hardPressed ? 6.2 : -0.4;
-  }
+  // Backward is useful under pressure, bad when totally free.
+  if (backward > 0) score += hardPressed ? 5.5 : -1.2;
 
-  // Slow possession should pass/recycle instead of carrying forward.
+  // Slow possession should recycle instead of forcing forward dribbles.
   if (tactic.id === "slow_possession") {
-    score += lateral > 0 ? 3.2 : 0;
-    score += backward > 0 ? 3.4 : 0;
-    score -= Math.max(0, progress - 1) * 1.65;
+    score += lateral > 0 ? 2.5 : 0;
+    score += backward > 0 ? 2.5 : 0;
+    score -= Math.max(0, progress - 2) * 1.25;
   }
 
-  // Counter teams may still drive forward, but not every possession.
+  // Counter teams are allowed to be more vertical.
   if (tactic.progression === "counter" || tactic.id === "quick_counterattack") {
-    score += progress > 0 ? 0.9 : 0;
+    score += progress > 0 ? 1.5 : 0;
   }
 
-  // Wide teams should be willing to go around instead of straight ahead.
+  // Wide crossing teams should be comfortable going wide.
   if (tactic.id === "wide_crossing") {
-    score += tile.row <= 2 || tile.row >= GRID_ROWS - 3 ? 3.1 : 0;
+    score += tile.row <= 2 || tile.row >= GRID_ROWS - 3 ? 2.7 : 0;
   }
 
-  // Main nerf: stop the repeated 1-2 tile straight-forward carry.
-  if (isShortStraightForward) {
-    score -= 6.2;
-  }
+  // Avoid the exact boring pattern: straight forward 1-2 tiles again and again.
+  if (isShortStraightForward) score -= 3.5;
 
-  // Also nerf direct forward carries in general a bit.
-  if (isStraightForward) {
-    score -= 2.1;
-  }
+  // Still allow the old move if it is genuinely the best option.
+  if (isSameAsCurrent) score += 0.8;
 
-  // If it was already the chosen move, give it only a tiny loyalty bonus.
-  if (isSameAsCurrent) {
-    score += 0.25;
-  }
-
-  // Avoid threatened tiles unless desperate.
-  if (threatened) {
-    score -= hardPressed ? 4.5 : 7.2;
-  }
+  // Do not sprint into occupied/threatened tiles unless desperate.
+  if (threatened) score -= hardPressed ? 3.5 : 6.5;
+  if (opponentOnTile) score -= 5.5;
 
   // Avoid hugging the top/bottom edge too hard.
-  if (tile.row === 0 || tile.row === GRID_ROWS - 1) {
-    score -= 1.8;
-  }
+  if (tile.row === 0 || tile.row === GRID_ROWS - 1) score -= 1.6;
 
   // Shooting territory: prefer central lanes.
   if (tile.col <= 5) {
@@ -2855,13 +2489,9 @@ function scoreCreativeCarryTile(
     score -= Math.abs(tile.row - goalRow) * 0.5;
   }
 
-  // Better dribblers still get some freedom, but less than before.
-  const dribbling = statOr(
-    player.stats.dribbling,
-    statOr(player.stats.attack, 5),
-  );
-
-  score += dribbling * 0.1;
+  // Better dribblers get more freedom to choose risky carry tiles.
+  const dribbling = statOr(player.stats.dribbling, statOr(player.stats.attack, 5));
+  score += dribbling * 0.18;
 
   return score;
 }
@@ -2883,44 +2513,36 @@ function creativeCarryBuffCommand(
   if (currentCmd.type !== CommandType.MOVE) return currentCmd;
   if (!currentCmd.targetPosition) return currentCmd;
 
-  const allPlayers = [...aiPlayers, ...playerPlayers];
   const targetTile = posToTile(currentCmd.targetPosition);
-
-  const currentTargetOccupied = isAnyOtherPlayerOnTile(
-    targetTile,
-    allPlayers,
-    player.id,
-  );
-
-  const straightForwardCarry =
-    targetTile.row === pt.row && targetTile.col < pt.col;
-
-  const shortStraightForwardCarry =
-    straightForwardCarry && pt.col - targetTile.col <= 2;
-
+  const straightForwardCarry = targetTile.row === pt.row && targetTile.col < pt.col;
+  const shortStraightForwardCarry = straightForwardCarry && pt.col - targetTile.col <= 2;
   const hardPressed = isHardPressed(pt, playerPlayers);
 
-  const range = speedToTiles(player.stats.speed);
-
-  const reachable = getReachableTiles(
-    pt.col,
-    pt.row,
-    range,
-    false,
-    player.teamId,
+  const passOption = pickCreativePassOption(
+    player,
+    aiPlayers,
+    playerPlayers,
+    tactic,
+    hardPressed,
   );
+
+  // The carrier has more than one option now:
+  // If pressed or about to do the boring short-forward dribble, check passes first.
+  if (
+    passOption &&
+    (hardPressed ||
+      shortStraightForwardCarry ||
+      Math.random() < 0.28 + tactic.tempo * 0.015)
+  ) {
+    return creativePassCommand(player, passOption, planRef);
+  }
+
+  const range = speedToTiles(player.stats.speed);
+  const reachable = getReachableTiles(pt.col, pt.row, range, false, player.teamId);
 
   const candidates = reachable
     .filter((tile) => !(tile.col === pt.col && tile.row === pt.row))
     .filter((tile) => !claimed.has(tileKey(tile.col, tile.row)))
-    .filter(
-      (tile) =>
-        !isAnyOtherPlayerOnTile(
-          tile,
-          allPlayers,
-          player.id,
-        ),
-    )
     .map((tile) => ({
       tile,
       score: scoreCreativeCarryTile(
@@ -2932,135 +2554,11 @@ function creativeCarryBuffCommand(
         tactic,
         hardPressed,
       ),
-      space: nearestOpponentDistance(tile, playerPlayers),
-      threatened: isThreatened(tile, playerPlayers),
-      forwardGain: pt.col - tile.col,
     }))
     .sort((a, b) => b.score - a.score);
 
   const best = candidates[0];
-
-  const passOptionRaw = pickCreativePassOption(
-    player,
-    aiPlayers,
-    playerPlayers,
-    tactic,
-    hardPressed || currentTargetOccupied || shortStraightForwardCarry,
-  );
-
-  const passOption =
-    passOptionRaw && !isBadBackPass(player, passOptionRaw, hardPressed)
-      ? passOptionRaw
-      : null;
-
-  // Absolute rule: never dribble into an occupied tile.
-  if (currentTargetOccupied) {
-    if (passOption) {
-      const chip = shouldUseChipPass(
-        player,
-        passOption,
-        playerPlayers,
-        true,
-        tactic,
-      );
-
-      return creativePassCommand(
-        player,
-        passOption,
-        planRef,
-        chip ? "long" : "ground",
-      );
-    }
-
-    return {
-      type: CommandType.MOVE,
-      targetPosition: tileToPos(pt.col, pt.row),
-    };
-  }
-
-  // If there is obvious open forward space, take it.
-  // This fixes the "pass back instead of using space" problem.
-  if (
-    best &&
-    best.forwardGain > 0 &&
-    best.space >= 3 &&
-    !best.threatened
-  ) {
-    claimed.add(tileKey(best.tile.col, best.tile.row));
-
-    return {
-      type: CommandType.MOVE,
-      targetPosition: tileToPos(best.tile.col, best.tile.row),
-    };
-  }
-
-  // If the best move is diagonal/sideways into real space, allow it too.
-  if (
-    best &&
-    best.space >= 3.5 &&
-    !best.threatened &&
-    best.score > 7
-  ) {
-    claimed.add(tileKey(best.tile.col, best.tile.row));
-
-    return {
-      type: CommandType.MOVE,
-      targetPosition: tileToPos(best.tile.col, best.tile.row),
-    };
-  }
-
-  // Passing is still preferred when there is no clean space,
-  // but now it should prefer forward/sideways passes, not keeper ping-pong.
-  const passChance =
-    shortStraightForwardCarry
-      ? 0.88
-      : straightForwardCarry
-        ? 0.82
-        : hardPressed
-          ? 0.84
-          : 0.68;
-
-  if (passOption && Math.random() < passChance) {
-    const chip = shouldUseChipPass(
-      player,
-      passOption,
-      playerPlayers,
-      hardPressed,
-      tactic,
-    );
-
-    return creativePassCommand(
-      player,
-      passOption,
-      planRef,
-      chip ? "long" : "ground",
-    );
-  }
-
-  // If every possible carry tile is occupied/bad, do not force a back-pass loop.
-  if (!best) {
-    if (passOption) {
-      const chip = shouldUseChipPass(
-        player,
-        passOption,
-        playerPlayers,
-        hardPressed,
-        tactic,
-      );
-
-      return creativePassCommand(
-        player,
-        passOption,
-        planRef,
-        chip ? "long" : "ground",
-      );
-    }
-
-    return {
-      type: CommandType.MOVE,
-      targetPosition: tileToPos(pt.col, pt.row),
-    };
-  }
+  if (!best) return currentCmd;
 
   const currentScore = scoreCreativeCarryTile(
     pt,
@@ -3073,13 +2571,9 @@ function creativeCarryBuffCommand(
   );
 
   const shouldReplace =
-    hardPressed ||
-    shortStraightForwardCarry ||
-    best.score > currentScore + 3.8;
+    shortStraightForwardCarry || hardPressed || best.score > currentScore + 1.5;
 
-  if (!shouldReplace) {
-    return currentCmd;
-  }
+  if (!shouldReplace) return currentCmd;
 
   claimed.add(tileKey(best.tile.col, best.tile.row));
 
@@ -3087,293 +2581,4 @@ function creativeCarryBuffCommand(
     type: CommandType.MOVE,
     targetPosition: tileToPos(best.tile.col, best.tile.row),
   };
-}
-
-// ─── Out-of-Possession Team Tactics ────────────────────────────────────────
-// This makes each AI team defend differently:
-// zonal, man marking, hybrid, low/mid/high block, wide traps, box protection.
-
-function roleMatchesMarkPriority(
-  marker: SimPlayer,
-  target: SimPlayer,
-  tactic: TeamTactic,
-): boolean {
-  const priority = tactic.markPriority;
-
-  if (!priority) return false;
-
-  if (marker.role === "defender") {
-    return target.role === priority.defender;
-  }
-
-  if (marker.role === "midfielder") {
-    return target.role === priority.midfielder;
-  }
-
-  if (marker.role === "forward" || marker.role === "striker") {
-    return target.role === priority.forward;
-  }
-
-  return false;
-}
-
-function blockColForRole(player: SimPlayer, tactic: TeamTactic): number {
-  const low =
-    tactic.blockHeight === "low" ||
-    tactic.defensiveShape === "protect_box";
-
-  const high =
-    tactic.blockHeight === "high" ||
-    tactic.pressTrigger === "always";
-
-  if (low) {
-    if (player.role === "defender") return GRID_COLS - 4;
-    if (player.role === "midfielder") return GRID_COLS - 6;
-    return GRID_COLS - 8;
-  }
-
-  if (high) {
-    if (player.role === "defender") return GRID_COLS - 7;
-    if (player.role === "midfielder") return GRID_COLS - 9;
-    return GRID_COLS - 11;
-  }
-
-  // mid block
-  if (player.role === "defender") return GRID_COLS - 5;
-  if (player.role === "midfielder") return GRID_COLS - 7;
-  return GRID_COLS - 9;
-}
-
-function clampAITile(tile: TilePos): TilePos {
-  return {
-    col: Math.max(0, Math.min(GRID_COLS - 1, tile.col)),
-    row: Math.max(0, Math.min(GRID_ROWS - 1, tile.row)),
-  };
-}
-
-function findAssignedMark(
-  marker: SimPlayer,
-  opponents: SimPlayer[],
-  tactic: TeamTactic,
-): SimPlayer | null {
-  const possible = opponents.filter((opp) =>
-    roleMatchesMarkPriority(marker, opp, tactic),
-  );
-
-  if (possible.length === 0) return null;
-
-  const markerTile = posToTile(marker.position);
-
-  return possible
-    .map((opp) => ({
-      opp,
-      dist: tileDist(markerTile, posToTile(opp.position)),
-    }))
-    .sort((a, b) => a.dist - b.dist)[0]?.opp ?? null;
-}
-
-function manMarkTile(
-  marker: SimPlayer,
-  target: SimPlayer,
-  ballTile: TilePos,
-  tactic: TeamTactic,
-): TilePos {
-  const targetTile = posToTile(target.position);
-
-  // AI defends the right goal, so it wants to stand slightly goal-side,
-  // meaning one column to the right of the target.
-  let col = targetTile.col + 1;
-  let row = targetTile.row;
-
-  if (marker.role === "defender") {
-    col = targetTile.col + 1;
-  }
-
-  if (marker.role === "midfielder") {
-    col = targetTile.col;
-  }
-
-  if (marker.role === "forward" || marker.role === "striker") {
-    col = targetTile.col - 1;
-  }
-
-  // Low block teams do not chase marks too far out.
-  if (tactic.blockHeight === "low") {
-    col = Math.max(col, GRID_COLS - 7);
-  }
-
-  // High press teams can follow higher.
-  if (tactic.blockHeight === "high") {
-    col = Math.max(2, col);
-  }
-
-  // If the marked player has the ball, close tighter.
-  if (targetTile.col === ballTile.col && targetTile.row === ballTile.row) {
-    col = targetTile.col + 1;
-    row = targetTile.row;
-  }
-
-  return clampAITile({ col, row });
-}
-
-function zonalBlockTile(
-  player: SimPlayer,
-  playerIndex: number,
-  ballTile: TilePos,
-  tactic: TeamTactic,
-): TilePos {
-  const baseCol = blockColForRole(player, tactic);
-  const centerRow = Math.floor(GRID_ROWS / 2);
-
-  let row = centerRow;
-
-  if (player.role === "defender") {
-    const defenderRows = [centerRow - 2, centerRow, centerRow + 2];
-    row = defenderRows[playerIndex % defenderRows.length];
-  } else if (player.role === "midfielder") {
-    const midRows = [centerRow - 1, centerRow + 1, centerRow];
-    row = midRows[playerIndex % midRows.length];
-  } else {
-    row = ballTile.row;
-  }
-
-  // Compact teams squeeze toward the ball side but stay central.
-  if (tactic.defensiveShape === "compact") {
-    row = Math.round((row * 2 + ballTile.row) / 3);
-  }
-
-  // Wide-trap teams slide harder to the wing.
-  if (
-    tactic.defensiveShape === "wide" ||
-    tactic.pressTrigger === "wide_trap"
-  ) {
-    if (ballTile.row <= 2) row = Math.max(0, row - 1);
-    if (ballTile.row >= GRID_ROWS - 3) row = Math.min(GRID_ROWS - 1, row + 1);
-  }
-
-  // Protect-box teams stay very central and deep.
-  if (tactic.defensiveShape === "protect_box") {
-    row = Math.round((row + centerRow) / 2);
-  }
-
-  let col = baseCol;
-
-  // High block steps toward the ball.
-  if (tactic.blockHeight === "high") {
-    col = Math.max(1, Math.min(baseCol, ballTile.col + 2));
-  }
-
-  // Low block refuses to get dragged too high.
-  if (tactic.blockHeight === "low") {
-    col = Math.max(baseCol, GRID_COLS - 7);
-  }
-
-  return clampAITile({ col, row });
-}
-
-function shouldPressBall(
-  player: SimPlayer,
-  ballTile: TilePos,
-  tactic: TeamTactic,
-): boolean {
-  if (player.role === "goalkeeper") return false;
-
-  const pt = posToTile(player.position);
-  const dist = tileDist(pt, ballTile);
-
-  if (tactic.pressTrigger === "always") {
-    return dist <= 5;
-  }
-
-  if (tactic.pressTrigger === "wide_trap") {
-    const ballWide = ballTile.row <= 2 || ballTile.row >= GRID_ROWS - 3;
-    return ballWide && dist <= 4;
-  }
-
-  if (tactic.pressTrigger === "back_pass") {
-    // If opponent is closer to their own goal, step up.
-    return ballTile.col > Math.floor(GRID_COLS / 2) && dist <= 4;
-  }
-
-  if (tactic.pressTrigger === "bad_touch") {
-    return dist <= 3;
-  }
-
-  return false;
-}
-
-function outOfPossessionTacticCommand(
-  player: SimPlayer,
-  currentCmd: Command,
-  pt: TilePos,
-  aiPlayers: SimPlayer[],
-  playerPlayers: SimPlayer[],
-  ball: SimBall,
-  ballTile: TilePos,
-  claimed: Set<string>,
-  friendly: Set<string>,
-  tactic: TeamTactic,
-): Command {
-  if (player.role === "goalkeeper") {
-    return currentCmd;
-  }
-
-  const playerIndex = aiPlayers.findIndex((p) => p.id === player.id);
-
-  // 1. Pressing trigger has priority.
-  // Counter-press teams and wide-trap teams actually jump to the ball.
-  if (shouldPressBall(player, ballTile, tactic)) {
-    const pressTile = clampAITile({
-      col: ballTile.col + 1,
-      row: ballTile.row,
-    });
-
-    const key = tileKey(pressTile.col, pressTile.row);
-
-    if (!claimed.has(key)) {
-      claimed.add(key);
-
-      return {
-        type: CommandType.MOVE,
-        targetPosition: tileToPos(pressTile.col, pressTile.row),
-      };
-    }
-  }
-
-  // 2. Man-marking teams assign players to roles.
-  if (
-    tactic.markingStyle === "man_marking" ||
-    tactic.markingStyle === "hybrid"
-  ) {
-    const mark = findAssignedMark(player, playerPlayers, tactic);
-
-    if (mark) {
-      const markTile = manMarkTile(player, mark, ballTile, tactic);
-      const key = tileKey(markTile.col, markTile.row);
-
-      if (!claimed.has(key)) {
-        claimed.add(key);
-
-        return {
-          type: CommandType.MOVE,
-          targetPosition: tileToPos(markTile.col, markTile.row),
-        };
-      }
-    }
-  }
-
-  // 3. Pure zonal or fallback behavior.
-  const zoneTile = zonalBlockTile(player, playerIndex, ballTile, tactic);
-  const key = tileKey(zoneTile.col, zoneTile.row);
-
-  if (!claimed.has(key)) {
-    claimed.add(key);
-
-    return {
-      type: CommandType.MOVE,
-      targetPosition: tileToPos(zoneTile.col, zoneTile.row),
-    };
-  }
-
-  return currentCmd;
 }

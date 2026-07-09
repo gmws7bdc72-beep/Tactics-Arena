@@ -1,72 +1,33 @@
-import { useMemo } from "react";
-import * as THREE from "three";
-
 interface Ball3DProps {
   x: number;
-  y?: number;
   z: number;
-  radius?: number;
   active?: boolean;
 }
 
-function createBallTexture(): THREE.CanvasTexture {
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-
-  ctx.fillStyle = "#f5f5f5";
-  ctx.fillRect(0, 0, size, size);
-
-  const patches: Array<[number, number, number]> = [
-    [size * 0.5, size * 0.5, size * 0.13],
-    [size * 0.18, size * 0.22, size * 0.1],
-    [size * 0.82, size * 0.22, size * 0.1],
-    [size * 0.18, size * 0.78, size * 0.1],
-    [size * 0.82, size * 0.78, size * 0.1],
-    [size * 0.5, size * 0.08, size * 0.09],
-    [size * 0.5, size * 0.92, size * 0.09],
-  ];
-
-  ctx.fillStyle = "#1c1c1c";
-
-  for (const [px, py, pr] of patches) {
-    ctx.beginPath();
-    const spikes = 5;
-    for (let i = 0; i < spikes * 2; i++) {
-      const angle = (i * Math.PI) / spikes - Math.PI / 2;
-      const r = i % 2 === 0 ? pr : pr * 0.42;
-      const vx = px + Math.cos(angle) * r;
-      const vy = py + Math.sin(angle) * r;
-      if (i === 0) ctx.moveTo(vx, vy);
-      else ctx.lineTo(vx, vy);
-    }
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
-
-export function Ball3D({ x, y = 0, z, radius = 0.11, active = false }: Ball3DProps) {
-  const texture = useMemo(() => createBallTexture(), []);
-
+export function Ball3D({ x, z, active = false }: Ball3DProps) {
   return (
-    <group position={[x, y + radius, z]}>
+    <group position={[x, 0.18, z]}>
+      <mesh castShadow>
+        <sphereGeometry args={[0.18, 32, 32]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.45} metalness={0.02} />
+      </mesh>
+
+      <mesh rotation={[0, 0, Math.PI / 4]}>
+        <torusGeometry args={[0.182, 0.007, 8, 40]} />
+        <meshStandardMaterial color="#111827" roughness={0.6} />
+      </mesh>
+
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.184, 0.006, 8, 40]} />
+        <meshStandardMaterial color="#111827" roughness={0.6} />
+      </mesh>
+
       {active && (
-        <mesh position={[0, -y - radius + 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[radius * 1.4, radius * 2.1, 32]} />
-          <meshBasicMaterial color="#ff3d3d" transparent opacity={0.7} />
+        <mesh position={[0, -0.165, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.26, 0.34, 32]} />
+          <meshBasicMaterial color="#facc15" transparent opacity={0.75} />
         </mesh>
       )}
-
-      <mesh castShadow>
-        <sphereGeometry args={[radius, 24, 24]} />
-        <meshStandardMaterial map={texture} roughness={0.5} />
-      </mesh>
     </group>
   );
 }

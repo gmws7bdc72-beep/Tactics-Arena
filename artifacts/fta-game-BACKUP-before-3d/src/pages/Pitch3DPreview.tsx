@@ -1,0 +1,99 @@
+import { Canvas } from "@react-three/fiber";
+import { OrbitControls, ContactShadows } from "@react-three/drei";
+import { Player3D, type PlayerRole } from "../components/three/Player3D";
+import { Ball3D } from "../components/three/Ball3D";
+
+interface DemoPlayer {
+  x: number;
+  z: number;
+  facing: number;
+  jerseyNumber: number;
+  name: string;
+  role: PlayerRole;
+  isSelected?: boolean;
+  offside?: boolean;
+}
+
+const TEAM_BLUE = "#2e8fe0";
+const TEAM_RED = "#d94b3d";
+
+const BLUE_TEAM: DemoPlayer[] = [
+  { x: -6.5, z: 0, facing: Math.PI / 2, jerseyNumber: 1, name: "Reyes", role: "goalkeeper" },
+  { x: -4, z: -2, facing: Math.PI / 2, jerseyNumber: 4, name: "Okafor", role: "defender" },
+  { x: -4, z: 2, facing: Math.PI / 2, jerseyNumber: 5, name: "Voss", role: "defender" },
+  { x: -1.5, z: -1.5, facing: Math.PI / 2, jerseyNumber: 8, name: "Lindqvist", role: "midfielder", isSelected: true },
+  { x: -1.5, z: 1.5, facing: Math.PI / 2, jerseyNumber: 10, name: "Marchetti", role: "midfielder" },
+  { x: 1, z: 0, facing: Math.PI / 2, jerseyNumber: 9, name: "Duarte", role: "striker" },
+];
+
+const RED_TEAM: DemoPlayer[] = [
+  { x: 6.5, z: 0, facing: -Math.PI / 2, jerseyNumber: 1, name: "Kessler", role: "goalkeeper" },
+  { x: 4, z: -2, facing: -Math.PI / 2, jerseyNumber: 3, name: "Novak", role: "defender" },
+  { x: 4, z: 2, facing: -Math.PI / 2, jerseyNumber: 6, name: "Aoyama", role: "defender" },
+  { x: 1.5, z: -1.5, facing: -Math.PI / 2, jerseyNumber: 7, name: "Brandt", role: "midfielder" },
+  { x: 1.5, z: 1.5, facing: -Math.PI / 2, jerseyNumber: 11, name: "Sancho", role: "forward" },
+  { x: -1, z: 0.3, facing: -Math.PI / 2, jerseyNumber: 9, name: "Kimura", role: "striker", offside: true },
+];
+
+export default function Pitch3DPreview() {
+  return (
+    <div style={{ width: "100%", height: "100vh", background: "#0a0f14" }}>
+      <Canvas shadows camera={{ position: [0, 9, 11], fov: 42 }}>
+        <ambientLight intensity={0.65} />
+        <directionalLight
+          position={[6, 10, 4]}
+          intensity={1.1}
+          castShadow
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
+        />
+
+        <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <planeGeometry args={[18, 11]} />
+          <meshStandardMaterial color="#2a6b3a" roughness={0.95} />
+        </mesh>
+
+        <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={20} blur={2} far={2} />
+
+        {BLUE_TEAM.map((p) => (
+          <Player3D
+            key={`blue-${p.jerseyNumber}`}
+            x={p.x}
+            z={p.z}
+            facing={p.facing}
+            teamColor={TEAM_BLUE}
+            jerseyNumber={p.jerseyNumber}
+            name={p.name}
+            role={p.role}
+            isSelected={p.isSelected}
+            offside={p.offside}
+          />
+        ))}
+
+        {RED_TEAM.map((p) => (
+          <Player3D
+            key={`red-${p.jerseyNumber}`}
+            x={p.x}
+            z={p.z}
+            facing={p.facing}
+            teamColor={TEAM_RED}
+            jerseyNumber={p.jerseyNumber}
+            name={p.name}
+            role={p.role}
+            isSelected={p.isSelected}
+            offside={p.offside}
+          />
+        ))}
+
+        <Ball3D x={0} z={0} active />
+
+        <OrbitControls
+          target={[0, 1, 0]}
+          maxPolarAngle={Math.PI / 2.1}
+          minDistance={5}
+          maxDistance={22}
+        />
+      </Canvas>
+    </div>
+  );
+}
