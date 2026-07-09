@@ -1,33 +1,19 @@
-const CACHE_NAME = "football-tactics-arena-offline-v2";
-const RUNTIME_CACHE = "football-tactics-arena-runtime-v2";
+const CACHE_NAME = "football-tactics-arena-v1";
 
-const CORE_ASSETS = [
+const FILES_TO_CACHE = [
   "/",
-  "/index.html",
   "/manifest.webmanifest",
-  "/favicon.svg",
 ];
 
-// Install: save the core shell immediately.
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) =>
-        cache.addAll(
-          CORE_ASSETS.map(
-            (url) =>
-              new Request(url, {
-                cache: "reload",
-              }),
-          ),
-        ),
-      )
-      .then(() => self.skipWaiting()),
+      .then((cache) => cache.addAll(FILES_TO_CACHE))
+      .then(() => self.skipWaiting())
   );
 });
 
-// Activate: delete old caches and take control immediately.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
@@ -35,92 +21,36 @@ self.addEventListener("activate", (event) => {
       .then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter(
-              (name) =>
-                name !== CACHE_NAME &&
-                name !== RUNTIME_CACHE,
-            )
-            .map((name) => caches.delete(name)),
-        ),
+            .filter((name) => name !== CACHE_NAME)
+            .map((name) => caches.delete(name))
+        )
       )
-      .then(() => self.clients.claim()),
+      .then(() => self.clients.claim())
   );
 });
-
-// Save every successful same-origin GET request.
-// This catches Vite JS/CSS/assets after the app loads once online.
-async function cacheRuntimeRequest(request, response) {
-  if (!response || !response.ok) return response;
-
-  const url = new URL(request.url);
-
-  if (url.origin !== self.location.origin) {
-    return response;
-  }
-
-  const cache = await caches.open(RUNTIME_CACHE);
-  cache.put(request, response.clone());
-
-  return response;
-}
-
-// For app page navigation:
-// Try network first. If offline, fall back to cached app shell.
-async function handleNavigation(request) {
-  try {
-    const networkResponse = await fetch(request);
-    await cacheRuntimeRequest(request, networkResponse.clone());
-    return networkResponse;
-  } catch {
-    const cached =
-      (await caches.match(request)) ||
-      (await caches.match("/")) ||
-      (await caches.match("/index.html"));
-
-    if (cached) return cached;
-
-    return new Response("Football Tactics Arena is offline, but the app shell was not cached yet. Open it once while online first.", {
-      status: 503,
-      headers: {
-        "Content-Type": "text/plain",
-      },
-    });
-  }
-}
-
-// For JS/CSS/images:
-// Cache first. If not cached, fetch and save.
-async function handleAsset(request) {
-  const cached = await caches.match(request);
-
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    const networkResponse = await fetch(request);
-    return await cacheRuntimeRequest(request, networkResponse);
-  } catch {
-    return new Response("", {
-      status: 504,
-      statusText: "Offline and asset not cached",
-    });
-  }
-}
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  const url = new URL(event.request.url);
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
 
-  if (url.origin !== self.location.origin) {
-    return;
-  }
+      return fetch(event.request).then((networkResponse) => {
+        if (!networkResponse || !networkResponse.ok) {
+          return networkResponse;
+        }
 
-  if (event.request.mode === "navigate") {
-    event.respondWith(handleNavigation(event.request));
-    return;
-  }
+        const responseCopy = networkResponse.clone();
 
-  event.respondWith(handleAsset(event.request));
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(event.request, responseCopy);
+        });
+
+        return networkResponse;
+      });
+    })
+  );
 });

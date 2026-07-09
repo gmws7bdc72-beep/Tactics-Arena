@@ -8,96 +8,65 @@ interface Props {
   team: TeamConfig;
   onSave: (team: TeamConfig) => void;
   onBack: () => void;
-  initialTab?: "lineup" | "formation";
 }
 
 const SLOT_LABELS = ["GK", "DEF", "DEF", "MID", "FWD", "ST"];
+const FORMATION_TOTAL = FORMATIONS.length;
 
-export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" }: Props) {
-  const [currentTeam, setCurrentTeam] = useState<TeamConfig>({
-    ...team,
-    players: [...team.players],
-  });
-
+export default function TeamSetup({ team, onSave, onBack }: Props) {
+  const [currentTeam, setCurrentTeam] = useState<TeamConfig>({ ...team, players: [...team.players] });
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
-  const [tab, setTab] = useState<"lineup" | "formation">(initialTab);
+  const [tab, setTab] = useState<"lineup" | "formation">("lineup");
 
   const selectFormation = (formationId: string) => {
-    const formation = FORMATIONS.find((f) => f.id === formationId);
-    if (!formation) return;
-
-    setCurrentTeam((prev) => ({
+    const f = FORMATIONS.find(f => f.id === formationId);
+    if (!f) return;
+    setCurrentTeam(prev => ({
       ...prev,
-      formationId: formation.id,
-      startPositions: formation.positions.map((p) => ({ ...p })),
+      formationId: f.id,
+      startPositions: f.positions.map(p => ({ ...p })),
     }));
   };
 
   const swapPlayer = (slotIndex: number, newCard: PlayerCardType) => {
     const newPlayers = [...currentTeam.players];
     newPlayers[slotIndex] = newCard;
-
-    setCurrentTeam((prev) => ({
-      ...prev,
-      players: newPlayers,
-    }));
-
+    setCurrentTeam(prev => ({ ...prev, players: newPlayers }));
     setActiveSlot(null);
   };
 
   const renamePlayer = (slotIndex: number, newName: string) => {
-    setCurrentTeam((prev) => ({
+    setCurrentTeam(prev => ({
       ...prev,
-      players: prev.players.map((p, i) =>
-        i === slotIndex ? { ...p, name: newName } : p,
-      ),
+      players: prev.players.map((p, i) => i === slotIndex ? { ...p, name: newName } : p),
     }));
   };
 
   const getAvailableForSlot = (slotIndex: number) => {
-    const pool =
-      slotIndex === 0
-        ? ALL_PLAYERS.filter((p) => p.role === "goalkeeper")
-        : ALL_PLAYERS.filter((p) => p.role !== "goalkeeper");
-
-    return pool.filter(
-      (p) => !currentTeam.players.some((cp, i) => cp.id === p.id && i !== slotIndex),
-    );
+    const pool = slotIndex === 0
+      ? ALL_PLAYERS.filter(p => p.role === "goalkeeper")
+      : ALL_PLAYERS.filter(p => p.role !== "goalkeeper");
+    return pool.filter(p => !currentTeam.players.some((cp, i) => cp.id === p.id && i !== slotIndex));
   };
 
-  const availableForSlot =
-    activeSlot !== null ? getAvailableForSlot(activeSlot) : [];
+  const availableForSlot = activeSlot !== null ? getAvailableForSlot(activeSlot) : [];
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{ background: "#0a0e1a" }}
-    >
+    <div className="min-h-screen flex flex-col" style={{ background: "#0a0e1a" }}>
       <div className="flex items-center gap-3 px-4 pt-6 pb-4">
-        <button
-          onClick={onBack}
-          className="text-gray-400 hover:text-white transition-colors text-lg"
-        >
-          ←
-        </button>
-
-        <div>
-          <h1 className="text-white text-lg font-bold">Team Setup</h1>
-          <p className="text-gray-500 text-xs">
-            6v6 · 1 goalkeeper + 5 outfield players
-          </p>
-        </div>
+        <button onClick={onBack} className="text-gray-400 hover:text-white transition-colors text-lg">←</button>
+        <h1 className="text-white text-lg font-bold">Team Setup</h1>
       </div>
 
+      {/* Tabs */}
       <div className="flex px-4 gap-2 mb-4">
-        {(["lineup", "formation"] as const).map((t) => (
+        {(["lineup", "formation"] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all capitalize"
             style={{
-              background:
-                tab === t ? "rgba(0,230,118,0.15)" : "rgba(255,255,255,0.06)",
+              background: tab === t ? "rgba(0,230,118,0.15)" : "rgba(255,255,255,0.06)",
               color: tab === t ? "#00e676" : "#9ca3af",
             }}
           >
@@ -110,40 +79,28 @@ export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" 
         {tab === "lineup" && (
           <div>
             <p className="text-gray-400 text-xs mb-3">
-              Tap a slot to change the player. Slot 1 is goalkeeper only.
+              Tap a slot to change the player · Slot 1 is Goalkeeper only
             </p>
 
+            {/* Current lineup — 6 slots */}
             <div className="space-y-2 mb-6">
               {currentTeam.players.slice(0, PLAYERS_PER_TEAM).map((p, i) => {
                 const slotLabel = SLOT_LABELS[i] ?? `#${i + 1}`;
                 const isGKSlot = i === 0;
-
                 return (
                   <div
-                    key={`${p.id}-${i}`}
+                    key={i}
                     onClick={() => setActiveSlot(activeSlot === i ? null : i)}
                     className="rounded-xl p-3 cursor-pointer transition-all"
                     style={{
-                      background:
-                        activeSlot === i
-                          ? "rgba(0,230,118,0.06)"
-                          : "rgba(255,255,255,0.04)",
-                      outline:
-                        activeSlot === i
-                          ? "2px solid #00e676"
-                          : "1px solid rgba(255,255,255,0.08)",
+                      background: activeSlot === i ? "rgba(0,230,118,0.06)" : "rgba(255,255,255,0.04)",
+                      outline: activeSlot === i ? "2px solid #00e676" : "1px solid rgba(255,255,255,0.08)",
                     }}
                   >
                     <div className="flex items-center gap-3">
                       <div className="text-center flex-shrink-0 w-10">
-                        <div
-                          className="text-xs font-bold"
-                          style={{ color: isGKSlot ? "#ffd700" : "#6b7280" }}
-                        >
-                          {slotLabel}
-                        </div>
+                        <div className="text-xs font-bold" style={{ color: isGKSlot ? "#ffd700" : "#6b7280" }}>{slotLabel}</div>
                       </div>
-
                       <div
                         className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
                         style={{
@@ -154,31 +111,23 @@ export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" 
                       >
                         {p.jerseyNumber}
                       </div>
-
                       <div className="flex-1 min-w-0">
                         <input
                           type="text"
                           value={p.name}
-                          onChange={(e) => renamePlayer(i, e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
+                          onChange={e => renamePlayer(i, e.target.value)}
+                          onClick={e => e.stopPropagation()}
                           maxLength={16}
                           className="bg-transparent text-white text-sm font-semibold w-full outline-none border-b border-transparent focus:border-white/30 transition-colors"
                           placeholder="Player name"
                         />
-
-                        <div className="text-gray-400 text-xs truncate capitalize">
-                          {p.role} · ⚡ {p.ability.replace(/_/g, " ")}
-                        </div>
+                        <div className="text-gray-400 text-xs truncate">⚡ {p.ability.replace(/_/g, " ")}</div>
                       </div>
-
                       <div className="text-xs text-right text-gray-400 flex-shrink-0">
                         <div>ATK {p.stats.attack}</div>
                         <div>DEF {p.stats.defense}</div>
                       </div>
-
-                      <div className="text-gray-400 text-xs">
-                        {activeSlot === i ? "▼" : "▶"}
-                      </div>
+                      <div className="text-gray-400 text-xs">{activeSlot === i ? "▼" : "▶"}</div>
                     </div>
 
                     {activeSlot === i && (
@@ -186,45 +135,29 @@ export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" 
                         <p className="text-xs text-gray-400 mb-2">
                           {isGKSlot ? "🧤 Goalkeepers only:" : "Choose replacement:"}
                         </p>
-
                         {availableForSlot.length === 0 ? (
-                          <div className="text-gray-600 text-xs italic">
-                            No other {isGKSlot ? "goalkeepers" : "players"} available
-                          </div>
+                          <div className="text-gray-600 text-xs italic">No other {isGKSlot ? "goalkeepers" : "players"} available</div>
                         ) : (
                           <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto">
-                            {availableForSlot.map((candidate) => (
+                            {availableForSlot.map(candidate => (
                               <button
                                 key={candidate.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  swapPlayer(i, candidate);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); swapPlayer(i, candidate); }}
                                 className="flex items-center gap-3 p-2 rounded-lg text-left transition-all hover:bg-white/10"
                                 style={{ background: "rgba(255,255,255,0.04)" }}
                               >
                                 <div
                                   className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                                  style={{
-                                    background: currentTeam.jerseyColor,
-                                    color: currentTeam.secondaryColor,
-                                  }}
+                                  style={{ background: currentTeam.jerseyColor, color: currentTeam.secondaryColor }}
                                 >
                                   {candidate.jerseyNumber}
                                 </div>
-
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-white text-xs font-semibold truncate">
-                                    {candidate.name}
-                                  </div>
-                                  <div className="text-gray-400 text-[10px] truncate capitalize">
-                                    {candidate.role} · {candidate.ability.replace(/_/g, " ")}
-                                  </div>
+                                  <div className="text-white text-xs font-semibold truncate">{candidate.name}</div>
+                                  <div className="text-gray-400 text-[10px] truncate">{candidate.role} · {candidate.ability.replace(/_/g, " ")}</div>
                                 </div>
-
                                 <div className="text-xs text-gray-400 flex-shrink-0">
-                                  {candidate.stats.attack}·{candidate.stats.defense}·
-                                  {candidate.stats.luck}
+                                  {candidate.stats.attack}·{candidate.stats.defense}·{candidate.stats.luck}
                                 </div>
                               </button>
                             ))}
@@ -237,68 +170,31 @@ export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" 
               })}
             </div>
 
-            <div
-              className="p-3 rounded-xl text-xs text-gray-500"
-              style={{
-                background: "rgba(255,215,0,0.04)",
-                border: "1px solid rgba(255,215,0,0.12)",
-              }}
-            >
-              🧤 GK slot is locked to goalkeeper cards. Use the Formation tab to
-              change the team shape.
+            <div className="p-3 rounded-xl text-xs text-gray-500" style={{ background: "rgba(255,215,0,0.04)", border: "1px solid rgba(255,215,0,0.12)" }}>
+              🧤 The GK slot is locked to goalkeeper cards. Use the formation tab to change team shape.
             </div>
           </div>
         )}
 
         {tab === "formation" && (
           <div>
-            <p className="text-gray-400 text-xs mb-4">
-              Choose your starting shape. All {FORMATIONS.length} legal 6v6
-              formations are available.
-            </p>
-
+            <p className="text-gray-400 text-xs mb-4">Choose your starting formation · all {FORMATION_TOTAL} legal 6v6 shapes are available</p>
             <div className="grid grid-cols-2 gap-3">
-              {FORMATIONS.map((formation) => (
+              {FORMATIONS.map(f => (
                 <button
-                  key={formation.id}
-                  onClick={() => selectFormation(formation.id)}
+                  key={f.id}
+                  onClick={() => selectFormation(f.id)}
                   className="rounded-xl p-4 transition-all"
                   style={{
-                    background:
-                      currentTeam.formationId === formation.id
-                        ? "rgba(0,230,118,0.1)"
-                        : "rgba(255,255,255,0.04)",
-                    border: `1px solid ${
-                      currentTeam.formationId === formation.id
-                        ? "#00e676"
-                        : "rgba(255,255,255,0.1)"
-                    }`,
+                    background: currentTeam.formationId === f.id ? "rgba(0,230,118,0.1)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${currentTeam.formationId === f.id ? "#00e676" : "rgba(255,255,255,0.1)"}`,
                   }}
                 >
-                  <div
-                    className="relative w-full mb-2"
-                    style={{ paddingBottom: "60%" }}
-                  >
-                    <svg
-                      className="absolute inset-0 w-full h-full"
-                      viewBox={`0 0 ${PITCH_WIDTH} ${PITCH_HEIGHT}`}
-                    >
-                      <rect
-                        width={PITCH_WIDTH}
-                        height={PITCH_HEIGHT}
-                        fill="#1a4a2e"
-                        rx="4"
-                      />
-                      <line
-                        x1={PITCH_WIDTH / 2}
-                        y1={0}
-                        x2={PITCH_WIDTH / 2}
-                        y2={PITCH_HEIGHT}
-                        stroke="rgba(255,255,255,0.3)"
-                        strokeWidth="2"
-                      />
-
-                      {formation.positions.map((pos, i) => (
+                  <div className="relative w-full mb-2" style={{ paddingBottom: "60%" }}>
+                    <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${PITCH_WIDTH} ${PITCH_HEIGHT}`}>
+                      <rect width={PITCH_WIDTH} height={PITCH_HEIGHT} fill="#1a4a2e" rx="4" />
+                      <line x1={PITCH_WIDTH / 2} y1={0} x2={PITCH_WIDTH / 2} y2={PITCH_HEIGHT} stroke="rgba(255,255,255,0.3)" strokeWidth="2" />
+                      {f.positions.map((pos, i) => (
                         <g key={i}>
                           <circle
                             cx={pos.x}
@@ -309,31 +205,15 @@ export default function TeamSetup({ team, onSave, onBack, initialTab = "lineup" 
                             stroke={i === 0 ? "#ffd700" : "none"}
                             strokeWidth={i === 0 ? 3 : 0}
                           />
-                          <text
-                            x={pos.x}
-                            y={pos.y + 5}
-                            textAnchor="middle"
-                            fill={currentTeam.secondaryColor}
-                            fontSize="18"
-                            fontWeight="bold"
-                          >
+                          <text x={pos.x} y={pos.y + 5} textAnchor="middle" fill={currentTeam.secondaryColor} fontSize="18" fontWeight="bold">
                             {currentTeam.players[i]?.jerseyNumber ?? i + 1}
                           </text>
                         </g>
                       ))}
                     </svg>
                   </div>
-
-                  <div
-                    className="text-sm font-bold"
-                    style={{
-                      color:
-                        currentTeam.formationId === formation.id
-                          ? "#00e676"
-                          : "#9ca3af",
-                    }}
-                  >
-                    {formation.name}
+                  <div className="text-sm font-bold" style={{ color: currentTeam.formationId === f.id ? "#00e676" : "#9ca3af" }}>
+                    {f.name}
                   </div>
                 </button>
               ))}

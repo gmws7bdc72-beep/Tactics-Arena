@@ -76,17 +76,6 @@ export interface TeamTactic {
   longBallFrequency: number;
   restDefenseDepth: number;
   progression: "slow" | "balanced" | "direct" | "counter";
-  outOfPossessionName?: string;
-  outOfPossessionDescription?: string;
-  markingStyle?: "zonal" | "man_marking" | "hybrid";
-  blockHeight?: "low" | "mid" | "high";
-  defensiveShape?: "compact" | "wide" | "aggressive" | "protect_box";
-  pressTrigger?: "none" | "bad_touch" | "back_pass" | "wide_trap" | "always";
-  markPriority?: {
-    defender?: "striker" | "forward" | "midfielder";
-    midfielder?: "midfielder" | "forward" | "defender";
-    forward?: "defender" | "midfielder" | "goalkeeper";
-  };
 }
 
 export type AbilityId =
