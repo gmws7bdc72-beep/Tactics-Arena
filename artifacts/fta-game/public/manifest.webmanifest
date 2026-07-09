@@ -7,5 +7,14 @@
   "display": "standalone",
   "orientation": "landscape",
   "background_color": "#101820",
-  "theme_color": "#101820"
+  "theme_color": "#101820",
+  "description": "Offline football tactics game.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
