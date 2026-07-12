@@ -1,6 +1,10 @@
+import { Suspense } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, ContactShadows } from "@react-three/drei";
-import { Player3D, type PlayerRole } from "../components/three/Player3D";
+import {
+  PlayerModel3D,
+  type PlayerRole,
+} from "../components/three/PlayerModel3D";
 import { Ball3D } from "../components/three/Ball3D";
 
 interface DemoPlayer {
@@ -55,37 +59,44 @@ export default function Pitch3DPreview() {
 
         <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={20} blur={2} far={2} />
 
-        {BLUE_TEAM.map((p) => (
-          <Player3D
-            key={`blue-${p.jerseyNumber}`}
-            x={p.x}
-            z={p.z}
-            facing={p.facing}
-            teamColor={TEAM_BLUE}
-            jerseyNumber={p.jerseyNumber}
-            name={p.name}
-            role={p.role}
-            isSelected={p.isSelected}
-            offside={p.offside}
-          />
-        ))}
+        {/* Real GLTF soccer-player models */}
+        <Suspense fallback={null}>
+          <Suspense fallback={null}>
+          {BLUE_TEAM.map((p, i) => (
+            <PlayerModel3D
+              key={`blue-${p.jerseyNumber}`}
+              x={p.x}
+              z={p.z}
+              facing={p.facing}
+              characterIndex={(i % 3) as 0 | 1 | 2}
+              teamColor={TEAM_BLUE}
+              jerseyNumber={p.jerseyNumber}
+              name={p.name}
+              role={p.role}
+              isSelected={p.isSelected}
+              offside={p.offside}
+            />
+          ))}
 
-        {RED_TEAM.map((p) => (
-          <Player3D
-            key={`red-${p.jerseyNumber}`}
-            x={p.x}
-            z={p.z}
-            facing={p.facing}
-            teamColor={TEAM_RED}
-            jerseyNumber={p.jerseyNumber}
-            name={p.name}
-            role={p.role}
-            isSelected={p.isSelected}
-            offside={p.offside}
-          />
-        ))}
+          {RED_TEAM.map((p, i) => (
+            <PlayerModel3D
+              key={`red-${p.jerseyNumber}`}
+              x={p.x}
+              z={p.z}
+              facing={p.facing}
+              characterIndex={(i % 3) as 0 | 1 | 2}
+              teamColor={TEAM_RED}
+              jerseyNumber={p.jerseyNumber}
+              name={p.name}
+              role={p.role}
+              isSelected={p.isSelected}
+              offside={p.offside}
+            />
+          ))}
 
-        <Ball3D x={0} z={0} active />
+          <Ball3D x={0} z={0} active />
+        </Suspense>
+        </Suspense>
 
         <OrbitControls
           target={[0, 1, 0]}
