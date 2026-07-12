@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useGLTF, Billboard, Text } from "@react-three/drei";
+import { Billboard, Text, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 
@@ -12,11 +12,20 @@ export type PlayerRole =
 
 const MODEL_URL = "/models/players.gltf";
 
-const MALE_NODE_NAMES = [
-  "_gltfNode_0",
-  "_gltfNode_46",
-  "_gltfNode_92",
-];
+const MALE_CHARACTERS = [
+  {
+    meshName: "_gltfNode_0",
+    rigName: "Metarig Man.010_44",
+  },
+  {
+    meshName: "_gltfNode_46",
+    rigName: "Metarig Man.011_89",
+  },
+  {
+    meshName: "_gltfNode_92",
+    rigName: "Metarig Man.012_134",
+  },
+] as const;
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
   goalkeeper: "GK",
@@ -37,23 +46,33 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
 const SKIN_HUE_MIN = 0.02;
 const SKIN_HUE_MAX = 0.15;
 const MIN_SATURATION = 0.15;
+const MAX_TEXTURE_WIDTH = 1024;
 
-// The original textures are 4096×512.
-// Recoloring them at 1024×128 uses about 1/16 of the memory.
-const MAX_RECOLOR_WIDTH = 1024;
-
-// Share recolored textures between players instead of creating a separate
-// 4096px texture for every player.
 const recoloredTextureCache = new WeakMap<
   THREE.Texture,
   Map<string, THREE.CanvasTexture>
 >();
 
+function getTextureSize(image: {
+  width?: number;
+  height?: number;
+  naturalWidth?: number;
+  naturalHeight?: number;
+}) {
+  const width = image.naturalWidth ?? image.width ?? MAX_TEXTURE_WIDTH;
+  const height = image.naturalHeight ?? image.height ?? 128;
+
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
+}
+
 function getRecoloredTexture(
   baseTexture: THREE.Texture,
   targetHex: string,
 ): THREE.CanvasTexture {
-  const colorKey = targetHex.toLowerCase();
+  const cacheKey = targetHex.toLowerCase();
 
   let colorCache = recoloredTextureCache.get(baseTexture);
 
@@ -62,10 +81,10 @@ function getRecoloredTexture(
     recoloredTextureCache.set(baseTexture, colorCache);
   }
 
-  const existingTexture = colorCache.get(colorKey);
+  const cachedTexture = colorCache.get(cacheKey);
 
-  if (existingTexture) {
-    return existingTexture;
+  if (cachedTexture) {
+    return cachedTexture;
   }
 
   const image = baseTexture.image as CanvasImageSource & {
@@ -75,25 +94,22 @@ function getRecoloredTexture(
     naturalHeight?: number;
   };
 
-  const sourceWidth =
-    image.naturalWidth ??
-    image.width ??
-    MAX_RECOLOR_WIDTH;
+  if (!image) {
+    throw new Error("Player texture image was not loaded.");
+  }
 
-  const sourceHeight =
-    image.naturalHeight ??
-    image.height ??
-    128;
+  const sourceSize = getTextureSize(image);
 
   const outputWidth = Math.min(
-    sourceWidth,
-    MAX_RECOLOR_WIDTH,
+    sourceSize.width,
+    MAX_TEXTURE_WIDTH,
   );
 
   const outputHeight = Math.max(
     1,
     Math.round(
-      sourceHeight * (outputWidth / sourceWidth),
+      sourceSize.height *
+        (outputWidth / sourceSize.width),
     ),
   );
 
@@ -101,17 +117,17 @@ function getRecoloredTexture(
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
-  const ctx = canvas.getContext("2d", {
+  const context = canvas.getContext("2d", {
     willReadFrequently: true,
   });
 
-  if (!ctx) {
+  if (!context) {
     throw new Error(
-      "Could not create player texture canvas.",
+      "Could not create the player texture canvas.",
     );
   }
 
-  ctx.drawImage(
+  context.drawImage(
     image,
     0,
     0,
@@ -119,57 +135,63 @@ function getRecoloredTexture(
     outputHeight,
   );
 
-  const imageData = ctx.getImageData(
+  const imageData = context.getImageData(
     0,
     0,
     outputWidth,
     outputHeight,
   );
 
-  const data = imageData.data;
+  const pixels = imageData.data;
 
   const targetColor = new THREE.Color(targetHex);
-  const targetHsl = { h: 0, s: 0, l: 0 };
+  const targetHsl = {
+    h: 0,
+    s: 0,
+    l: 0,
+  };
+
   targetColor.getHSL(targetHsl);
 
-  const pixelColor = new THREE.Color();
-  const pixelHsl = { h: 0, s: 0, l: 0 };
+  const sourceColor = new THREE.Color();
+  const sourceHsl = {
+    h: 0,
+    s: 0,
+    l: 0,
+  };
+
   const outputColor = new THREE.Color();
 
-  for (let i = 0; i < data.length; i += 4) {
-    pixelColor.setRGB(
-      data[i] / 255,
-      data[i + 1] / 255,
-      data[i + 2] / 255,
+  for (let index = 0; index < pixels.length; index += 4) {
+    sourceColor.setRGB(
+      pixels[index] / 255,
+      pixels[index + 1] / 255,
+      pixels[index + 2] / 255,
     );
 
-    pixelColor.getHSL(pixelHsl);
+    sourceColor.getHSL(sourceHsl);
 
     const isSkinHue =
-      pixelHsl.h >= SKIN_HUE_MIN &&
-      pixelHsl.h <= SKIN_HUE_MAX;
+      sourceHsl.h >= SKIN_HUE_MIN &&
+      sourceHsl.h <= SKIN_HUE_MAX;
 
     const isGrayish =
-      pixelHsl.s < MIN_SATURATION;
+      sourceHsl.s < MIN_SATURATION;
 
     if (!isSkinHue && !isGrayish) {
       outputColor.setHSL(
         targetHsl.h,
-        pixelHsl.s,
-        pixelHsl.l,
+        sourceHsl.s,
+        sourceHsl.l,
       );
 
-      data[i] = Math.round(outputColor.r * 255);
-      data[i + 1] = Math.round(
-        outputColor.g * 255,
-      );
-      data[i + 2] = Math.round(
-        outputColor.b * 255,
-      );
+      pixels[index] = Math.round(outputColor.r * 255);
+      pixels[index + 1] = Math.round(outputColor.g * 255);
+      pixels[index + 2] = Math.round(outputColor.b * 255);
     }
   }
 
-  ctx.putImageData(imageData, 0, 0);
+  context.putImageData(imageData, 0, 0);
 
   const texture = new THREE.CanvasTexture(canvas);
 
@@ -178,12 +200,11 @@ function getRecoloredTexture(
   texture.wrapS = baseTexture.wrapS;
   texture.wrapT = baseTexture.wrapT;
   texture.magFilter = THREE.LinearFilter;
-  texture.minFilter =
-    THREE.LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
   texture.needsUpdate = true;
 
-  colorCache.set(colorKey, texture);
+  colorCache.set(cacheKey, texture);
 
   return texture;
 }
@@ -216,7 +237,7 @@ export function PlayerModel3D({
   const { scene } = useGLTF(MODEL_URL);
 
   const [model, setModel] =
-    useState<THREE.Object3D | null>(null);
+    useState<THREE.Group | null>(null);
 
   const [height, setHeight] = useState(1.7);
 
@@ -228,91 +249,157 @@ export function PlayerModel3D({
       : ROLE_BADGE_COLOR[role];
 
   useEffect(() => {
-    const nodeName =
-      MALE_NODE_NAMES[characterIndex];
+    setModel(null);
+    setHeight(1.7);
 
-    const source =
-      scene.getObjectByName(nodeName);
+    const character =
+      MALE_CHARACTERS[characterIndex];
 
-    if (!source) {
+    /*
+     * Clone the complete scene first.
+     *
+     * In this GLTF, each male player mesh and its armature are
+     * separate root objects. Cloning only the mesh leaves its
+     * SkinnedMesh without a complete cloned bone hierarchy.
+     */
+    const completeClone = SkeletonUtils.clone(
+      scene,
+    ) as THREE.Group;
+
+    completeClone.updateMatrixWorld(true);
+
+    const playerMesh =
+      completeClone.getObjectByName(
+        character.meshName,
+      );
+
+    const playerRig =
+      completeClone.getObjectByName(
+        character.rigName,
+      );
+
+    if (!playerMesh || !playerRig) {
       console.error(
-        `Male player node not found: ${nodeName}`,
+        "Could not find the required male player mesh or rig.",
+        {
+          meshName: character.meshName,
+          rigName: character.rigName,
+          meshFound: Boolean(playerMesh),
+          rigFound: Boolean(playerRig),
+        },
       );
 
       return;
     }
 
-    const clone = SkeletonUtils.clone(
-      source,
-    ) as THREE.Object3D;
+    const playerRoot = new THREE.Group();
+    playerRoot.name = `FTA Player ${characterIndex + 1}`;
+
+    /*
+     * attach() preserves each object's world transform while
+     * moving the selected mesh and matching armature out of the
+     * full six-character clone.
+     */
+    playerRoot.attach(playerRig);
+    playerRoot.attach(playerMesh);
+    playerRoot.updateMatrixWorld(true);
 
     const ownedMaterials: THREE.Material[] = [];
 
-    const box =
-      new THREE.Box3().setFromObject(clone);
+    playerRoot.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+
+      if (!mesh.isMesh) {
+        return;
+      }
+
+      const originalMaterials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+
+      const clonedMaterials = originalMaterials.map(
+        (originalMaterial) => {
+          const clonedMaterial =
+            originalMaterial.clone() as THREE.MeshStandardMaterial;
+
+          ownedMaterials.push(clonedMaterial);
+
+          const standardMaterial =
+            originalMaterial as THREE.MeshStandardMaterial;
+
+          if (standardMaterial.map) {
+            clonedMaterial.map =
+              getRecoloredTexture(
+                standardMaterial.map,
+                teamColor,
+              );
+          }
+
+          clonedMaterial.needsUpdate = true;
+
+          return clonedMaterial;
+        },
+      );
+
+      mesh.material = Array.isArray(mesh.material)
+        ? clonedMaterials
+        : clonedMaterials[0];
+
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+
+      if (mesh instanceof THREE.SkinnedMesh) {
+        mesh.frustumCulled = false;
+      }
+    });
+
+    const box = new THREE.Box3().setFromObject(playerRoot);
+
+    if (box.isEmpty()) {
+      console.error(
+        "The selected player model produced an empty bounding box.",
+      );
+
+      for (const material of ownedMaterials) {
+        material.dispose();
+      }
+
+      return;
+    }
 
     const center = box.getCenter(
       new THREE.Vector3(),
     );
 
-    clone.position.x -= center.x;
-    clone.position.z -= center.z;
-    clone.position.y -= box.min.y;
+    const modelHeight = Math.max(
+      0.1,
+      box.max.y - box.min.y,
+    );
 
-    clone.traverse((child) => {
-      const mesh = child as THREE.Mesh;
+    playerRoot.position.x -= center.x;
+    playerRoot.position.z -= center.z;
+    playerRoot.position.y -= box.min.y;
 
-      if (!mesh.isMesh) return;
+    playerRoot.updateMatrixWorld(true);
 
-      const sourceMaterials =
-        Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material];
-
-      const playerMaterials =
-        sourceMaterials.map((sourceMaterial) => {
-          const material =
-            sourceMaterial.clone() as THREE.MeshStandardMaterial;
-
-          ownedMaterials.push(material);
-
-          const originalMaterial =
-            sourceMaterial as THREE.MeshStandardMaterial;
-
-          if (originalMaterial.map) {
-            material.map = getRecoloredTexture(
-              originalMaterial.map,
-              teamColor,
-            );
-          }
-
-          material.needsUpdate = true;
-
-          return material;
-        });
-
-      mesh.material = Array.isArray(mesh.material)
-        ? playerMaterials
-        : playerMaterials[0];
-
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-    });
-
-    setHeight(box.max.y - box.min.y);
-    setModel(clone);
+    setHeight(modelHeight);
+    setModel(playerRoot);
 
     return () => {
-      // Dispose only this player's cloned materials.
-      // Do not dispose the cached team textures because other players
-      // are sharing them.
       for (const material of ownedMaterials) {
+        /*
+         * Do not dispose material.map here.
+         * Recolored textures are shared by every player on the
+         * same team and stored in the cache above.
+         */
         material.dispose();
       }
     };
   }, [scene, characterIndex, teamColor]);
 
-  if (!model) return null;
+  if (!model) {
+    return null;
+  }
 
   return (
     <group
@@ -330,6 +417,7 @@ export function PlayerModel3D({
             color="#5fe0ff"
             transparent
             opacity={0.85}
+            depthWrite={false}
           />
         </mesh>
       )}
@@ -343,13 +431,14 @@ export function PlayerModel3D({
         position={[0, height + 0.18, 0]}
       >
         <mesh position={[0, 0, -0.01]}>
-          <planeGeometry args={[0.92, 0.24]} />
+          <planeGeometry args={[0.98, 0.24]} />
 
           <meshBasicMaterial
             color="#000000"
             transparent
             opacity={0.58}
             depthTest={false}
+            depthWrite={false}
           />
         </mesh>
 
@@ -359,17 +448,19 @@ export function PlayerModel3D({
           color="#ffffff"
           anchorX="center"
           anchorY="middle"
+          depthOffset={-2}
         >
           {`${jerseyNumber} ${name}`}
         </Text>
 
         <Text
-          position={[0.31, 0.045, 0]}
+          position={[0.34, 0.045, 0]}
           fontSize={0.07}
           color={badgeColor}
           anchorX="center"
           anchorY="middle"
           fontWeight="bold"
+          depthOffset={-2}
         >
           {badge}
         </Text>
@@ -377,7 +468,7 @@ export function PlayerModel3D({
 
       {offside && (
         <Billboard
-          position={[0.46, height + 0.18, 0]}
+          position={[0.48, height + 0.18, 0]}
         >
           <mesh>
             <planeGeometry args={[0.32, 0.18]} />
@@ -385,6 +476,7 @@ export function PlayerModel3D({
             <meshBasicMaterial
               color="#ff1744"
               depthTest={false}
+              depthWrite={false}
             />
           </mesh>
 
@@ -393,6 +485,7 @@ export function PlayerModel3D({
             color="#ffffff"
             anchorX="center"
             anchorY="middle"
+            depthOffset={-3}
           >
             OS
           </Text>
