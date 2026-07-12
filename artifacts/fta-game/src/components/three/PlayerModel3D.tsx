@@ -10,8 +10,11 @@ export type PlayerRole =
   | "forward"
   | "striker";
 
+// Path to the asset inside /public — see setup notes.
 const MODEL_URL = "/models/players.gltf";
 
+// Names of the three male root nodes in this specific export.
+// (The three female "Metarig Woman" nodes are simply never referenced.)
 const MALE_NODE_NAMES = ["_gltfNode_0", "_gltfNode_46", "_gltfNode_92"];
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
@@ -30,6 +33,10 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
   striker: "#d9483b",
 };
 
+// Skin sits in a narrow orange hue band regardless of how saturated it's
+// rendered, so we exclude by hue rather than by saturation. Everything
+// outside that band (the jersey, shorts, and any trim) gets shifted to the
+// team hue, while true grays/whites (socks, ball, teeth) are left alone.
 const SKIN_HUE_MIN = 0.02;
 const SKIN_HUE_MAX = 0.15;
 const MIN_SATURATION = 0.15;
@@ -39,17 +46,10 @@ function recolorTexture(
   targetHex: string,
 ): THREE.CanvasTexture {
   const img = baseTexture.image as HTMLImageElement;
-
   const canvas = document.createElement("canvas");
   canvas.width = img.width;
   canvas.height = img.height;
-
-  const ctx = canvas.getContext("2d");
-
-  if (!ctx) {
-    throw new Error("Could not create texture canvas context.");
-  }
-
+  const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0);
 
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -74,7 +74,6 @@ function recolorTexture(
 
     if (!isSkinHue && !isGrayish) {
       out.setHSL(targetHsl.h, hsl.s, hsl.l);
-
       d[i] = Math.round(out.r * 255);
       d[i + 1] = Math.round(out.g * 255);
       d[i + 2] = Math.round(out.b * 255);
@@ -116,7 +115,6 @@ export function PlayerModel3D({
   offside = false,
 }: PlayerModel3DProps) {
   const { scene } = useGLTF(MODEL_URL);
-
   const badge = ROLE_BADGE[role];
 
   const badgeColor =
@@ -129,8 +127,6 @@ export function PlayerModel3D({
     const source = scene.getObjectByName(nodeName);
 
     if (!source) {
-      console.error(`Male model node not found: ${nodeName}`);
-
       return {
         model: null,
         height: 1.7,
@@ -139,6 +135,9 @@ export function PlayerModel3D({
 
     const clone = SkeletonUtils.clone(source) as THREE.Object3D;
 
+    // Recenter: the source file lays all six characters out side by side,
+    // so bottom-center this clone at the local origin regardless of where
+    // it originally sat in that lineup.
     const box = new THREE.Box3().setFromObject(clone);
     const center = box.getCenter(new THREE.Vector3());
 
@@ -151,29 +150,18 @@ export function PlayerModel3D({
     clone.traverse((child) => {
       const mesh = child as THREE.Mesh;
 
-      if (!mesh.isMesh) return;
+      if (mesh.isMesh) {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
 
-      const originalMaterials = Array.isArray(mesh.material)
-        ? mesh.material
-        : [mesh.material];
-
-      const clonedMaterials = originalMaterials.map((material) => {
-        const mat = material as THREE.MeshStandardMaterial;
-        const newMat = mat.clone();
-
-        if (mat.map) {
+        if (mat && mat.map) {
+          const newMat = mat.clone();
           newMat.map = recolorTexture(mat.map, teamColor);
+          mesh.material = newMat;
         }
 
-        return newMat;
-      });
-
-      mesh.material = Array.isArray(mesh.material)
-        ? clonedMaterials
-        : clonedMaterials[0];
-
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
     });
 
     return {
@@ -187,17 +175,14 @@ export function PlayerModel3D({
       model?.traverse((child) => {
         const mesh = child as THREE.Mesh;
 
-        if (!mesh.isMesh) return;
+        const mat = mesh.material as
+          | THREE.MeshStandardMaterial
+          | undefined;
 
-        const materials = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material];
-
-        materials.forEach((material) => {
-          const mat = material as THREE.MeshStandardMaterial;
+        if (mat) {
           mat.map?.dispose();
           mat.dispose();
-        });
+        }
       });
     };
   }, [model]);
