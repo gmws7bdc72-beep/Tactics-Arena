@@ -1,7 +1,7 @@
-import { useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useGLTF, Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
-import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 
 export type PlayerRole =
   | "goalkeeper"
@@ -10,11 +10,8 @@ export type PlayerRole =
   | "forward"
   | "striker";
 
-// Path to the asset inside /public — see setup notes.
 const MODEL_URL = "/models/players.gltf";
 
-// Names of the three male root nodes in this specific export.
-// (The three female "Metarig Woman" nodes are simply never referenced.)
 const MALE_NODE_NAMES = ["_gltfNode_0", "_gltfNode_46", "_gltfNode_92"];
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
@@ -33,10 +30,6 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
   striker: "#d9483b",
 };
 
-// Skin sits in a narrow orange hue band regardless of how saturated it's
-// rendered, so we exclude by hue rather than by saturation. Everything
-// outside that band (the jersey, shorts, and any trim) gets shifted to the
-// team hue, while true grays/whites (socks, ball, teeth) are left alone.
 const SKIN_HUE_MIN = 0.02;
 const SKIN_HUE_MAX = 0.15;
 const MIN_SATURATION = 0.15;
@@ -46,13 +39,21 @@ function recolorTexture(
   targetHex: string,
 ): THREE.CanvasTexture {
   const img = baseTexture.image as HTMLImageElement;
+
   const canvas = document.createElement("canvas");
   canvas.width = img.width;
   canvas.height = img.height;
+
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0);
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const imageData = ctx.getImageData(
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
   const d = imageData.data;
 
   const target = new THREE.Color(targetHex);
@@ -64,16 +65,27 @@ function recolorTexture(
   const out = new THREE.Color();
 
   for (let i = 0; i < d.length; i += 4) {
-    px.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
+    px.setRGB(
+      d[i] / 255,
+      d[i + 1] / 255,
+      d[i + 2] / 255,
+    );
+
     px.getHSL(hsl);
 
     const isSkinHue =
-      hsl.h >= SKIN_HUE_MIN && hsl.h <= SKIN_HUE_MAX;
+      hsl.h >= SKIN_HUE_MIN &&
+      hsl.h <= SKIN_HUE_MAX;
 
     const isGrayish = hsl.s < MIN_SATURATION;
 
     if (!isSkinHue && !isGrayish) {
-      out.setHSL(targetHsl.h, hsl.s, hsl.l);
+      out.setHSL(
+        targetHsl.h,
+        hsl.s,
+        hsl.l,
+      );
+
       d[i] = Math.round(out.r * 255);
       d[i + 1] = Math.round(out.g * 255);
       d[i + 2] = Math.round(out.b * 255);
@@ -83,6 +95,7 @@ function recolorTexture(
   ctx.putImageData(imageData, 0, 0);
 
   const tex = new THREE.CanvasTexture(canvas);
+
   tex.needsUpdate = true;
   tex.colorSpace = baseTexture.colorSpace;
   tex.flipY = baseTexture.flipY;
@@ -115,6 +128,7 @@ export function PlayerModel3D({
   offside = false,
 }: PlayerModel3DProps) {
   const { scene } = useGLTF(MODEL_URL);
+
   const badge = ROLE_BADGE[role];
 
   const badgeColor =
@@ -122,57 +136,67 @@ export function PlayerModel3D({
       ? "#c9a34b"
       : ROLE_BADGE_COLOR[role];
 
-  const { model, height } = useMemo(() => {
+  const [model, setModel] =
+    useState<THREE.Object3D | null>(null);
+
+  const [height, setHeight] = useState(1.7);
+
+  useEffect(() => {
     const nodeName = MALE_NODE_NAMES[characterIndex];
     const source = scene.getObjectByName(nodeName);
 
     if (!source) {
-      return {
-        model: null,
-        height: 1.7,
-      };
+      console.error(
+        `Player model node not found: ${nodeName}`,
+      );
+
+      setModel(null);
+      setHeight(1.7);
+
+      return;
     }
 
-    const clone = SkeletonUtils.clone(source) as THREE.Object3D;
+    const clone = SkeletonUtils.clone(
+      source,
+    ) as THREE.Object3D;
 
-    // Recenter: the source file lays all six characters out side by side,
-    // so bottom-center this clone at the local origin regardless of where
-    // it originally sat in that lineup.
     const box = new THREE.Box3().setFromObject(clone);
-    const center = box.getCenter(new THREE.Vector3());
+    const center = box.getCenter(
+      new THREE.Vector3(),
+    );
 
     clone.position.x -= center.x;
     clone.position.z -= center.z;
     clone.position.y -= box.min.y;
 
-    const modelHeight = box.max.y - box.min.y;
-
     clone.traverse((child) => {
       const mesh = child as THREE.Mesh;
 
-      if (mesh.isMesh) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (!mesh.isMesh) return;
 
-        if (mat && mat.map) {
-          const newMat = mat.clone();
-          newMat.map = recolorTexture(mat.map, teamColor);
-          mesh.material = newMat;
-        }
+      const mat =
+        mesh.material as THREE.MeshStandardMaterial;
 
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+      if (mat && mat.map) {
+        const newMat = mat.clone();
+
+        newMat.map = recolorTexture(
+          mat.map,
+          teamColor,
+        );
+
+        mesh.material = newMat;
       }
+
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
     });
 
-    return {
-      model: clone,
-      height: modelHeight,
-    };
-  }, [scene, characterIndex, teamColor]);
+    setModel(clone);
+    setHeight(box.max.y - box.min.y);
 
-  useEffect(() => {
     return () => {
-      model?.traverse((child) => {
+      clone.traverse((child) => {
         const mesh = child as THREE.Mesh;
 
         const mat = mesh.material as
@@ -185,12 +209,15 @@ export function PlayerModel3D({
         }
       });
     };
-  }, [model]);
+  }, [scene, characterIndex, teamColor]);
 
   if (!model) return null;
 
   return (
-    <group position={[x, 0, z]} rotation={[0, facing, 0]}>
+    <group
+      position={[x, 0, z]}
+      rotation={[0, facing, 0]}
+    >
       {isSelected && (
         <mesh
           position={[0, 0.015, 0]}
@@ -242,9 +269,12 @@ export function PlayerModel3D({
       </Billboard>
 
       {offside && (
-        <Billboard position={[0.42, height + 0.18, 0]}>
+        <Billboard
+          position={[0.42, height + 0.18, 0]}
+        >
           <mesh>
             <planeGeometry args={[0.32, 0.18]} />
+
             <meshBasicMaterial color="#ff1744" />
           </mesh>
 
@@ -261,5 +291,7 @@ export function PlayerModel3D({
     </group>
   );
 }
+
+useGLTF.preload(MODEL_URL);
 
 useGLTF.preload(MODEL_URL);
