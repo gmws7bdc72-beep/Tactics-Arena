@@ -1,7 +1,36 @@
-import { useEffect, useState } from "react";
-import { Billboard, Text, useGLTF } from "@react-three/drei";
+import { useState, useEffect } from "react";
+import { useGLTF, useAnimations, Billboard, Text } from "@react-three/drei";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
+
+// The source file's single "Animation" clip has every bone of all six
+// characters baked into one timeline (771 tracks). Each track's name
+// resolves to a specific bone via THREE's own PropertyBinding parsing, so
+// we can filter down to just the tracks whose target bone actually exists
+// in this specific character's cloned subtree, and leave the rest out.
+// If parsing/matching finds nothing (should not happen, but just in case),
+// fall back to the full clip -- THREE.AnimationMixer silently skips tracks
+// that don't resolve to a node in the given root, so it's safe either way.
+function extractClipForSkeleton(
+  sourceClip: THREE.AnimationClip,
+  root: THREE.Object3D,
+): THREE.AnimationClip {
+  const sanitizedNames = new Set<string>();
+  root.traverse((obj) => {
+    sanitizedNames.add(THREE.PropertyBinding.sanitizeNodeName(obj.name));
+  });
+
+  let tracks = sourceClip.tracks.filter((track) => {
+    const parsed = THREE.PropertyBinding.parseTrackName(track.name);
+    return sanitizedNames.has(parsed.nodeName);
+  });
+
+  if (tracks.length === 0) {
+    tracks = sourceClip.tracks;
+  }
+
+  return new THREE.AnimationClip("run", sourceClip.duration, tracks);
+}
 
 export type PlayerRole =
   | "goalkeeper"
@@ -10,13 +39,12 @@ export type PlayerRole =
   | "forward"
   | "striker";
 
+// Path to the asset inside /public — see setup notes.
 const MODEL_URL = "/models/players.gltf";
 
-const MALE_ROOT_NAMES = [
-  "_gltfNode_0",
-  "_gltfNode_46",
-  "_gltfNode_92",
-] as const;
+// Names of the three male root nodes in this specific export.
+// (The three female "Metarig Woman" nodes are simply never referenced.)
+const MALE_NODE_NAMES = ["_gltfNode_0", "_gltfNode_46", "_gltfNode_92"];
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
   goalkeeper: "GK",
@@ -34,7 +62,55 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
   striker: "#d9483b",
 };
 
-const TARGET_PLAYER_HEIGHT = 1.72;
+// Skin sits in a narrow orange hue band regardless of how saturated it's
+// rendered, so we exclude by hue rather than by saturation. Everything
+// outside that band (the jersey, shorts, and any trim) gets shifted to the
+// team hue, while true grays/whites (socks, ball, teeth) are left alone.
+const SKIN_HUE_MIN = 0.02;
+const SKIN_HUE_MAX = 0.15;
+const MIN_SATURATION = 0.15;
+
+function recolorTexture(baseTexture: THREE.Texture, targetHex: string): THREE.CanvasTexture {
+  const img = baseTexture.image as HTMLImageElement;
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imageData.data;
+
+  const target = new THREE.Color(targetHex);
+  const targetHsl = { h: 0, s: 0, l: 0 };
+  target.getHSL(targetHsl);
+
+  const px = new THREE.Color();
+  const hsl = { h: 0, s: 0, l: 0 };
+  const out = new THREE.Color();
+
+  for (let i = 0; i < d.length; i += 4) {
+    px.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
+    px.getHSL(hsl);
+
+    const isSkinHue = hsl.h >= SKIN_HUE_MIN && hsl.h <= SKIN_HUE_MAX;
+    const isGrayish = hsl.s < MIN_SATURATION;
+
+    if (!isSkinHue && !isGrayish) {
+      out.setHSL(targetHsl.h, hsl.s, hsl.l);
+      d[i] = Math.round(out.r * 255);
+      d[i + 1] = Math.round(out.g * 255);
+      d[i + 2] = Math.round(out.b * 255);
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  tex.colorSpace = baseTexture.colorSpace;
+  tex.flipY = baseTexture.flipY;
+  return tex;
+}
 
 interface PlayerModel3DProps {
   x: number;
@@ -49,431 +125,131 @@ interface PlayerModel3DProps {
   offside?: boolean;
 }
 
-function findSelectedPlayer(
-  scene: THREE.Object3D,
-  characterIndex: 0 | 1 | 2,
-): THREE.Object3D | null {
-  const preferredName = MALE_ROOT_NAMES[characterIndex];
-  const preferredObject = scene.getObjectByName(preferredName);
-
-  if (preferredObject) {
-    return preferredObject;
-  }
-
-  const skinnedMeshes: THREE.SkinnedMesh[] = [];
-
-  scene.traverse((object) => {
-    if (object instanceof THREE.SkinnedMesh) {
-      skinnedMeshes.push(object);
-    }
-  });
-
-  return skinnedMeshes[characterIndex] ?? null;
-}
-
-function collectSelectedMeshes(
-  selectedRoot: THREE.Object3D,
-): Set<THREE.Object3D> {
-  const selectedMeshes = new Set<THREE.Object3D>();
-
-  selectedRoot.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-
-    if (mesh.isMesh) {
-      selectedMeshes.add(object);
-    }
-  });
-
-  if (
-    selectedMeshes.size === 0 &&
-    selectedRoot instanceof THREE.Mesh
-  ) {
-    selectedMeshes.add(selectedRoot);
-  }
-
-  return selectedMeshes;
-}
-
-function createNormalizedMaterial(
-  sourceMaterial: THREE.Material,
-): THREE.Material {
-  const material = sourceMaterial.clone();
-
-  if (material instanceof THREE.MeshStandardMaterial) {
-    /*
-     * Some characters were exported with darker material tints.
-     * Setting the material color to white lets the original texture
-     * display without an extra dark multiplier.
-     */
-    material.color.set(0xffffff);
-
-    /*
-     * Prevent inconsistent exported vertex colors from darkening
-     * individual characters.
-     */
-    material.vertexColors = false;
-
-    /*
-     * These player uniforms are cloth rather than metallic surfaces.
-     * Normalizing these values keeps all three character variants
-     * under the same lighting response.
-     */
-    material.metalness = 0;
-    material.roughness = 0.72;
-
-    /*
-     * Some exported materials contain strong ambient-occlusion maps.
-     * Reduce their strength so faces and uniforms do not become black.
-     */
-    material.aoMapIntensity = 0.15;
-
-    if (material.map) {
-      material.map.colorSpace = THREE.SRGBColorSpace;
-      material.map.needsUpdate = true;
-
-      /*
-       * Add a very small amount of texture-based fill lighting.
-       * The player still reacts to scene lighting, but deeply shaded
-       * characters remain readable.
-       */
-      material.emissive.set(0xffffff);
-      material.emissiveMap = material.map;
-      material.emissiveIntensity = 0.12;
-    } else {
-      material.emissive.set(0x111111);
-      material.emissiveIntensity = 0.15;
-    }
-
-    material.needsUpdate = true;
-  }
-
-  return material;
-}
-
 export function PlayerModel3D({
   x,
   z,
   facing = 0,
   characterIndex = 0,
   teamColor,
-  jerseyNumber,
   name,
   role,
   isSelected = false,
   offside = false,
 }: PlayerModel3DProps) {
-  const { scene } = useGLTF(MODEL_URL);
-
-  const [model, setModel] =
-    useState<THREE.Group | null>(null);
-
-  const [height, setHeight] =
-    useState(TARGET_PLAYER_HEIGHT);
-
+  const { scene, animations } = useGLTF(MODEL_URL);
   const badge = ROLE_BADGE[role];
+  const badgeColor = role === "goalkeeper" ? "#c9a34b" : ROLE_BADGE_COLOR[role];
 
-  const badgeColor =
-    role === "goalkeeper"
-      ? "#c9a34b"
-      : ROLE_BADGE_COLOR[role];
+  const [model, setModel] = useState<THREE.Object3D | null>(null);
+  const [height, setHeight] = useState(1.7);
+  const [clips, setClips] = useState<THREE.AnimationClip[]>([]);
+  const { actions } = useAnimations(clips, model ?? undefined);
 
   useEffect(() => {
-    setModel(null);
-    setHeight(TARGET_PLAYER_HEIGHT);
+    const nodeName = MALE_NODE_NAMES[characterIndex];
+    const source = scene.getObjectByName(nodeName);
+    if (!source) return;
 
-    /*
-     * Clone the complete GLTF scene so every skinned player keeps
-     * access to the armature and bones referenced by its skeleton.
-     */
-    const completeClone = SkeletonUtils.clone(
-      scene,
-    ) as THREE.Group;
+    const clone = SkeletonUtils.clone(source) as THREE.Object3D;
 
-    completeClone.name =
-      `FTA Player ${characterIndex + 1}`;
+    // Recenter: the source file lays all six characters out side by side,
+    // so bottom-center this clone at the local origin regardless of where
+    // it originally sat in that lineup.
+    const box = new THREE.Box3().setFromObject(clone);
+    const center = box.getCenter(new THREE.Vector3());
+    clone.position.x -= center.x;
+    clone.position.z -= center.z;
+    clone.position.y -= box.min.y;
 
-    completeClone.position.set(0, 0, 0);
-    completeClone.rotation.set(0, 0, 0);
-    completeClone.scale.set(1, 1, 1);
-    completeClone.visible = true;
-    completeClone.updateMatrixWorld(true);
-
-    const selectedRoot = findSelectedPlayer(
-      completeClone,
-      characterIndex,
-    );
-
-    if (!selectedRoot) {
-      console.error(
-        "PlayerModel3D could not find a male player.",
-        {
-          characterIndex,
-          expectedName:
-            MALE_ROOT_NAMES[characterIndex],
-        },
-      );
-
-      return;
-    }
-
-    const selectedMeshes =
-      collectSelectedMeshes(selectedRoot);
-
-    if (selectedMeshes.size === 0) {
-      console.error(
-        "PlayerModel3D found the player root but no mesh.",
-        {
-          characterIndex,
-          rootName: selectedRoot.name,
-          rootType: selectedRoot.type,
-        },
-      );
-
-      return;
-    }
-
-    const ownedMaterials: THREE.Material[] = [];
-
-    completeClone.traverse((object) => {
-      const mesh = object as THREE.Mesh;
-
-      if (!mesh.isMesh) {
-        return;
-      }
-
-      const isSelectedMesh =
-        selectedMeshes.has(object);
-
-      mesh.visible = isSelectedMesh;
-
-      if (!isSelectedMesh) {
-        mesh.castShadow = false;
-        mesh.receiveShadow = false;
-        return;
-      }
-
-      const sourceMaterials = Array.isArray(
-        mesh.material,
-      )
-        ? mesh.material
-        : [mesh.material];
-
-      const clonedMaterials = sourceMaterials.map(
-        (sourceMaterial) => {
-          const normalizedMaterial =
-            createNormalizedMaterial(sourceMaterial);
-
-          ownedMaterials.push(normalizedMaterial);
-
-          return normalizedMaterial;
-        },
-      );
-
-      mesh.material = Array.isArray(mesh.material)
-        ? clonedMaterials
-        : clonedMaterials[0];
-
-      /*
-       * Players still cast shadows onto the field, but they do not
-       * receive their own harsh self-shadows. This removes the
-       * inconsistent darkening seen on characters such as Mason.
-       */
-      mesh.castShadow = true;
-      mesh.receiveShadow = false;
-      mesh.frustumCulled = false;
-
-      if (mesh instanceof THREE.SkinnedMesh) {
-        mesh.normalizeSkinWeights();
-        mesh.skeleton.update();
+    clone.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (mat && mat.map) {
+          const newMat = mat.clone();
+          newMat.map = recolorTexture(mat.map, teamColor);
+          mesh.material = newMat;
+        }
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
       }
     });
 
-    completeClone.updateMatrixWorld(true);
+    setModel(clone);
+    setHeight(box.max.y - box.min.y);
+    setClips(animations.length > 0 ? [extractClipForSkeleton(animations[0], clone)] : []);
 
-    const box = new THREE.Box3();
-
-    for (const selectedMesh of selectedMeshes) {
-      selectedMesh.updateWorldMatrix(true, false);
-      box.expandByObject(selectedMesh, true);
-    }
-
-    if (
-      box.isEmpty() ||
-      !Number.isFinite(box.min.x) ||
-      !Number.isFinite(box.min.y) ||
-      !Number.isFinite(box.min.z) ||
-      !Number.isFinite(box.max.x) ||
-      !Number.isFinite(box.max.y) ||
-      !Number.isFinite(box.max.z)
-    ) {
-      console.error(
-        "PlayerModel3D produced an invalid bounding box.",
-        {
-          characterIndex,
-          rootName: selectedRoot.name,
-          box,
-        },
-      );
-
-      for (const material of ownedMaterials) {
-        material.dispose();
-      }
-
-      return;
-    }
-
-    const center = box.getCenter(
-      new THREE.Vector3(),
-    );
-
-    const rawHeight =
-      box.max.y - box.min.y;
-
-    if (
-      !Number.isFinite(rawHeight) ||
-      rawHeight <= 0
-    ) {
-      console.error(
-        "PlayerModel3D produced an invalid height.",
-        {
-          characterIndex,
-          rawHeight,
-        },
-      );
-
-      for (const material of ownedMaterials) {
-        material.dispose();
-      }
-
-      return;
-    }
-
-    const scale =
-      TARGET_PLAYER_HEIGHT / rawHeight;
-
-    completeClone.scale.setScalar(scale);
-
-    completeClone.position.set(
-      -center.x * scale,
-      -box.min.y * scale,
-      -center.z * scale,
-    );
-
-    completeClone.updateMatrixWorld(true);
-
-    setHeight(TARGET_PLAYER_HEIGHT);
-    setModel(completeClone);
-
+    // Paired with the setup above so React's mount->cleanup->remount cycle
+    // (StrictMode in dev) always disposes the model it just created, never
+    // one that's still in use.
     return () => {
-      /*
-       * Dispose only the cloned materials.
-       * Their texture maps belong to the loaded GLTF and remain shared.
-       */
-      for (const material of ownedMaterials) {
-        material.dispose();
-      }
+      clone.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial | undefined;
+        if (mat) {
+          mat.map?.dispose();
+          mat.dispose();
+        }
+      });
     };
-  }, [scene, characterIndex]);
+  }, [scene, characterIndex, teamColor]);
 
-  if (!model) {
-    return null;
-  }
+  useEffect(() => {
+    const action = actions?.run;
+    if (!action) return;
+
+    action.reset().fadeIn(0.2).play();
+    return () => {
+      action.fadeOut(0.2);
+    };
+  }, [actions]);
+
+  if (!model) return null;
 
   return (
-    <group
-      position={[x, 0, z]}
-      rotation={[0, facing, 0]}
-    >
+    <group position={[x, 0, z]} rotation={[0, facing, 0]}>
       {isSelected && (
-        <mesh
-          position={[0, 0.015, 0]}
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
+        <mesh position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[0.32, 0.4, 32]} />
-
-          <meshBasicMaterial
-            color="#5fe0ff"
-            transparent
-            opacity={0.85}
-            depthWrite={false}
-          />
+          <meshBasicMaterial color="#5fe0ff" transparent opacity={0.85} />
         </mesh>
       )}
 
-      <primitive
-        object={model}
-        dispose={null}
-      />
+      <primitive object={model} />
 
-      <Billboard
-        position={[0, height + 0.18, 0]}
-      >
+      <Billboard position={[0, height + 0.18, 0]}>
         <mesh position={[0, 0, -0.01]}>
-          <planeGeometry args={[0.98, 0.24]} />
-
-          <meshBasicMaterial
-            color="#000000"
-            transparent
-            opacity={0.6}
-            depthTest={false}
-            depthWrite={false}
-          />
+          <planeGeometry args={[0.85, 0.24]} />
+          <meshBasicMaterial color="#000000" transparent opacity={0.55} />
         </mesh>
-
         <Text
-          position={[-0.18, 0.045, 0]}
-          fontSize={0.085}
+          position={[-0.14, 0.045, 0]}
+          fontSize={0.09}
           color="#ffffff"
           anchorX="center"
           anchorY="middle"
-          depthOffset={-2}
         >
-          {`${jerseyNumber} ${name}`}
+          {name}
         </Text>
-
         <Text
-          position={[0.34, 0.045, 0]}
+          position={[0.3, 0.045, 0]}
           fontSize={0.07}
           color={badgeColor}
           anchorX="center"
           anchorY="middle"
           fontWeight="bold"
-          depthOffset={-2}
         >
           {badge}
         </Text>
       </Billboard>
 
-      <mesh position={[0, 1.45, 0]}>
-        <sphereGeometry args={[0.055, 12, 12]} />
-
-        <meshBasicMaterial
-          color={teamColor}
-          depthTest={false}
-        />
-      </mesh>
-
       {offside && (
-        <Billboard
-          position={[0.48, height + 0.18, 0]}
-        >
+        <Billboard position={[0.42, height + 0.18, 0]}>
           <mesh>
             <planeGeometry args={[0.32, 0.18]} />
-
-            <meshBasicMaterial
-              color="#ff1744"
-              depthTest={false}
-              depthWrite={false}
-            />
+            <meshBasicMaterial color="#ff1744" />
           </mesh>
-
-          <Text
-            fontSize={0.09}
-            color="#ffffff"
-            anchorX="center"
-            anchorY="middle"
-            depthOffset={-3}
-          >
+          <Text fontSize={0.09} color="#ffffff" anchorX="center" anchorY="middle">
             OS
           </Text>
         </Billboard>
