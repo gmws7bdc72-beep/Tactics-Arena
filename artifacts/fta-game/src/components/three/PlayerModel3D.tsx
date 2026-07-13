@@ -94,6 +94,62 @@ function collectSelectedMeshes(
   return selectedMeshes;
 }
 
+function createNormalizedMaterial(
+  sourceMaterial: THREE.Material,
+): THREE.Material {
+  const material = sourceMaterial.clone();
+
+  if (material instanceof THREE.MeshStandardMaterial) {
+    /*
+     * Some characters were exported with darker material tints.
+     * Setting the material color to white lets the original texture
+     * display without an extra dark multiplier.
+     */
+    material.color.set(0xffffff);
+
+    /*
+     * Prevent inconsistent exported vertex colors from darkening
+     * individual characters.
+     */
+    material.vertexColors = false;
+
+    /*
+     * These player uniforms are cloth rather than metallic surfaces.
+     * Normalizing these values keeps all three character variants
+     * under the same lighting response.
+     */
+    material.metalness = 0;
+    material.roughness = 0.72;
+
+    /*
+     * Some exported materials contain strong ambient-occlusion maps.
+     * Reduce their strength so faces and uniforms do not become black.
+     */
+    material.aoMapIntensity = 0.15;
+
+    if (material.map) {
+      material.map.colorSpace = THREE.SRGBColorSpace;
+      material.map.needsUpdate = true;
+
+      /*
+       * Add a very small amount of texture-based fill lighting.
+       * The player still reacts to scene lighting, but deeply shaded
+       * characters remain readable.
+       */
+      material.emissive.set(0xffffff);
+      material.emissiveMap = material.map;
+      material.emissiveIntensity = 0.12;
+    } else {
+      material.emissive.set(0x111111);
+      material.emissiveIntensity = 0.15;
+    }
+
+    material.needsUpdate = true;
+  }
+
+  return material;
+}
+
 export function PlayerModel3D({
   x,
   z,
@@ -125,6 +181,10 @@ export function PlayerModel3D({
     setModel(null);
     setHeight(TARGET_PLAYER_HEIGHT);
 
+    /*
+     * Clone the complete GLTF scene so every skinned player keeps
+     * access to the armature and bones referenced by its skeleton.
+     */
     const completeClone = SkeletonUtils.clone(
       scene,
     ) as THREE.Group;
@@ -200,12 +260,12 @@ export function PlayerModel3D({
 
       const clonedMaterials = sourceMaterials.map(
         (sourceMaterial) => {
-          const clonedMaterial =
-            sourceMaterial.clone();
+          const normalizedMaterial =
+            createNormalizedMaterial(sourceMaterial);
 
-          ownedMaterials.push(clonedMaterial);
+          ownedMaterials.push(normalizedMaterial);
 
-          return clonedMaterial;
+          return normalizedMaterial;
         },
       );
 
@@ -213,8 +273,13 @@ export function PlayerModel3D({
         ? clonedMaterials
         : clonedMaterials[0];
 
+      /*
+       * Players still cast shadows onto the field, but they do not
+       * receive their own harsh self-shadows. This removes the
+       * inconsistent darkening seen on characters such as Mason.
+       */
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.receiveShadow = false;
       mesh.frustumCulled = false;
 
       if (mesh instanceof THREE.SkinnedMesh) {
@@ -250,6 +315,10 @@ export function PlayerModel3D({
         },
       );
 
+      for (const material of ownedMaterials) {
+        material.dispose();
+      }
+
       return;
     }
 
@@ -272,6 +341,10 @@ export function PlayerModel3D({
         },
       );
 
+      for (const material of ownedMaterials) {
+        material.dispose();
+      }
+
       return;
     }
 
@@ -292,6 +365,10 @@ export function PlayerModel3D({
     setModel(completeClone);
 
     return () => {
+      /*
+       * Dispose only the cloned materials.
+       * Their texture maps belong to the loaded GLTF and remain shared.
+       */
       for (const material of ownedMaterials) {
         material.dispose();
       }
