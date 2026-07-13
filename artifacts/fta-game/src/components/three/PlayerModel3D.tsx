@@ -12,19 +12,10 @@ export type PlayerRole =
 
 const MODEL_URL = "/models/players.gltf";
 
-const MALE_CHARACTERS = [
-  {
-    meshName: "_gltfNode_0",
-    rigName: "Metarig Man.010_44",
-  },
-  {
-    meshName: "_gltfNode_46",
-    rigName: "Metarig Man.011_89",
-  },
-  {
-    meshName: "_gltfNode_92",
-    rigName: "Metarig Man.012_134",
-  },
+const MALE_ROOT_NAMES = [
+  "_gltfNode_0",
+  "_gltfNode_46",
+  "_gltfNode_92",
 ] as const;
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
@@ -43,171 +34,7 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
   striker: "#d9483b",
 };
 
-const SKIN_HUE_MIN = 0.02;
-const SKIN_HUE_MAX = 0.15;
-const MIN_SATURATION = 0.15;
-const MAX_TEXTURE_WIDTH = 1024;
-
-const recoloredTextureCache = new WeakMap<
-  THREE.Texture,
-  Map<string, THREE.CanvasTexture>
->();
-
-function getTextureSize(image: {
-  width?: number;
-  height?: number;
-  naturalWidth?: number;
-  naturalHeight?: number;
-}) {
-  const width = image.naturalWidth ?? image.width ?? MAX_TEXTURE_WIDTH;
-  const height = image.naturalHeight ?? image.height ?? 128;
-
-  return {
-    width: Math.max(1, width),
-    height: Math.max(1, height),
-  };
-}
-
-function getRecoloredTexture(
-  baseTexture: THREE.Texture,
-  targetHex: string,
-): THREE.CanvasTexture {
-  const cacheKey = targetHex.toLowerCase();
-
-  let colorCache = recoloredTextureCache.get(baseTexture);
-
-  if (!colorCache) {
-    colorCache = new Map<string, THREE.CanvasTexture>();
-    recoloredTextureCache.set(baseTexture, colorCache);
-  }
-
-  const cachedTexture = colorCache.get(cacheKey);
-
-  if (cachedTexture) {
-    return cachedTexture;
-  }
-
-  const image = baseTexture.image as CanvasImageSource & {
-    width?: number;
-    height?: number;
-    naturalWidth?: number;
-    naturalHeight?: number;
-  };
-
-  if (!image) {
-    throw new Error("Player texture image was not loaded.");
-  }
-
-  const sourceSize = getTextureSize(image);
-
-  const outputWidth = Math.min(
-    sourceSize.width,
-    MAX_TEXTURE_WIDTH,
-  );
-
-  const outputHeight = Math.max(
-    1,
-    Math.round(
-      sourceSize.height *
-        (outputWidth / sourceSize.width),
-    ),
-  );
-
-  const canvas = document.createElement("canvas");
-  canvas.width = outputWidth;
-  canvas.height = outputHeight;
-
-  const context = canvas.getContext("2d", {
-    willReadFrequently: true,
-  });
-
-  if (!context) {
-    throw new Error(
-      "Could not create the player texture canvas.",
-    );
-  }
-
-  context.drawImage(
-    image,
-    0,
-    0,
-    outputWidth,
-    outputHeight,
-  );
-
-  const imageData = context.getImageData(
-    0,
-    0,
-    outputWidth,
-    outputHeight,
-  );
-
-  const pixels = imageData.data;
-
-  const targetColor = new THREE.Color(targetHex);
-  const targetHsl = {
-    h: 0,
-    s: 0,
-    l: 0,
-  };
-
-  targetColor.getHSL(targetHsl);
-
-  const sourceColor = new THREE.Color();
-  const sourceHsl = {
-    h: 0,
-    s: 0,
-    l: 0,
-  };
-
-  const outputColor = new THREE.Color();
-
-  for (let index = 0; index < pixels.length; index += 4) {
-    sourceColor.setRGB(
-      pixels[index] / 255,
-      pixels[index + 1] / 255,
-      pixels[index + 2] / 255,
-    );
-
-    sourceColor.getHSL(sourceHsl);
-
-    const isSkinHue =
-      sourceHsl.h >= SKIN_HUE_MIN &&
-      sourceHsl.h <= SKIN_HUE_MAX;
-
-    const isGrayish =
-      sourceHsl.s < MIN_SATURATION;
-
-    if (!isSkinHue && !isGrayish) {
-      outputColor.setHSL(
-        targetHsl.h,
-        sourceHsl.s,
-        sourceHsl.l,
-      );
-
-      pixels[index] = Math.round(outputColor.r * 255);
-      pixels[index + 1] = Math.round(outputColor.g * 255);
-      pixels[index + 2] = Math.round(outputColor.b * 255);
-    }
-  }
-
-  context.putImageData(imageData, 0, 0);
-
-  const texture = new THREE.CanvasTexture(canvas);
-
-  texture.colorSpace = baseTexture.colorSpace;
-  texture.flipY = baseTexture.flipY;
-  texture.wrapS = baseTexture.wrapS;
-  texture.wrapT = baseTexture.wrapT;
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearFilter;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
-
-  colorCache.set(cacheKey, texture);
-
-  return texture;
-}
+const TARGET_PLAYER_HEIGHT = 1.72;
 
 interface PlayerModel3DProps {
   x: number;
@@ -220,6 +47,51 @@ interface PlayerModel3DProps {
   role: PlayerRole;
   isSelected?: boolean;
   offside?: boolean;
+}
+
+function findSelectedPlayer(
+  scene: THREE.Object3D,
+  characterIndex: 0 | 1 | 2,
+): THREE.Object3D | null {
+  const preferredName = MALE_ROOT_NAMES[characterIndex];
+  const preferredObject = scene.getObjectByName(preferredName);
+
+  if (preferredObject) {
+    return preferredObject;
+  }
+
+  const skinnedMeshes: THREE.SkinnedMesh[] = [];
+
+  scene.traverse((object) => {
+    if (object instanceof THREE.SkinnedMesh) {
+      skinnedMeshes.push(object);
+    }
+  });
+
+  return skinnedMeshes[characterIndex] ?? null;
+}
+
+function collectSelectedMeshes(
+  selectedRoot: THREE.Object3D,
+): Set<THREE.Object3D> {
+  const selectedMeshes = new Set<THREE.Object3D>();
+
+  selectedRoot.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+
+    if (mesh.isMesh) {
+      selectedMeshes.add(object);
+    }
+  });
+
+  if (
+    selectedMeshes.size === 0 &&
+    selectedRoot instanceof THREE.Mesh
+  ) {
+    selectedMeshes.add(selectedRoot);
+  }
+
+  return selectedMeshes;
 }
 
 export function PlayerModel3D({
@@ -239,7 +111,8 @@ export function PlayerModel3D({
   const [model, setModel] =
     useState<THREE.Group | null>(null);
 
-  const [height, setHeight] = useState(1.7);
+  const [height, setHeight] =
+    useState(TARGET_PLAYER_HEIGHT);
 
   const badge = ROLE_BADGE[role];
 
@@ -250,92 +123,87 @@ export function PlayerModel3D({
 
   useEffect(() => {
     setModel(null);
-    setHeight(1.7);
+    setHeight(TARGET_PLAYER_HEIGHT);
 
-    const character =
-      MALE_CHARACTERS[characterIndex];
-
-    /*
-     * Clone the complete scene first.
-     *
-     * In this GLTF, each male player mesh and its armature are
-     * separate root objects. Cloning only the mesh leaves its
-     * SkinnedMesh without a complete cloned bone hierarchy.
-     */
     const completeClone = SkeletonUtils.clone(
       scene,
     ) as THREE.Group;
 
+    completeClone.name =
+      `FTA Player ${characterIndex + 1}`;
+
+    completeClone.position.set(0, 0, 0);
+    completeClone.rotation.set(0, 0, 0);
+    completeClone.scale.set(1, 1, 1);
+    completeClone.visible = true;
     completeClone.updateMatrixWorld(true);
 
-    const playerMesh =
-      completeClone.getObjectByName(
-        character.meshName,
-      );
+    const selectedRoot = findSelectedPlayer(
+      completeClone,
+      characterIndex,
+    );
 
-    const playerRig =
-      completeClone.getObjectByName(
-        character.rigName,
-      );
-
-    if (!playerMesh || !playerRig) {
+    if (!selectedRoot) {
       console.error(
-        "Could not find the required male player mesh or rig.",
+        "PlayerModel3D could not find a male player.",
         {
-          meshName: character.meshName,
-          rigName: character.rigName,
-          meshFound: Boolean(playerMesh),
-          rigFound: Boolean(playerRig),
+          characterIndex,
+          expectedName:
+            MALE_ROOT_NAMES[characterIndex],
         },
       );
 
       return;
     }
 
-    const playerRoot = new THREE.Group();
-    playerRoot.name = `FTA Player ${characterIndex + 1}`;
+    const selectedMeshes =
+      collectSelectedMeshes(selectedRoot);
 
-    /*
-     * attach() preserves each object's world transform while
-     * moving the selected mesh and matching armature out of the
-     * full six-character clone.
-     */
-    playerRoot.attach(playerRig);
-    playerRoot.attach(playerMesh);
-    playerRoot.updateMatrixWorld(true);
+    if (selectedMeshes.size === 0) {
+      console.error(
+        "PlayerModel3D found the player root but no mesh.",
+        {
+          characterIndex,
+          rootName: selectedRoot.name,
+          rootType: selectedRoot.type,
+        },
+      );
+
+      return;
+    }
 
     const ownedMaterials: THREE.Material[] = [];
 
-    playerRoot.traverse((child) => {
-      const mesh = child as THREE.Mesh;
+    completeClone.traverse((object) => {
+      const mesh = object as THREE.Mesh;
 
       if (!mesh.isMesh) {
         return;
       }
 
-      const originalMaterials = Array.isArray(mesh.material)
+      const isSelectedMesh =
+        selectedMeshes.has(object);
+
+      mesh.visible = isSelectedMesh;
+
+      if (!isSelectedMesh) {
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        return;
+      }
+
+      const sourceMaterials = Array.isArray(
+        mesh.material,
+      )
         ? mesh.material
         : [mesh.material];
 
-      const clonedMaterials = originalMaterials.map(
-        (originalMaterial) => {
+      const clonedMaterials = sourceMaterials.map(
+        (sourceMaterial) => {
           const clonedMaterial =
-            originalMaterial.clone() as THREE.MeshStandardMaterial;
+            sourceMaterial.clone();
 
           ownedMaterials.push(clonedMaterial);
-
-          const standardMaterial =
-            originalMaterial as THREE.MeshStandardMaterial;
-
-          if (standardMaterial.map) {
-            clonedMaterial.map =
-              getRecoloredTexture(
-                standardMaterial.map,
-                teamColor,
-              );
-          }
-
-          clonedMaterial.needsUpdate = true;
 
           return clonedMaterial;
         },
@@ -347,22 +215,40 @@ export function PlayerModel3D({
 
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
 
       if (mesh instanceof THREE.SkinnedMesh) {
-        mesh.frustumCulled = false;
+        mesh.normalizeSkinWeights();
+        mesh.skeleton.update();
       }
     });
 
-    const box = new THREE.Box3().setFromObject(playerRoot);
+    completeClone.updateMatrixWorld(true);
 
-    if (box.isEmpty()) {
+    const box = new THREE.Box3();
+
+    for (const selectedMesh of selectedMeshes) {
+      selectedMesh.updateWorldMatrix(true, false);
+      box.expandByObject(selectedMesh, true);
+    }
+
+    if (
+      box.isEmpty() ||
+      !Number.isFinite(box.min.x) ||
+      !Number.isFinite(box.min.y) ||
+      !Number.isFinite(box.min.z) ||
+      !Number.isFinite(box.max.x) ||
+      !Number.isFinite(box.max.y) ||
+      !Number.isFinite(box.max.z)
+    ) {
       console.error(
-        "The selected player model produced an empty bounding box.",
+        "PlayerModel3D produced an invalid bounding box.",
+        {
+          characterIndex,
+          rootName: selectedRoot.name,
+          box,
+        },
       );
-
-      for (const material of ownedMaterials) {
-        material.dispose();
-      }
 
       return;
     }
@@ -371,31 +257,46 @@ export function PlayerModel3D({
       new THREE.Vector3(),
     );
 
-    const modelHeight = Math.max(
-      0.1,
-      box.max.y - box.min.y,
+    const rawHeight =
+      box.max.y - box.min.y;
+
+    if (
+      !Number.isFinite(rawHeight) ||
+      rawHeight <= 0
+    ) {
+      console.error(
+        "PlayerModel3D produced an invalid height.",
+        {
+          characterIndex,
+          rawHeight,
+        },
+      );
+
+      return;
+    }
+
+    const scale =
+      TARGET_PLAYER_HEIGHT / rawHeight;
+
+    completeClone.scale.setScalar(scale);
+
+    completeClone.position.set(
+      -center.x * scale,
+      -box.min.y * scale,
+      -center.z * scale,
     );
 
-    playerRoot.position.x -= center.x;
-    playerRoot.position.z -= center.z;
-    playerRoot.position.y -= box.min.y;
+    completeClone.updateMatrixWorld(true);
 
-    playerRoot.updateMatrixWorld(true);
-
-    setHeight(modelHeight);
-    setModel(playerRoot);
+    setHeight(TARGET_PLAYER_HEIGHT);
+    setModel(completeClone);
 
     return () => {
       for (const material of ownedMaterials) {
-        /*
-         * Do not dispose material.map here.
-         * Recolored textures are shared by every player on the
-         * same team and stored in the cache above.
-         */
         material.dispose();
       }
     };
-  }, [scene, characterIndex, teamColor]);
+  }, [scene, characterIndex]);
 
   if (!model) {
     return null;
@@ -436,7 +337,7 @@ export function PlayerModel3D({
           <meshBasicMaterial
             color="#000000"
             transparent
-            opacity={0.58}
+            opacity={0.6}
             depthTest={false}
             depthWrite={false}
           />
@@ -465,6 +366,15 @@ export function PlayerModel3D({
           {badge}
         </Text>
       </Billboard>
+
+      <mesh position={[0, 1.45, 0]}>
+        <sphereGeometry args={[0.055, 12, 12]} />
+
+        <meshBasicMaterial
+          color={teamColor}
+          depthTest={false}
+        />
+      </mesh>
 
       {offside && (
         <Billboard
