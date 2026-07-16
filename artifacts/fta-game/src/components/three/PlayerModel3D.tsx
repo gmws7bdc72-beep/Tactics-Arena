@@ -1,36 +1,8 @@
-import { useState, useEffect } from "react";
-import { useGLTF, useAnimations, Billboard, Text } from "@react-three/drei";
+import { useEffect, useRef, useState } from "react";
+import { useFrame } from "@react-three/fiber";
+import { Billboard, Text, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
-
-// The source file's single "Animation" clip has every bone of all six
-// characters baked into one timeline (771 tracks). Each track's name
-// resolves to a specific bone via THREE's own PropertyBinding parsing, so
-// we can filter down to just the tracks whose target bone actually exists
-// in this specific character's cloned subtree, and leave the rest out.
-// If parsing/matching finds nothing (should not happen, but just in case),
-// fall back to the full clip -- THREE.AnimationMixer silently skips tracks
-// that don't resolve to a node in the given root, so it's safe either way.
-function extractClipForSkeleton(
-  sourceClip: THREE.AnimationClip,
-  root: THREE.Object3D,
-): THREE.AnimationClip {
-  const sanitizedNames = new Set<string>();
-  root.traverse((obj) => {
-    sanitizedNames.add(THREE.PropertyBinding.sanitizeNodeName(obj.name));
-  });
-
-  let tracks = sourceClip.tracks.filter((track) => {
-    const parsed = THREE.PropertyBinding.parseTrackName(track.name);
-    return sanitizedNames.has(parsed.nodeName);
-  });
-
-  if (tracks.length === 0) {
-    tracks = sourceClip.tracks;
-  }
-
-  return new THREE.AnimationClip("run", sourceClip.duration, tracks);
-}
 
 export type PlayerRole =
   | "goalkeeper"
@@ -39,12 +11,25 @@ export type PlayerRole =
   | "forward"
   | "striker";
 
-// Path to the asset inside /public — see setup notes.
+export type PlayerAnimationState =
+  | "IDLE"
+  | "MOVING"
+  | "DRIBBLING"
+  | "PASSING"
+  | "SHOOTING"
+  | "CONTESTING"
+  | "RECOVERING";
+
 const MODEL_URL = "/models/players.gltf";
 
-// Names of the three male root nodes in this specific export.
-// (The three female "Metarig Woman" nodes are simply never referenced.)
-const MALE_NODE_NAMES = ["_gltfNode_0", "_gltfNode_46", "_gltfNode_92"];
+const MALE_ROOT_NAMES = [
+  "_gltfNode_0",
+  "_gltfNode_46",
+  "_gltfNode_92",
+] as const;
+
+const TARGET_PLAYER_HEIGHT = 1.72;
+const MAX_TEXTURE_WIDTH = 1024;
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
   goalkeeper: "GK",
@@ -62,93 +47,535 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
   striker: "#d9483b",
 };
 
-// Skin sits in a narrow orange hue band regardless of how saturated it's
-// rendered, so we exclude by hue rather than by saturation. Everything
-// outside that band (the jersey, shorts, and any trim) gets shifted to the
-// team hue, while true grays/whites (socks, ball, teeth) are left alone.
 const SKIN_HUE_MIN = 0.02;
 const SKIN_HUE_MAX = 0.15;
 const MIN_SATURATION = 0.15;
+
+const recoloredTextureCache = new WeakMap<
+  THREE.Texture,
+  Map<string, THREE.CanvasTexture>
+>();
+
+function hueDistance(a: number, b: number): number {
+  const difference = Math.abs(a - b);
+  return Math.min(difference, 1 - difference);
+}
+
+function getImageDimensions(image: {
+  width?: number;
+  height?: number;
+  naturalWidth?: number;
+  naturalHeight?: number;
+}): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: Math.max(
+      1,
+      image.naturalWidth ??
+        image.width ??
+        MAX_TEXTURE_WIDTH,
+    ),
+    height: Math.max(
+      1,
+      image.naturalHeight ??
+        image.height ??
+        128,
+    ),
+  };
+}
 
 function recolorTexture(
   baseTexture: THREE.Texture,
   primaryHex: string,
   secondaryHex: string,
 ): THREE.CanvasTexture {
-  const img = baseTexture.image as HTMLImageElement;
-  const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
+  const cacheKey =
+    `${primaryHex}|${secondaryHex}`.toLowerCase();
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imageData.data;
+  let textureVariants =
+    recoloredTextureCache.get(baseTexture);
 
-  const px = new THREE.Color();
-  const hsl = { h: 0, s: 0, l: 0 };
+  if (!textureVariants) {
+    textureVariants =
+      new Map<string, THREE.CanvasTexture>();
 
-  const hueDist = (a: number, b: number) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b));
-
-  // Pass 1: find the kit's two dominant non-skin hues (e.g. jersey vs shorts)
-  // by sampling a subset of pixels into a coarse hue histogram.
-  const buckets = new Map<number, number>();
-  for (let i = 0; i < d.length; i += 16) {
-    px.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
-    px.getHSL(hsl);
-    if (hsl.h >= SKIN_HUE_MIN && hsl.h <= SKIN_HUE_MAX) continue;
-    if (hsl.s < MIN_SATURATION) continue;
-    const bucket = Math.round(hsl.h * 24);
-    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+    recoloredTextureCache.set(
+      baseTexture,
+      textureVariants,
+    );
   }
 
-  const sorted = Array.from(buckets.entries()).sort((a, b) => b[1] - a[1]);
-  const hue1 = sorted.length > 0 ? sorted[0][0] / 24 : 0;
-  let hue2 = hue1;
-  for (const [bucket] of sorted) {
-    const h = bucket / 24;
-    if (hueDist(h, hue1) > 0.08) {
-      hue2 = h;
+  const cachedTexture =
+    textureVariants.get(cacheKey);
+
+  if (cachedTexture) {
+    return cachedTexture;
+  }
+
+  const image = baseTexture.image as
+    | (CanvasImageSource & {
+        width?: number;
+        height?: number;
+        naturalWidth?: number;
+        naturalHeight?: number;
+      })
+    | undefined;
+
+  if (!image) {
+    throw new Error(
+      "PlayerModel3D could not read the player texture.",
+    );
+  }
+
+  const sourceSize =
+    getImageDimensions(image);
+
+  const outputWidth = Math.min(
+    sourceSize.width,
+    MAX_TEXTURE_WIDTH,
+  );
+
+  const outputHeight = Math.max(
+    1,
+    Math.round(
+      sourceSize.height *
+        (outputWidth / sourceSize.width),
+    ),
+  );
+
+  const canvas =
+    document.createElement("canvas");
+
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+
+  const context = canvas.getContext("2d", {
+    willReadFrequently: true,
+  });
+
+  if (!context) {
+    throw new Error(
+      "PlayerModel3D could not create a texture canvas.",
+    );
+  }
+
+  context.drawImage(
+    image,
+    0,
+    0,
+    outputWidth,
+    outputHeight,
+  );
+
+  const imageData = context.getImageData(
+    0,
+    0,
+    outputWidth,
+    outputHeight,
+  );
+
+  const pixels = imageData.data;
+
+  const pixelColor = new THREE.Color();
+  const outputColor = new THREE.Color();
+
+  const pixelHsl = {
+    h: 0,
+    s: 0,
+    l: 0,
+  };
+
+  const hueBuckets =
+    new Map<number, number>();
+
+  for (
+    let index = 0;
+    index < pixels.length;
+    index += 16
+  ) {
+    pixelColor.setRGB(
+      pixels[index] / 255,
+      pixels[index + 1] / 255,
+      pixels[index + 2] / 255,
+    );
+
+    pixelColor.getHSL(pixelHsl);
+
+    const isSkin =
+      pixelHsl.h >= SKIN_HUE_MIN &&
+      pixelHsl.h <= SKIN_HUE_MAX;
+
+    if (
+      isSkin ||
+      pixelHsl.s < MIN_SATURATION
+    ) {
+      continue;
+    }
+
+    const bucket =
+      Math.floor(pixelHsl.h * 24) % 24;
+
+    hueBuckets.set(
+      bucket,
+      (hueBuckets.get(bucket) ?? 0) + 1,
+    );
+  }
+
+  const sortedBuckets =
+    Array.from(hueBuckets.entries()).sort(
+      (first, second) =>
+        second[1] - first[1],
+    );
+
+  const sourcePrimaryHue =
+    sortedBuckets.length > 0
+      ? sortedBuckets[0][0] / 24
+      : 0;
+
+  let sourceSecondaryHue =
+    sourcePrimaryHue;
+
+  for (const [bucket] of sortedBuckets) {
+    const candidateHue = bucket / 24;
+
+    if (
+      hueDistance(
+        candidateHue,
+        sourcePrimaryHue,
+      ) > 0.08
+    ) {
+      sourceSecondaryHue =
+        candidateHue;
+
       break;
     }
   }
 
-  const primaryHsl = { h: 0, s: 0, l: 0 };
-  new THREE.Color(primaryHex).getHSL(primaryHsl);
-  const secondaryHsl = { h: 0, s: 0, l: 0 };
-  new THREE.Color(secondaryHex).getHSL(secondaryHsl);
+  const primaryHsl = {
+    h: 0,
+    s: 0,
+    l: 0,
+  };
 
-  const out = new THREE.Color();
+  const secondaryHsl = {
+    h: 0,
+    s: 0,
+    l: 0,
+  };
 
-  // Pass 2: remap every non-skin, non-gray pixel to whichever of the two
-  // dominant hues it's closer to, taking on that target's hue while keeping
-  // its own saturation/lightness so shading and folds stay intact.
-  for (let i = 0; i < d.length; i += 4) {
-    px.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255);
-    px.getHSL(hsl);
+  new THREE.Color(primaryHex).getHSL(
+    primaryHsl,
+  );
 
-    const isSkinHue = hsl.h >= SKIN_HUE_MIN && hsl.h <= SKIN_HUE_MAX;
-    const isGrayish = hsl.s < MIN_SATURATION;
-    if (isSkinHue || isGrayish) continue;
+  new THREE.Color(secondaryHex).getHSL(
+    secondaryHsl,
+  );
 
-    const target = hueDist(hsl.h, hue1) <= hueDist(hsl.h, hue2) ? primaryHsl : secondaryHsl;
+  for (
+    let index = 0;
+    index < pixels.length;
+    index += 4
+  ) {
+    pixelColor.setRGB(
+      pixels[index] / 255,
+      pixels[index + 1] / 255,
+      pixels[index + 2] / 255,
+    );
 
-    out.setHSL(target.h, hsl.s, hsl.l);
-    d[i] = Math.round(out.r * 255);
-    d[i + 1] = Math.round(out.g * 255);
-    d[i + 2] = Math.round(out.b * 255);
+    pixelColor.getHSL(pixelHsl);
+
+    const isSkin =
+      pixelHsl.h >= SKIN_HUE_MIN &&
+      pixelHsl.h <= SKIN_HUE_MAX;
+
+    const isGray =
+      pixelHsl.s < MIN_SATURATION;
+
+    if (isSkin || isGray) {
+      continue;
+    }
+
+    const targetHsl =
+      hueDistance(
+        pixelHsl.h,
+        sourcePrimaryHue,
+      ) <=
+      hueDistance(
+        pixelHsl.h,
+        sourceSecondaryHue,
+      )
+        ? primaryHsl
+        : secondaryHsl;
+
+    outputColor.setHSL(
+      targetHsl.h,
+      Math.max(
+        pixelHsl.s,
+        targetHsl.s * 0.65,
+      ),
+      pixelHsl.l,
+    );
+
+    pixels[index] =
+      Math.round(outputColor.r * 255);
+
+    pixels[index + 1] =
+      Math.round(outputColor.g * 255);
+
+    pixels[index + 2] =
+      Math.round(outputColor.b * 255);
   }
 
-  ctx.putImageData(imageData, 0, 0);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  tex.colorSpace = baseTexture.colorSpace;
-  tex.flipY = baseTexture.flipY;
-  tex.minFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-  return tex;
+  context.putImageData(
+    imageData,
+    0,
+    0,
+  );
+
+  const texture =
+    new THREE.CanvasTexture(canvas);
+
+  texture.colorSpace =
+    baseTexture.colorSpace;
+
+  texture.flipY =
+    baseTexture.flipY;
+
+  texture.wrapS =
+    baseTexture.wrapS;
+
+  texture.wrapT =
+    baseTexture.wrapT;
+
+  texture.magFilter =
+    THREE.LinearFilter;
+
+  texture.minFilter =
+    THREE.LinearFilter;
+
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+
+  textureVariants.set(
+    cacheKey,
+    texture,
+  );
+
+  return texture;
 }
 
+function findSelectedPlayer(
+  scene: THREE.Object3D,
+  characterIndex: 0 | 1 | 2,
+): THREE.Object3D | null {
+  const expectedName =
+    MALE_ROOT_NAMES[characterIndex];
+
+  const expectedPlayer =
+    scene.getObjectByName(expectedName);
+
+  if (expectedPlayer) {
+    return expectedPlayer;
+  }
+
+  const maleMeshes:
+    THREE.SkinnedMesh[] = [];
+
+  scene.traverse((object) => {
+    if (
+      object instanceof
+      THREE.SkinnedMesh
+    ) {
+      maleMeshes.push(object);
+    }
+  });
+
+  return maleMeshes[characterIndex] ?? null;
+}
+
+function collectSelectedMeshes(
+  selectedRoot: THREE.Object3D,
+): Set<THREE.Mesh> {
+  const selectedMeshes =
+    new Set<THREE.Mesh>();
+
+  selectedRoot.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+
+    if (mesh.isMesh) {
+      selectedMeshes.add(mesh);
+    }
+  });
+
+  if (
+    selectedRoot instanceof THREE.Mesh &&
+    selectedMeshes.size === 0
+  ) {
+    selectedMeshes.add(selectedRoot);
+  }
+
+  return selectedMeshes;
+}
+
+function createPlayerMaterial(
+  sourceMaterial: THREE.Material,
+  primaryColor: string,
+  secondaryColor: string,
+): THREE.Material {
+  const material =
+    sourceMaterial.clone();
+
+  if (
+    material instanceof
+    THREE.MeshStandardMaterial
+  ) {
+    material.color.set(0xffffff);
+    material.vertexColors = false;
+    material.metalness = 0;
+    material.roughness = 0.72;
+    material.aoMapIntensity = 0.1;
+
+    const sourceStandardMaterial =
+      sourceMaterial as
+        THREE.MeshStandardMaterial;
+
+    if (sourceStandardMaterial.map) {
+      material.map = recolorTexture(
+        sourceStandardMaterial.map,
+        primaryColor,
+        secondaryColor,
+      );
+
+      material.emissive.set(
+        0xffffff,
+      );
+
+      material.emissiveMap =
+        material.map;
+
+      material.emissiveIntensity =
+        0.07;
+    }
+
+    material.needsUpdate = true;
+  }
+
+  return material;
+}
+
+function addAnimationName(
+  names: Set<string>,
+  name: string,
+): void {
+  if (!name) {
+    return;
+  }
+
+  names.add(name);
+
+  names.add(
+    THREE.PropertyBinding.sanitizeNodeName(
+      name,
+    ),
+  );
+}
+
+function extractClipForPlayer(
+  sourceClip: THREE.AnimationClip,
+  selectedMeshes: Set<THREE.Mesh>,
+  characterIndex: number,
+): THREE.AnimationClip | null {
+  const allowedNames =
+    new Set<string>();
+
+  for (const mesh of selectedMeshes) {
+    addAnimationName(
+      allowedNames,
+      mesh.name,
+    );
+
+    if (
+      mesh instanceof
+      THREE.SkinnedMesh
+    ) {
+      for (
+        const bone of
+        mesh.skeleton.bones
+      ) {
+        addAnimationName(
+          allowedNames,
+          bone.name,
+        );
+      }
+    }
+  }
+
+  const matchingTracks =
+    sourceClip.tracks.filter(
+      (track) => {
+        try {
+          const parsed =
+            THREE.PropertyBinding.parseTrackName(
+              track.name,
+            );
+
+          return (
+            allowedNames.has(
+              parsed.nodeName,
+            ) ||
+            allowedNames.has(
+              THREE.PropertyBinding.sanitizeNodeName(
+                parsed.nodeName,
+              ),
+            )
+          );
+        } catch (error) {
+          console.warn(
+            "PlayerModel3D skipped an invalid animation track:",
+            track.name,
+            error,
+          );
+
+          return false;
+        }
+      },
+    );
+
+  /*
+   * Never use the full 771-track clip as a fallback.
+   * That full clip controls all six source characters.
+   */
+  if (matchingTracks.length === 0) {
+    console.warn(
+      `PlayerModel3D found no matching run tracks for character ${characterIndex}.`,
+    );
+
+    return null;
+  }
+
+  const clip =
+    new THREE.AnimationClip(
+      `player-${characterIndex}-run`,
+      sourceClip.duration,
+      matchingTracks,
+    );
+
+  clip.optimize();
+
+  return clip;
+}
+
+function shouldRun(
+  playerState: PlayerAnimationState,
+): boolean {
+  return (
+    playerState === "MOVING" ||
+    playerState === "DRIBBLING" ||
+    playerState === "CONTESTING"
+  );
+}
 
 interface PlayerModel3DProps {
   x: number;
@@ -163,14 +590,7 @@ interface PlayerModel3DProps {
   isSelected?: boolean;
   hasBall?: boolean;
   offside?: boolean;
-  playerState?:
-    | "IDLE"
-    | "MOVING"
-    | "DRIBBLING"
-    | "PASSING"
-    | "SHOOTING"
-    | "CONTESTING"
-    | "RECOVERING";
+  playerState?: PlayerAnimationState;
 }
 
 export function PlayerModel3D({
@@ -180,6 +600,7 @@ export function PlayerModel3D({
   characterIndex = 0,
   teamColor,
   secondaryColor,
+  jerseyNumber,
   name,
   role,
   isSelected = false,
@@ -187,134 +608,625 @@ export function PlayerModel3D({
   offside = false,
   playerState = "IDLE",
 }: PlayerModel3DProps) {
-  const { scene, animations } = useGLTF(MODEL_URL);
-  const badge = ROLE_BADGE[role];
-  const badgeColor = role === "goalkeeper" ? "#c9a34b" : ROLE_BADGE_COLOR[role];
+  const { scene, animations } =
+    useGLTF(MODEL_URL);
 
-  const [model, setModel] = useState<THREE.Object3D | null>(null);
-  const [height, setHeight] = useState(1.7);
-  const [clips, setClips] = useState<THREE.AnimationClip[]>([]);
-  const { actions } = useAnimations(clips, model ?? undefined);
+  const [model, setModel] =
+    useState<THREE.Group | null>(null);
 
-  useEffect(() => {
-    const nodeName = MALE_NODE_NAMES[characterIndex];
-    const source = scene.getObjectByName(nodeName);
-    if (!source) return;
+  const [height, setHeight] =
+    useState(TARGET_PLAYER_HEIGHT);
 
-    const clone = SkeletonUtils.clone(source) as THREE.Object3D;
+  const mixerRef =
+    useRef<THREE.AnimationMixer | null>(
+      null,
+    );
 
-    // Recenter: the source file lays all six characters out side by side,
-    // so bottom-center this clone at the local origin regardless of where
-    // it originally sat in that lineup.
-    const box = new THREE.Box3().setFromObject(clone);
-    const center = box.getCenter(new THREE.Vector3());
-    clone.position.x -= center.x;
-    clone.position.z -= center.z;
-    clone.position.y -= box.min.y;
+  const actionRef =
+    useRef<THREE.AnimationAction | null>(
+      null,
+    );
 
-    clone.traverse((child) => {
-      const mesh = child as THREE.Mesh;
-      if (mesh.isMesh) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (mat && mat.map) {
-          const newMat = mat.clone();
-          newMat.map = recolorTexture(mat.map, teamColor, secondaryColor ?? teamColor);
-          mesh.material = newMat;
-        }
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-      }
-    });
+  const badge =
+    ROLE_BADGE[role];
 
-    setModel(clone);
-    setHeight(box.max.y - box.min.y);
+  const badgeColor =
+    role === "goalkeeper"
+      ? "#c9a34b"
+      : ROLE_BADGE_COLOR[role];
 
-    try {
-      setClips(animations.length > 0 ? [extractClipForSkeleton(animations[0], clone)] : []);
-    } catch (err) {
-      console.error("PlayerModel3D: failed to build run animation, showing static model instead.", err);
-      setClips([]);
+  const resolvedSecondaryColor =
+    secondaryColor ?? teamColor;
+
+  useFrame((_, delta) => {
+    const mixer = mixerRef.current;
+
+    if (!mixer) {
+      return;
     }
 
-    // Paired with the setup above so React's mount->cleanup->remount cycle
-    // (StrictMode in dev) always disposes the model it just created, never
-    // one that's still in use.
-    return () => {
-      clone.traverse((child) => {
-        const mesh = child as THREE.Mesh;
-        const mat = mesh.material as THREE.MeshStandardMaterial | undefined;
-        if (mat) {
-          mat.map?.dispose();
-          mat.dispose();
-        }
-      });
-    };
-  }, [scene, characterIndex, teamColor]);
+    try {
+      mixer.update(
+        Math.min(delta, 0.05),
+      );
+    } catch (error) {
+      console.error(
+        "PlayerModel3D disabled a failed animation:",
+        error,
+      );
+
+      mixer.stopAllAction();
+      mixerRef.current = null;
+      actionRef.current = null;
+    }
+  });
 
   useEffect(() => {
-    const action = actions?.run;
-    if (!action) return;
+    setModel(null);
+    setHeight(
+      TARGET_PLAYER_HEIGHT,
+    );
 
-    const shouldRun =
-      playerState === "MOVING" || playerState === "DRIBBLING" || playerState === "CONTESTING";
+    mixerRef.current?.stopAllAction();
+    mixerRef.current = null;
+    actionRef.current = null;
+
+    const ownedMaterials:
+      THREE.Material[] = [];
+
+    let completeClone:
+      THREE.Group | null = null;
+
+    let localMixer:
+      THREE.AnimationMixer | null =
+        null;
+
+    let localAction:
+      THREE.AnimationAction | null =
+        null;
+
+    let filteredClip:
+      THREE.AnimationClip | null =
+        null;
 
     try {
-      if (shouldRun) {
-        action.reset().fadeIn(0.2).play();
+      /*
+       * Clone the complete scene so the selected
+       * SkinnedMesh keeps its matching armature.
+       */
+      completeClone =
+        SkeletonUtils.clone(
+          scene,
+        ) as THREE.Group;
+
+      completeClone.name =
+        `FTA Player ${characterIndex + 1}`;
+
+      completeClone.position.set(
+        0,
+        0,
+        0,
+      );
+
+      completeClone.rotation.set(
+        0,
+        0,
+        0,
+      );
+
+      completeClone.scale.set(
+        1,
+        1,
+        1,
+      );
+
+      completeClone.visible = true;
+      completeClone.updateMatrixWorld(
+        true,
+      );
+
+      const selectedRoot =
+        findSelectedPlayer(
+          completeClone,
+          characterIndex,
+        );
+
+      if (!selectedRoot) {
+        console.error(
+          "PlayerModel3D could not find the requested male model.",
+          {
+            characterIndex,
+            expectedName:
+              MALE_ROOT_NAMES[
+                characterIndex
+              ],
+          },
+        );
+
+        return;
+      }
+
+      const selectedMeshes =
+        collectSelectedMeshes(
+          selectedRoot,
+        );
+
+      if (
+        selectedMeshes.size === 0
+      ) {
+        console.error(
+          "PlayerModel3D found no mesh inside the selected player.",
+        );
+
+        return;
+      }
+
+      /*
+       * Keep every armature and bone but show only
+       * the chosen character's actual meshes.
+       */
+      completeClone.traverse(
+        (object) => {
+          const mesh =
+            object as THREE.Mesh;
+
+          if (!mesh.isMesh) {
+            return;
+          }
+
+          const isSelectedMesh =
+            selectedMeshes.has(mesh);
+
+          mesh.visible =
+            isSelectedMesh;
+
+          if (!isSelectedMesh) {
+            mesh.castShadow = false;
+            mesh.receiveShadow = false;
+
+            return;
+          }
+
+          const sourceMaterials =
+            Array.isArray(
+              mesh.material,
+            )
+              ? mesh.material
+              : [mesh.material];
+
+          const playerMaterials =
+            sourceMaterials.map(
+              (sourceMaterial) => {
+                const material =
+                  createPlayerMaterial(
+                    sourceMaterial,
+                    teamColor,
+                    resolvedSecondaryColor,
+                  );
+
+                ownedMaterials.push(
+                  material,
+                );
+
+                return material;
+              },
+            );
+
+          mesh.material =
+            Array.isArray(
+              mesh.material,
+            )
+              ? playerMaterials
+              : playerMaterials[0];
+
+          mesh.castShadow = true;
+          mesh.receiveShadow = false;
+          mesh.frustumCulled = false;
+
+          if (
+            mesh instanceof
+            THREE.SkinnedMesh
+          ) {
+            mesh.normalizeSkinWeights();
+            mesh.skeleton.update();
+          }
+        },
+      );
+
+      completeClone.updateMatrixWorld(
+        true,
+      );
+
+      const boundingBox =
+        new THREE.Box3();
+
+      for (
+        const mesh of
+        selectedMeshes
+      ) {
+        mesh.updateWorldMatrix(
+          true,
+          false,
+        );
+
+        boundingBox.expandByObject(
+          mesh,
+          true,
+        );
+      }
+
+      if (
+        boundingBox.isEmpty() ||
+        !Number.isFinite(
+          boundingBox.min.x,
+        ) ||
+        !Number.isFinite(
+          boundingBox.min.y,
+        ) ||
+        !Number.isFinite(
+          boundingBox.min.z,
+        ) ||
+        !Number.isFinite(
+          boundingBox.max.x,
+        ) ||
+        !Number.isFinite(
+          boundingBox.max.y,
+        ) ||
+        !Number.isFinite(
+          boundingBox.max.z,
+        )
+      ) {
+        console.error(
+          "PlayerModel3D produced an invalid bounding box.",
+        );
+
+        return;
+      }
+
+      const center =
+        boundingBox.getCenter(
+          new THREE.Vector3(),
+        );
+
+      const originalHeight =
+        boundingBox.max.y -
+        boundingBox.min.y;
+
+      if (
+        !Number.isFinite(
+          originalHeight,
+        ) ||
+        originalHeight <= 0
+      ) {
+        console.error(
+          "PlayerModel3D produced an invalid player height.",
+        );
+
+        return;
+      }
+
+      const playerScale =
+        TARGET_PLAYER_HEIGHT /
+        originalHeight;
+
+      completeClone.scale.setScalar(
+        playerScale,
+      );
+
+      completeClone.position.set(
+        -center.x * playerScale,
+        -boundingBox.min.y *
+          playerScale,
+        -center.z * playerScale,
+      );
+
+      completeClone.updateMatrixWorld(
+        true,
+      );
+
+      /*
+       * Make the static player visible before
+       * attempting animation setup.
+       */
+      setHeight(
+        TARGET_PLAYER_HEIGHT,
+      );
+
+      setModel(completeClone);
+
+      if (animations.length > 0) {
+        try {
+          filteredClip =
+            extractClipForPlayer(
+              animations[0],
+              selectedMeshes,
+              characterIndex,
+            );
+
+          if (filteredClip) {
+            localMixer =
+              new THREE.AnimationMixer(
+                completeClone,
+              );
+
+            localAction =
+              localMixer.clipAction(
+                filteredClip,
+              );
+
+            localAction.enabled = true;
+
+            localAction.setLoop(
+              THREE.LoopRepeat,
+              Infinity,
+            );
+
+            localAction.clampWhenFinished =
+              false;
+
+            localAction.setEffectiveWeight(
+              1,
+            );
+
+            localAction.setEffectiveTimeScale(
+              1,
+            );
+
+            mixerRef.current =
+              localMixer;
+
+            actionRef.current =
+              localAction;
+          }
+        } catch (error) {
+          console.error(
+            "PlayerModel3D animation setup failed. The player will remain static.",
+            error,
+          );
+
+          localMixer?.stopAllAction();
+
+          localMixer = null;
+          localAction = null;
+          filteredClip = null;
+
+          mixerRef.current = null;
+          actionRef.current = null;
+        }
+      }
+
+      return () => {
+        localAction?.stop();
+        localMixer?.stopAllAction();
+
+        if (
+          localMixer &&
+          filteredClip
+        ) {
+          localMixer.uncacheClip(
+            filteredClip,
+          );
+        }
+
+        if (
+          localMixer &&
+          completeClone
+        ) {
+          localMixer.uncacheRoot(
+            completeClone,
+          );
+        }
+
+        if (
+          mixerRef.current ===
+          localMixer
+        ) {
+          mixerRef.current = null;
+        }
+
+        if (
+          actionRef.current ===
+          localAction
+        ) {
+          actionRef.current = null;
+        }
+
+        /*
+         * Dispose only cloned player materials.
+         * Team textures remain shared through the cache.
+         */
+        for (
+          const material of
+          ownedMaterials
+        ) {
+          material.dispose();
+        }
+      };
+    } catch (error) {
+      console.error(
+        "PlayerModel3D setup failed:",
+        error,
+      );
+
+      localMixer?.stopAllAction();
+
+      mixerRef.current = null;
+      actionRef.current = null;
+
+      for (
+        const material of
+        ownedMaterials
+      ) {
+        material.dispose();
+      }
+
+      setModel(null);
+
+      return;
+    }
+  }, [
+    scene,
+    animations,
+    characterIndex,
+    teamColor,
+    resolvedSecondaryColor,
+  ]);
+
+  useEffect(() => {
+    const action =
+      actionRef.current;
+
+    if (!action) {
+      return;
+    }
+
+    try {
+      if (shouldRun(playerState)) {
+        if (!action.isRunning()) {
+          action
+            .reset()
+            .fadeIn(0.18)
+            .play();
+        }
       } else {
-        action.fadeOut(0.2);
+        action.fadeOut(0.18);
       }
-    } catch (err) {
-      console.error("PlayerModel3D: animation playback failed.", err);
-    }
-  }, [actions, playerState]);
+    } catch (error) {
+      console.error(
+        "PlayerModel3D animation playback failed:",
+        error,
+      );
 
-  if (!model) return null;
+      action.stop();
+      actionRef.current = null;
+
+      mixerRef.current?.stopAllAction();
+      mixerRef.current = null;
+    }
+  }, [playerState, model]);
+
+  if (!model) {
+    return null;
+  }
 
   return (
-    <group position={[x, 0, z]} rotation={[0, facing, 0]}>
+    <group
+      position={[x, 0, z]}
+      rotation={[0, facing, 0]}
+    >
       {(isSelected || hasBall) && (
-        <mesh position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.32, 0.4, 32]} />
-          <meshBasicMaterial color={isSelected ? "#5fe0ff" : "#ffd700"} transparent opacity={0.85} />
+        <mesh
+          position={[0, 0.015, 0]}
+          rotation={[
+            -Math.PI / 2,
+            0,
+            0,
+          ]}
+        >
+          <ringGeometry
+            args={[0.32, 0.4, 32]}
+          />
+
+          <meshBasicMaterial
+            color={
+              isSelected
+                ? "#5fe0ff"
+                : "#ffd700"
+            }
+            transparent
+            opacity={0.85}
+            depthWrite={false}
+          />
         </mesh>
       )}
 
-      <primitive object={model} />
+      <primitive
+        object={model}
+        dispose={null}
+      />
 
-      <Billboard position={[0, height + 0.18, 0]}>
-        <mesh position={[0, 0, -0.01]}>
-          <planeGeometry args={[0.85, 0.24]} />
-          <meshBasicMaterial color="#000000" transparent opacity={0.55} />
+      <Billboard
+        position={[
+          0,
+          height + 0.18,
+          0,
+        ]}
+      >
+        <mesh
+          position={[0, 0, -0.01]}
+        >
+          <planeGeometry
+            args={[0.98, 0.24]}
+          />
+
+          <meshBasicMaterial
+            color="#000000"
+            transparent
+            opacity={0.6}
+            depthTest={false}
+            depthWrite={false}
+          />
         </mesh>
+
         <Text
-          position={[-0.14, 0.045, 0]}
-          fontSize={0.09}
+          position={[
+            -0.18,
+            0.045,
+            0,
+          ]}
+          fontSize={0.085}
           color="#ffffff"
           anchorX="center"
           anchorY="middle"
+          depthOffset={-2}
         >
-          {name}
+          {`${jerseyNumber} ${name}`}
         </Text>
+
         <Text
-          position={[0.3, 0.045, 0]}
+          position={[
+            0.34,
+            0.045,
+            0,
+          ]}
           fontSize={0.07}
           color={badgeColor}
           anchorX="center"
           anchorY="middle"
           fontWeight="bold"
+          depthOffset={-2}
         >
           {badge}
         </Text>
       </Billboard>
 
       {offside && (
-        <Billboard position={[0.42, height + 0.18, 0]}>
+        <Billboard
+          position={[
+            0.48,
+            height + 0.18,
+            0,
+          ]}
+        >
           <mesh>
-            <planeGeometry args={[0.32, 0.18]} />
-            <meshBasicMaterial color="#ff1744" />
+            <planeGeometry
+              args={[0.32, 0.18]}
+            />
+
+            <meshBasicMaterial
+              color="#ff1744"
+              depthTest={false}
+              depthWrite={false}
+            />
           </mesh>
-          <Text fontSize={0.09} color="#ffffff" anchorX="center" anchorY="middle">
+
+          <Text
+            fontSize={0.09}
+            color="#ffffff"
+            anchorX="center"
+            anchorY="middle"
+            depthOffset={-3}
+          >
             OS
           </Text>
         </Billboard>
