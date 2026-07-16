@@ -134,9 +134,6 @@ function StadiumBackdrop() {
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
-      // Pitch footprint on screen is roughly a centered band; keep the crowd
-      // clear of it with a soft-edged hole rather than trying to trace the
-      // exact 3D-projected pitch outline.
       const holeW = W * 0.86;
       const holeH = H * 0.68;
       const holeX = (W - holeW) / 2;
@@ -242,6 +239,8 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   return tex;
 }
 
@@ -274,9 +273,24 @@ const TILE_COLORS: Record<Exclude<TileState, "none">, string> = {
   "reachable-enemy": "#ff6000",
 };
 
+// One of the three male models is built with a goalkeeper-style stance, so
+// it's reserved for whichever player actually has role: "goalkeeper" and
+// never handed to an outfield player. Outfield players cycle through the
+// remaining two. If this turns out to be the wrong index once you see it
+// live, this one constant is the only thing that needs to change.
+const GOALKEEPER_CHARACTER_INDEX: 0 | 1 | 2 = 2;
+const OUTFIELD_CHARACTER_INDICES: (0 | 1 | 2)[] = ([0, 1, 2] as const).filter(
+  (i) => i !== GOALKEEPER_CHARACTER_INDEX,
+) as (0 | 1 | 2)[];
+
+function characterIndexFor(p: { role: string; jerseyNumber: number }): 0 | 1 | 2 {
+  if (p.role === "goalkeeper") return GOALKEEPER_CHARACTER_INDEX;
+  return OUTFIELD_CHARACTER_INDICES[p.jerseyNumber % OUTFIELD_CHARACTER_INDICES.length];
+}
+
 // ---------------------------------------------------------------------------
-// Planned-move preview arrows, ported from PitchCanvas's drawArrow: MOVE is a
-// straight dashed line, PASS/SHOOT arc upward, with the same color coding.
+// Planned-move preview arrows, ported from PitchCanvas's drawArrow. Only a
+// long-ball pass arcs now; everything else draws as a straight dashed line.
 // ---------------------------------------------------------------------------
 function Arrow3D({
   from,
@@ -351,39 +365,50 @@ function CommandArrows({
     if (!pf) return;
 
     const fromWorld = pitchToWorld(pf.position, isVertical);
-    const from: [number, number] = [fromWorld.x, fromWorld.z];
 
-    const push = (toPitch: Vec2, color: string, arced: boolean, key: string) => {
+    const push = (
+      fromXZ: [number, number],
+      toPitch: Vec2,
+      color: string,
+      arced: boolean,
+      key: string,
+    ) => {
       const w = pitchToWorld(toPitch, isVertical);
-      arrows.push({ key, from, to: [w.x, w.z], color, arced });
+      arrows.push({ key, from: fromXZ, to: [w.x, w.z], color, arced });
     };
 
     if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
-      push(cmd.targetPosition, "#00e676", false, `${playerId}-move`);
+      push([fromWorld.x, fromWorld.z], cmd.targetPosition, "#00e676", false, `${playerId}-move`);
 
       if (cmd.followUp?.type === CommandType.PASS && cmd.followUp.targetPosition) {
         const w = pitchToWorld(cmd.targetPosition, isVertical);
-        const wTo = pitchToWorld(cmd.followUp.targetPosition, isVertical);
-        arrows.push({
-          key: `${playerId}-move-pass`,
-          from: [w.x, w.z],
-          to: [wTo.x, wTo.z],
-          color: "#ff1744",
-          arced: true,
-        });
+        push(
+          [w.x, w.z],
+          cmd.followUp.targetPosition,
+          "#ff1744",
+          cmd.followUp.passStyle === "long",
+          `${playerId}-move-pass`,
+        );
       }
     } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
-      push(cmd.targetPosition, "#ffeb3b", true, `${playerId}-pass`);
+      push(
+        [fromWorld.x, fromWorld.z],
+        cmd.targetPosition,
+        "#ffeb3b",
+        cmd.passStyle === "long",
+        `${playerId}-pass`,
+      );
 
       if (cmd.followUp?.type === CommandType.MOVE && cmd.followUp.targetPosition) {
-        push(cmd.followUp.targetPosition, "#ff9800", false, `${playerId}-pass-move`);
+        const w = pitchToWorld(cmd.targetPosition, isVertical);
+        push([w.x, w.z], cmd.followUp.targetPosition, "#ff9800", false, `${playerId}-pass-move`);
       }
     } else if (cmd.type === CommandType.SHOOT) {
       const goalPitch: Vec2 = {
         x: pf.teamId === "player" ? PITCH_WIDTH : 0,
         y: PITCH_HEIGHT / 2,
       };
-      push(goalPitch, "#ff6b35", true, `${playerId}-shoot`);
+      push([fromWorld.x, fromWorld.z], goalPitch, "#ff6b35", false, `${playerId}-shoot`);
     }
   });
 
@@ -539,7 +564,7 @@ export default function MatchPitch3D({
                 key={p.id}
                 x={world.x}
                 z={world.z}
-                characterIndex={(p.jerseyNumber % 3) as 0 | 1 | 2}
+                characterIndex={characterIndexFor(p)}
                 teamColor={isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor}
                 secondaryColor={isPlayerTeam ? playerTeam.secondaryColor : aiTeamSecondaryColor}
                 jerseyNumber={p.jerseyNumber}
