@@ -144,8 +144,11 @@ function recolorTexture(
   tex.needsUpdate = true;
   tex.colorSpace = baseTexture.colorSpace;
   tex.flipY = baseTexture.flipY;
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   return tex;
 }
+
 
 interface PlayerModel3DProps {
   x: number;
