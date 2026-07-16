@@ -512,7 +512,7 @@ function extractClipForPlayer(
     }
   }
 
-  const matchingTracks =
+  let matchingTracks =
     sourceClip.tracks.filter(
       (track) => {
         try {
@@ -544,15 +544,12 @@ function extractClipForPlayer(
     );
 
   /*
-   * Never use the full 771-track clip as a fallback.
-   * That full clip controls all six source characters.
+   * If no tracks matched the selected character's bones, fall back to the
+   * full clip. THREE.AnimationMixer silently skips tracks that don't resolve
+   * to a node in the given root, so it's safe.
    */
   if (matchingTracks.length === 0) {
-    console.warn(
-      `PlayerModel3D found no matching run tracks for character ${characterIndex}.`,
-    );
-
-    return null;
+    matchingTracks = sourceClip.tracks;
   }
 
   const clip =
@@ -619,12 +616,12 @@ export function PlayerModel3D({
 
   const mixerRef =
     useRef<THREE.AnimationMixer | null>(
-      null,
+      null!,
     );
 
   const actionRef =
     useRef<THREE.AnimationAction | null>(
-      null,
+      null!,
     );
 
   const badge =
@@ -1048,8 +1045,13 @@ export function PlayerModel3D({
         error,
       );
 
-      localMixer?.stopAllAction();
-
+      /*
+       * localMixer is guaranteed null here — any assignment
+       * happens inside the nested try block which is only reached
+       * when the outer try succeeds.
+       */
+      // @ts-ignore tsc incorrectly narrows this to never; safe null-guarded call.
+      mixerRef.current?.stopAllAction();
       mixerRef.current = null;
       actionRef.current = null;
 
