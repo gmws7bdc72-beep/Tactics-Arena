@@ -22,14 +22,34 @@ export type PlayerAnimationState =
 
 const MODEL_URL = "/models/players.gltf";
 
-const MALE_ROOT_NAMES = [
+const CHARACTER_ROOT_NAMES = [
   "_gltfNode_0",
   "_gltfNode_46",
   "_gltfNode_92",
+  "_gltfNode_138",
+  "_gltfNode_184",
+  "_gltfNode_230",
 ] as const;
 
+const OUTFIELD_VISUAL_ROOT_INDEX = 4;
+const GOALKEEPER_VISUAL_ROOT_INDEX = 5;
+
+const MOTION_SOURCE_BY_STATE: Record<PlayerAnimationState, number> = {
+  IDLE: 4,
+  MOVING: 3,
+  DRIBBLING: 2,
+  PASSING: 1,
+  SHOOTING: 1,
+  CONTESTING: 2,
+  RECOVERING: 4,
+};
+
+const GOALKEEPER_MOTION_SOURCE = 5;
 const TARGET_PLAYER_HEIGHT = 1.72;
 const MAX_TEXTURE_WIDTH = 1024;
+const TURN_SPEED = 11;
+const MOVEMENT_EPSILON = 0.0005;
+const MODEL_FORWARD_OFFSET = Math.PI;
 
 const ROLE_BADGE: Record<PlayerRole, string> = {
   goalkeeper: "GK",
@@ -49,16 +69,43 @@ const ROLE_BADGE_COLOR: Record<PlayerRole, string> = {
 
 const SKIN_HUE_MIN = 0.02;
 const SKIN_HUE_MAX = 0.15;
-const MIN_SATURATION = 0.15;
+const MIN_SATURATION = 0.12;
 
 const recoloredTextureCache = new WeakMap<
   THREE.Texture,
   Map<string, THREE.CanvasTexture>
 >();
 
+function normalizeBoneName(name: string): string {
+  return THREE.PropertyBinding.sanitizeNodeName(name)
+    .replace(/_\d+$/, "")
+    .toLowerCase();
+}
+
 function hueDistance(a: number, b: number): number {
   const difference = Math.abs(a - b);
   return Math.min(difference, 1 - difference);
+}
+
+function shortestAngleDifference(from: number, to: number): number {
+  return Math.atan2(
+    Math.sin(to - from),
+    Math.cos(to - from),
+  );
+}
+
+function dampAngle(
+  current: number,
+  target: number,
+  speed: number,
+  delta: number,
+): number {
+  const factor = 1 - Math.exp(-speed * delta);
+
+  return (
+    current +
+    shortestAngleDifference(current, target) * factor
+  );
 }
 
 function getImageDimensions(image: {
@@ -94,34 +141,35 @@ function recolorTexture(
   const cacheKey =
     `${primaryHex}|${secondaryHex}`.toLowerCase();
 
-  let textureVariants =
+  let variants =
     recoloredTextureCache.get(baseTexture);
 
-  if (!textureVariants) {
-    textureVariants =
+  if (!variants) {
+    variants =
       new Map<string, THREE.CanvasTexture>();
 
     recoloredTextureCache.set(
       baseTexture,
-      textureVariants,
+      variants,
     );
   }
 
-  const cachedTexture =
-    textureVariants.get(cacheKey);
+  const cached =
+    variants.get(cacheKey);
 
-  if (cachedTexture) {
-    return cachedTexture;
+  if (cached) {
+    return cached;
   }
 
-  const image = baseTexture.image as
-    | (CanvasImageSource & {
-        width?: number;
-        height?: number;
-        naturalWidth?: number;
-        naturalHeight?: number;
-      })
-    | undefined;
+  const image =
+    baseTexture.image as
+      | (CanvasImageSource & {
+          width?: number;
+          height?: number;
+          naturalWidth?: number;
+          naturalHeight?: number;
+        })
+      | undefined;
 
   if (!image) {
     throw new Error(
@@ -132,18 +180,20 @@ function recolorTexture(
   const sourceSize =
     getImageDimensions(image);
 
-  const outputWidth = Math.min(
-    sourceSize.width,
-    MAX_TEXTURE_WIDTH,
-  );
+  const outputWidth =
+    Math.min(
+      sourceSize.width,
+      MAX_TEXTURE_WIDTH,
+    );
 
-  const outputHeight = Math.max(
-    1,
-    Math.round(
-      sourceSize.height *
-        (outputWidth / sourceSize.width),
-    ),
-  );
+  const outputHeight =
+    Math.max(
+      1,
+      Math.round(
+        sourceSize.height *
+          (outputWidth / sourceSize.width),
+      ),
+    );
 
   const canvas =
     document.createElement("canvas");
@@ -151,9 +201,10 @@ function recolorTexture(
   canvas.width = outputWidth;
   canvas.height = outputHeight;
 
-  const context = canvas.getContext("2d", {
-    willReadFrequently: true,
-  });
+  const context =
+    canvas.getContext("2d", {
+      willReadFrequently: true,
+    });
 
   if (!context) {
     throw new Error(
@@ -169,17 +220,22 @@ function recolorTexture(
     outputHeight,
   );
 
-  const imageData = context.getImageData(
-    0,
-    0,
-    outputWidth,
-    outputHeight,
-  );
+  const imageData =
+    context.getImageData(
+      0,
+      0,
+      outputWidth,
+      outputHeight,
+    );
 
-  const pixels = imageData.data;
+  const pixels =
+    imageData.data;
 
-  const pixelColor = new THREE.Color();
-  const outputColor = new THREE.Color();
+  const pixelColor =
+    new THREE.Color();
+
+  const outputColor =
+    new THREE.Color();
 
   const pixelHsl = {
     h: 0,
@@ -201,7 +257,9 @@ function recolorTexture(
       pixels[index + 2] / 255,
     );
 
-    pixelColor.getHSL(pixelHsl);
+    pixelColor.getHSL(
+      pixelHsl,
+    );
 
     const isSkin =
       pixelHsl.h >= SKIN_HUE_MIN &&
@@ -224,7 +282,9 @@ function recolorTexture(
   }
 
   const sortedBuckets =
-    Array.from(hueBuckets.entries()).sort(
+    Array.from(
+      hueBuckets.entries(),
+    ).sort(
       (first, second) =>
         second[1] - first[1],
     );
@@ -237,8 +297,12 @@ function recolorTexture(
   let sourceSecondaryHue =
     sourcePrimaryHue;
 
-  for (const [bucket] of sortedBuckets) {
-    const candidateHue = bucket / 24;
+  for (
+    const [bucket] of
+    sortedBuckets
+  ) {
+    const candidateHue =
+      bucket / 24;
 
     if (
       hueDistance(
@@ -265,13 +329,13 @@ function recolorTexture(
     l: 0,
   };
 
-  new THREE.Color(primaryHex).getHSL(
-    primaryHsl,
-  );
+  new THREE.Color(
+    primaryHex,
+  ).getHSL(primaryHsl);
 
-  new THREE.Color(secondaryHex).getHSL(
-    secondaryHsl,
-  );
+  new THREE.Color(
+    secondaryHex,
+  ).getHSL(secondaryHsl);
 
   for (
     let index = 0;
@@ -284,48 +348,77 @@ function recolorTexture(
       pixels[index + 2] / 255,
     );
 
-    pixelColor.getHSL(pixelHsl);
+    pixelColor.getHSL(
+      pixelHsl,
+    );
 
     const isSkin =
       pixelHsl.h >= SKIN_HUE_MIN &&
       pixelHsl.h <= SKIN_HUE_MAX;
 
-    const isGray =
-      pixelHsl.s < MIN_SATURATION;
+    if (isSkin) {
+      continue;
+    }
 
-    if (isSkin || isGray) {
+    const isDarkNeutralCloth =
+      pixelHsl.s < MIN_SATURATION &&
+      pixelHsl.l < 0.38;
+
+    const isColoredCloth =
+      pixelHsl.s >= MIN_SATURATION;
+
+    if (
+      !isDarkNeutralCloth &&
+      !isColoredCloth
+    ) {
       continue;
     }
 
     const targetHsl =
-      hueDistance(
-        pixelHsl.h,
-        sourcePrimaryHue,
-      ) <=
-      hueDistance(
-        pixelHsl.h,
-        sourceSecondaryHue,
-      )
-        ? primaryHsl
-        : secondaryHsl;
+      isDarkNeutralCloth
+        ? secondaryHsl
+        : hueDistance(
+              pixelHsl.h,
+              sourcePrimaryHue,
+            ) <=
+            hueDistance(
+              pixelHsl.h,
+              sourceSecondaryHue,
+            )
+          ? primaryHsl
+          : secondaryHsl;
 
     outputColor.setHSL(
       targetHsl.h,
       Math.max(
-        pixelHsl.s,
-        targetHsl.s * 0.65,
+        targetHsl.s * 0.75,
+        isDarkNeutralCloth
+          ? 0.35
+          : pixelHsl.s,
       ),
-      pixelHsl.l,
+      isDarkNeutralCloth
+        ? THREE.MathUtils.lerp(
+            0.2,
+            0.48,
+            pixelHsl.l / 0.38,
+          )
+        : pixelHsl.l,
     );
 
     pixels[index] =
-      Math.round(outputColor.r * 255);
+      Math.round(
+        outputColor.r * 255,
+      );
 
     pixels[index + 1] =
-      Math.round(outputColor.g * 255);
+      Math.round(
+        outputColor.g * 255,
+      );
 
     pixels[index + 2] =
-      Math.round(outputColor.b * 255);
+      Math.round(
+        outputColor.b * 255,
+      );
   }
 
   context.putImageData(
@@ -335,7 +428,9 @@ function recolorTexture(
   );
 
   const texture =
-    new THREE.CanvasTexture(canvas);
+    new THREE.CanvasTexture(
+      canvas,
+    );
 
   texture.colorSpace =
     baseTexture.colorSpace;
@@ -355,10 +450,13 @@ function recolorTexture(
   texture.minFilter =
     THREE.LinearFilter;
 
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
+  texture.generateMipmaps =
+    false;
 
-  textureVariants.set(
+  texture.needsUpdate =
+    true;
+
+  variants.set(
     cacheKey,
     texture,
   );
@@ -366,57 +464,219 @@ function recolorTexture(
   return texture;
 }
 
-function findSelectedPlayer(
+function findRoot(
   scene: THREE.Object3D,
-  characterIndex: 0 | 1 | 2,
+  rootIndex: number,
 ): THREE.Object3D | null {
-  const expectedName =
-    MALE_ROOT_NAMES[characterIndex];
-
-  const expectedPlayer =
-    scene.getObjectByName(expectedName);
-
-  if (expectedPlayer) {
-    return expectedPlayer;
-  }
-
-  const maleMeshes:
-    THREE.SkinnedMesh[] = [];
-
-  scene.traverse((object) => {
-    if (
-      object instanceof
-      THREE.SkinnedMesh
-    ) {
-      maleMeshes.push(object);
-    }
-  });
-
-  return maleMeshes[characterIndex] ?? null;
+  return (
+    scene.getObjectByName(
+      CHARACTER_ROOT_NAMES[rootIndex],
+    ) ?? null
+  );
 }
 
-function collectSelectedMeshes(
-  selectedRoot: THREE.Object3D,
+function collectMeshes(
+  root: THREE.Object3D,
 ): Set<THREE.Mesh> {
-  const selectedMeshes =
+  const meshes =
     new Set<THREE.Mesh>();
 
-  selectedRoot.traverse((object) => {
-    const mesh = object as THREE.Mesh;
+  root.traverse((object) => {
+    const mesh =
+      object as THREE.Mesh;
 
     if (mesh.isMesh) {
-      selectedMeshes.add(mesh);
+      meshes.add(mesh);
     }
   });
 
   if (
-    selectedRoot instanceof THREE.Mesh &&
-    selectedMeshes.size === 0
+    root instanceof THREE.Mesh
   ) {
-    selectedMeshes.add(selectedRoot);
+    meshes.add(root);
   }
 
-  return selectedMeshes;
+  return meshes;
+}
+
+function collectBoneMap(
+  meshes: Set<THREE.Mesh>,
+): Map<string, string> {
+  const map =
+    new Map<string, string>();
+
+  for (
+    const mesh of
+    meshes
+  ) {
+    if (
+      !(
+        mesh instanceof
+        THREE.SkinnedMesh
+      )
+    ) {
+      continue;
+    }
+
+    for (
+      const bone of
+      mesh.skeleton.bones
+    ) {
+      map.set(
+        normalizeBoneName(
+          bone.name,
+        ),
+        bone.name,
+      );
+    }
+  }
+
+  return map;
+}
+
+function collectSourceBoneNames(
+  scene: THREE.Object3D,
+  sourceRootIndex: number,
+): Set<string> {
+  const sourceRoot =
+    findRoot(
+      scene,
+      sourceRootIndex,
+    );
+
+  if (!sourceRoot) {
+    return new Set<string>();
+  }
+
+  const meshes =
+    collectMeshes(sourceRoot);
+
+  const names =
+    new Set<string>();
+
+  for (
+    const mesh of
+    meshes
+  ) {
+    if (
+      !(
+        mesh instanceof
+        THREE.SkinnedMesh
+      )
+    ) {
+      continue;
+    }
+
+    for (
+      const bone of
+      mesh.skeleton.bones
+    ) {
+      names.add(
+        bone.name,
+      );
+
+      names.add(
+        THREE.PropertyBinding.sanitizeNodeName(
+          bone.name,
+        ),
+      );
+    }
+  }
+
+  return names;
+}
+
+function createRetargetedClip(
+  sourceClip: THREE.AnimationClip,
+  sourceScene: THREE.Object3D,
+  sourceRootIndex: number,
+  targetBoneMap: Map<string, string>,
+  clipName: string,
+): THREE.AnimationClip | null {
+  const sourceNames =
+    collectSourceBoneNames(
+      sourceScene,
+      sourceRootIndex,
+    );
+
+  const tracks:
+    THREE.KeyframeTrack[] = [];
+
+  for (
+    const track of
+    sourceClip.tracks
+  ) {
+    let parsed:
+      ReturnType<
+        typeof THREE.PropertyBinding.parseTrackName
+      >;
+
+    try {
+      parsed =
+        THREE.PropertyBinding.parseTrackName(
+          track.name,
+        );
+    } catch {
+      continue;
+    }
+
+    const rawNodeName =
+      parsed.nodeName;
+
+    const sanitized =
+      THREE.PropertyBinding.sanitizeNodeName(
+        rawNodeName,
+      );
+
+    if (
+      !sourceNames.has(
+        rawNodeName,
+      ) &&
+      !sourceNames.has(
+        sanitized,
+      )
+    ) {
+      continue;
+    }
+
+    const targetBoneName =
+      targetBoneMap.get(
+        normalizeBoneName(
+          rawNodeName,
+        ),
+      );
+
+    if (!targetBoneName) {
+      continue;
+    }
+
+    const clonedTrack =
+      track.clone();
+
+    clonedTrack.name =
+      `${targetBoneName}.${parsed.propertyName}`;
+
+    tracks.push(
+      clonedTrack,
+    );
+  }
+
+  if (
+    tracks.length === 0
+  ) {
+    return null;
+  }
+
+  const clip =
+    new THREE.AnimationClip(
+      clipName,
+      sourceClip.duration,
+      tracks,
+    );
+
+  clip.optimize();
+
+  return clip;
 }
 
 function createPlayerMaterial(
@@ -431,22 +691,28 @@ function createPlayerMaterial(
     material instanceof
     THREE.MeshStandardMaterial
   ) {
-    material.color.set(0xffffff);
-    material.vertexColors = false;
+    material.color.set(
+      0xffffff,
+    );
+
+    material.vertexColors =
+      false;
+
     material.metalness = 0;
     material.roughness = 0.72;
     material.aoMapIntensity = 0.1;
 
-    const sourceStandardMaterial =
+    const source =
       sourceMaterial as
         THREE.MeshStandardMaterial;
 
-    if (sourceStandardMaterial.map) {
-      material.map = recolorTexture(
-        sourceStandardMaterial.map,
-        primaryColor,
-        secondaryColor,
-      );
+    if (source.map) {
+      material.map =
+        recolorTexture(
+          source.map,
+          primaryColor,
+          secondaryColor,
+        );
 
       material.emissive.set(
         0xffffff,
@@ -456,121 +722,25 @@ function createPlayerMaterial(
         material.map;
 
       material.emissiveIntensity =
-        0.07;
+        0.045;
     }
 
-    material.needsUpdate = true;
+    material.needsUpdate =
+      true;
   }
 
   return material;
 }
 
-function addAnimationName(
-  names: Set<string>,
-  name: string,
-): void {
-  if (!name) {
-    return;
-  }
-
-  names.add(name);
-
-  names.add(
-    THREE.PropertyBinding.sanitizeNodeName(
-      name,
-    ),
-  );
-}
-
-function extractClipForPlayer(
-  sourceClip: THREE.AnimationClip,
-  selectedMeshes: Set<THREE.Mesh>,
-  characterIndex: number,
-): THREE.AnimationClip | null {
-  const allowedNames =
-    new Set<string>();
-
-  for (const mesh of selectedMeshes) {
-    addAnimationName(
-      allowedNames,
-      mesh.name,
-    );
-
-    if (
-      mesh instanceof
-      THREE.SkinnedMesh
-    ) {
-      for (
-        const bone of
-        mesh.skeleton.bones
-      ) {
-        addAnimationName(
-          allowedNames,
-          bone.name,
-        );
-      }
-    }
-  }
-
-  let matchingTracks =
-    sourceClip.tracks.filter(
-      (track) => {
-        try {
-          const parsed =
-            THREE.PropertyBinding.parseTrackName(
-              track.name,
-            );
-
-          return (
-            allowedNames.has(
-              parsed.nodeName,
-            ) ||
-            allowedNames.has(
-              THREE.PropertyBinding.sanitizeNodeName(
-                parsed.nodeName,
-              ),
-            )
-          );
-        } catch (error) {
-          console.warn(
-            "PlayerModel3D skipped an invalid animation track:",
-            track.name,
-            error,
-          );
-
-          return false;
-        }
-      },
-    );
-
-  /*
-   * If no tracks matched the selected character's bones, fall back to the
-   * full clip. THREE.AnimationMixer silently skips tracks that don't resolve
-   * to a node in the given root, so it's safe.
-   */
-  if (matchingTracks.length === 0) {
-    matchingTracks = sourceClip.tracks;
-  }
-
-  const clip =
-    new THREE.AnimationClip(
-      `player-${characterIndex}-run`,
-      sourceClip.duration,
-      matchingTracks,
-    );
-
-  clip.optimize();
-
-  return clip;
-}
-
-function shouldRun(
-  playerState: PlayerAnimationState,
+function isLoopingState(
+  state: PlayerAnimationState,
 ): boolean {
   return (
-    playerState === "MOVING" ||
-    playerState === "DRIBBLING" ||
-    playerState === "CONTESTING"
+    state === "IDLE" ||
+    state === "MOVING" ||
+    state === "DRIBBLING" ||
+    state === "CONTESTING" ||
+    state === "RECOVERING"
   );
 }
 
@@ -593,8 +763,7 @@ interface PlayerModel3DProps {
 export function PlayerModel3D({
   x,
   z,
-  facing = 0,
-  characterIndex = 0,
+  facing,
   teamColor,
   secondaryColor,
   jerseyNumber,
@@ -605,23 +774,74 @@ export function PlayerModel3D({
   offside = false,
   playerState = "IDLE",
 }: PlayerModel3DProps) {
-  const { scene, animations } =
-    useGLTF(MODEL_URL);
+  const {
+    scene,
+    animations,
+  } = useGLTF(MODEL_URL);
 
-  const [model, setModel] =
-    useState<THREE.Group | null>(null);
+  const [
+    model,
+    setModel,
+  ] =
+    useState<THREE.Group | null>(
+      null,
+    );
 
-  const [height, setHeight] =
-    useState(TARGET_PLAYER_HEIGHT);
+  const [
+    height,
+    setHeight,
+  ] =
+    useState(
+      TARGET_PLAYER_HEIGHT,
+    );
+
+  const outerGroupRef =
+    useRef<THREE.Group>(
+      null,
+    );
 
   const mixerRef =
     useRef<THREE.AnimationMixer | null>(
-      null!,
+      null,
     );
 
-  const actionRef =
+  const actionsRef =
+    useRef<
+      Map<
+        PlayerAnimationState,
+        THREE.AnimationAction
+      >
+    >(
+      new Map(),
+    );
+
+  const currentActionRef =
     useRef<THREE.AnimationAction | null>(
-      null!,
+      null,
+    );
+
+  const currentStateRef =
+    useRef<PlayerAnimationState>(
+      playerState,
+    );
+
+  const previousPositionRef =
+    useRef(
+      new THREE.Vector2(
+        x,
+        z,
+      ),
+    );
+
+  const targetFacingRef =
+    useRef(
+      facing ?? 0,
+    );
+
+  const currentFacingRef =
+    useRef(
+      (facing ?? 0) +
+        MODEL_FORWARD_OFFSET,
     );
 
   const badge =
@@ -633,136 +853,171 @@ export function PlayerModel3D({
       : ROLE_BADGE_COLOR[role];
 
   const resolvedSecondaryColor =
-    secondaryColor ?? teamColor;
+    secondaryColor ??
+    teamColor;
 
-  useFrame((_, delta) => {
-    const mixer = mixerRef.current;
+  useFrame(
+    (_, delta) => {
+      const safeDelta =
+        Math.min(
+          delta,
+          0.05,
+        );
 
-    if (!mixer) {
-      return;
-    }
-
-    try {
-      mixer.update(
-        Math.min(delta, 0.05),
-      );
-    } catch (error) {
-      console.error(
-        "PlayerModel3D disabled a failed animation:",
-        error,
+      mixerRef.current?.update(
+        safeDelta,
       );
 
-      mixer.stopAllAction();
-      mixerRef.current = null;
-      actionRef.current = null;
-    }
-  });
+      const previous =
+        previousPositionRef.current;
+
+      const dx =
+        x - previous.x;
+
+      const dz =
+        z - previous.y;
+
+      if (
+        facing !== undefined &&
+        Number.isFinite(facing)
+      ) {
+        targetFacingRef.current =
+          facing;
+      } else if (
+        dx * dx +
+          dz * dz >
+        MOVEMENT_EPSILON
+      ) {
+        targetFacingRef.current =
+          Math.atan2(
+            dx,
+            dz,
+          );
+      }
+
+      previous.set(
+        x,
+        z,
+      );
+
+      currentFacingRef.current =
+        dampAngle(
+          currentFacingRef.current,
+          targetFacingRef.current +
+            MODEL_FORWARD_OFFSET,
+          TURN_SPEED,
+          safeDelta,
+        );
+
+      if (
+        outerGroupRef.current
+      ) {
+        outerGroupRef.current.rotation.y =
+          currentFacingRef.current;
+      }
+    },
+  );
 
   useEffect(() => {
     setModel(null);
+
     setHeight(
       TARGET_PLAYER_HEIGHT,
     );
 
     mixerRef.current?.stopAllAction();
-    mixerRef.current = null;
-    actionRef.current = null;
+
+    mixerRef.current =
+      null;
+
+    actionsRef.current.clear();
+
+    currentActionRef.current =
+      null;
 
     const ownedMaterials:
       THREE.Material[] = [];
 
-    let completeClone:
-      THREE.Group | null = null;
+    let clone:
+      THREE.Group | null =
+        null;
 
-    let localMixer:
+    let mixer:
       THREE.AnimationMixer | null =
         null;
 
-    let localAction:
-      THREE.AnimationAction | null =
-        null;
-
-    let filteredClip:
-      THREE.AnimationClip | null =
-        null;
+    const generatedClips:
+      THREE.AnimationClip[] = [];
 
     try {
-      /*
-       * Clone the complete scene so the selected
-       * SkinnedMesh keeps its matching armature.
-       */
-      completeClone =
+      clone =
         SkeletonUtils.clone(
           scene,
         ) as THREE.Group;
 
-      completeClone.name =
-        `FTA Player ${characterIndex + 1}`;
+      clone.name =
+        `FTA ${role} ${jerseyNumber}`;
 
-      completeClone.position.set(
+      clone.position.set(
         0,
         0,
         0,
       );
 
-      completeClone.rotation.set(
+      clone.rotation.set(
         0,
         0,
         0,
       );
 
-      completeClone.scale.set(
+      clone.scale.set(
         1,
         1,
         1,
       );
 
-      completeClone.visible = true;
-      completeClone.updateMatrixWorld(
+      clone.visible =
+        true;
+
+      clone.updateMatrixWorld(
         true,
       );
 
+      const visualRootIndex =
+        role === "goalkeeper"
+          ? GOALKEEPER_VISUAL_ROOT_INDEX
+          : OUTFIELD_VISUAL_ROOT_INDEX;
+
       const selectedRoot =
-        findSelectedPlayer(
-          completeClone,
-          characterIndex,
+        findRoot(
+          clone,
+          visualRootIndex,
         );
 
       if (!selectedRoot) {
-        console.error(
-          "PlayerModel3D could not find the requested male model.",
-          {
-            characterIndex,
-            expectedName:
-              MALE_ROOT_NAMES[
-                characterIndex
-              ],
-          },
+        throw new Error(
+          `Could not find visual root ${
+            CHARACTER_ROOT_NAMES[
+              visualRootIndex
+            ]
+          }.`,
         );
-
-        return;
       }
 
       const selectedMeshes =
-        collectSelectedMeshes(
+        collectMeshes(
           selectedRoot,
         );
 
       if (
         selectedMeshes.size === 0
       ) {
-        console.error(
-          "PlayerModel3D found no mesh inside the selected player.",
+        throw new Error(
+          "Selected player root contains no meshes.",
         );
-
-        return;
       }
 
-      /*
-       * Keep every armature and bone but show only
-       * the chosen character's actual meshes.
-       */
-      completeClone.traverse(
+      clone.traverse(
         (object) => {
           const mesh =
             object as THREE.Mesh;
@@ -771,15 +1026,20 @@ export function PlayerModel3D({
             return;
           }
 
-          const isSelectedMesh =
-            selectedMeshes.has(mesh);
+          const selected =
+            selectedMeshes.has(
+              mesh,
+            );
 
           mesh.visible =
-            isSelectedMesh;
+            selected;
 
-          if (!isSelectedMesh) {
-            mesh.castShadow = false;
-            mesh.receiveShadow = false;
+          if (!selected) {
+            mesh.castShadow =
+              false;
+
+            mesh.receiveShadow =
+              false;
 
             return;
           }
@@ -793,7 +1053,9 @@ export function PlayerModel3D({
 
           const playerMaterials =
             sourceMaterials.map(
-              (sourceMaterial) => {
+              (
+                sourceMaterial,
+              ) => {
                 const material =
                   createPlayerMaterial(
                     sourceMaterial,
@@ -816,21 +1078,27 @@ export function PlayerModel3D({
               ? playerMaterials
               : playerMaterials[0];
 
-          mesh.castShadow = true;
-          mesh.receiveShadow = false;
-          mesh.frustumCulled = false;
+          mesh.castShadow =
+            true;
+
+          mesh.receiveShadow =
+            false;
+
+          mesh.frustumCulled =
+            false;
 
           if (
             mesh instanceof
             THREE.SkinnedMesh
           ) {
             mesh.normalizeSkinWeights();
+
             mesh.skeleton.update();
           }
         },
       );
 
-      completeClone.updateMatrixWorld(
+      clone.updateMatrixWorld(
         true,
       );
 
@@ -853,31 +1121,11 @@ export function PlayerModel3D({
       }
 
       if (
-        boundingBox.isEmpty() ||
-        !Number.isFinite(
-          boundingBox.min.x,
-        ) ||
-        !Number.isFinite(
-          boundingBox.min.y,
-        ) ||
-        !Number.isFinite(
-          boundingBox.min.z,
-        ) ||
-        !Number.isFinite(
-          boundingBox.max.x,
-        ) ||
-        !Number.isFinite(
-          boundingBox.max.y,
-        ) ||
-        !Number.isFinite(
-          boundingBox.max.z,
-        )
+        boundingBox.isEmpty()
       ) {
-        console.error(
-          "PlayerModel3D produced an invalid bounding box.",
+        throw new Error(
+          "Player model produced an empty bounding box.",
         );
-
-        return;
       }
 
       const center =
@@ -895,143 +1143,173 @@ export function PlayerModel3D({
         ) ||
         originalHeight <= 0
       ) {
-        console.error(
-          "PlayerModel3D produced an invalid player height.",
+        throw new Error(
+          "Player model produced an invalid height.",
         );
-
-        return;
       }
 
       const playerScale =
         TARGET_PLAYER_HEIGHT /
         originalHeight;
 
-      completeClone.scale.setScalar(
+      clone.scale.setScalar(
         playerScale,
       );
 
-      completeClone.position.set(
-        -center.x * playerScale,
+      clone.position.set(
+        -center.x *
+          playerScale,
         -boundingBox.min.y *
           playerScale,
-        -center.z * playerScale,
+        -center.z *
+          playerScale,
       );
 
-      completeClone.updateMatrixWorld(
+      clone.updateMatrixWorld(
         true,
       );
 
-      /*
-       * Make the static player visible before
-       * attempting animation setup.
-       */
-      setHeight(
-        TARGET_PLAYER_HEIGHT,
-      );
+      const sourceClip =
+        animations[0];
 
-      setModel(completeClone);
+      if (sourceClip) {
+        const targetBoneMap =
+          collectBoneMap(
+            selectedMeshes,
+          );
 
-      if (animations.length > 0) {
-        try {
-          filteredClip =
-            extractClipForPlayer(
-              animations[0],
-              selectedMeshes,
-              characterIndex,
+        mixer =
+          new THREE.AnimationMixer(
+            clone,
+          );
+
+        for (
+          const state of
+          Object.keys(
+            MOTION_SOURCE_BY_STATE,
+          ) as PlayerAnimationState[]
+        ) {
+          const sourceIndex =
+            role ===
+              "goalkeeper" &&
+            state !==
+              "PASSING" &&
+            state !==
+              "SHOOTING"
+              ? GOALKEEPER_MOTION_SOURCE
+              : MOTION_SOURCE_BY_STATE[
+                  state
+                ];
+
+          const clip =
+            createRetargetedClip(
+              sourceClip,
+              scene,
+              sourceIndex,
+              targetBoneMap,
+              `fta-${state.toLowerCase()}-${jerseyNumber}`,
             );
 
-          if (filteredClip) {
-            localMixer =
-              new THREE.AnimationMixer(
-                completeClone,
-              );
+          if (!clip) {
+            continue;
+          }
 
-            localAction =
-              localMixer.clipAction(
-                filteredClip,
-              );
+          generatedClips.push(
+            clip,
+          );
 
-            localAction.enabled = true;
+          const action =
+            mixer.clipAction(
+              clip,
+            );
 
-            localAction.setLoop(
+          action.enabled =
+            true;
+
+          action.setEffectiveWeight(
+            1,
+          );
+
+          action.setEffectiveTimeScale(
+            state ===
+              "SHOOTING"
+              ? 1.25
+              : 1,
+          );
+
+          if (
+            isLoopingState(
+              state,
+            )
+          ) {
+            action.setLoop(
               THREE.LoopRepeat,
               Infinity,
             );
 
-            localAction.clampWhenFinished =
+            action.clampWhenFinished =
               false;
-
-            localAction.setEffectiveWeight(
+          } else {
+            action.setLoop(
+              THREE.LoopOnce,
               1,
             );
 
-            localAction.setEffectiveTimeScale(
-              1,
-            );
-
-            mixerRef.current =
-              localMixer;
-
-            actionRef.current =
-              localAction;
+            action.clampWhenFinished =
+              true;
           }
-        } catch (error) {
-          console.error(
-            "PlayerModel3D animation setup failed. The player will remain static.",
-            error,
+
+          actionsRef.current.set(
+            state,
+            action,
           );
-
-          localMixer?.stopAllAction();
-
-          localMixer = null;
-          localAction = null;
-          filteredClip = null;
-
-          mixerRef.current = null;
-          actionRef.current = null;
         }
+
+        mixerRef.current =
+          mixer;
       }
 
-      return () => {
-        localAction?.stop();
-        localMixer?.stopAllAction();
+      setModel(
+        clone,
+      );
 
-        if (
-          localMixer &&
-          filteredClip
+      setHeight(
+        TARGET_PLAYER_HEIGHT,
+      );
+
+      return () => {
+        currentActionRef.current?.stop();
+
+        mixer?.stopAllAction();
+
+        for (
+          const clip of
+          generatedClips
         ) {
-          localMixer.uncacheClip(
-            filteredClip,
+          mixer?.uncacheClip(
+            clip,
           );
         }
 
-        if (
-          localMixer &&
-          completeClone
-        ) {
-          localMixer.uncacheRoot(
-            completeClone,
+        if (clone) {
+          mixer?.uncacheRoot(
+            clone,
           );
         }
 
         if (
           mixerRef.current ===
-          localMixer
+          mixer
         ) {
-          mixerRef.current = null;
+          mixerRef.current =
+            null;
         }
 
-        if (
-          actionRef.current ===
-          localAction
-        ) {
-          actionRef.current = null;
-        }
+        actionsRef.current.clear();
 
-        /*
-         * Dispose only cloned player materials.
-         * Team textures remain shared through the cache.
-         */
+        currentActionRef.current =
+          null;
+
         for (
           const material of
           ownedMaterials
@@ -1045,15 +1323,7 @@ export function PlayerModel3D({
         error,
       );
 
-      /*
-       * localMixer is guaranteed null here — any assignment
-       * happens inside the nested try block which is only reached
-       * when the outer try succeeds.
-       */
-      // @ts-ignore tsc incorrectly narrows this to never; safe null-guarded call.
-      mixerRef.current?.stopAllAction();
-      mixerRef.current = null;
-      actionRef.current = null;
+      mixer?.stopAllAction();
 
       for (
         const material of
@@ -1069,43 +1339,86 @@ export function PlayerModel3D({
   }, [
     scene,
     animations,
-    characterIndex,
+    role,
+    jerseyNumber,
     teamColor,
     resolvedSecondaryColor,
   ]);
 
   useEffect(() => {
-    const action =
-      actionRef.current;
+    if (!model) {
+      return;
+    }
 
-    if (!action) {
+    const nextAction =
+      actionsRef.current.get(
+        playerState,
+      );
+
+    if (!nextAction) {
+      return;
+    }
+
+    const previousAction =
+      currentActionRef.current;
+
+    const stateChanged =
+      currentStateRef.current !==
+      playerState;
+
+    currentStateRef.current =
+      playerState;
+
+    if (
+      previousAction ===
+        nextAction &&
+      !stateChanged
+    ) {
+      if (
+        !nextAction.isRunning()
+      ) {
+        nextAction.play();
+      }
+
       return;
     }
 
     try {
-      if (shouldRun(playerState)) {
-        if (!action.isRunning()) {
-          action
-            .reset()
-            .fadeIn(0.18)
-            .play();
-        }
-      } else {
-        action.fadeOut(0.18);
+      if (
+        previousAction &&
+        previousAction !==
+          nextAction
+      ) {
+        previousAction.fadeOut(
+          0.12,
+        );
       }
-    } catch (error) {
-      console.error(
-        "PlayerModel3D animation playback failed:",
-        error,
+
+      nextAction.reset();
+
+      nextAction.enabled =
+        true;
+
+      nextAction.setEffectiveWeight(
+        1,
       );
 
-      action.stop();
-      actionRef.current = null;
+      nextAction
+        .fadeIn(0.12)
+        .play();
 
-      mixerRef.current?.stopAllAction();
-      mixerRef.current = null;
+      currentActionRef.current =
+        nextAction;
+    } catch (error) {
+      console.error(
+        "PlayerModel3D animation transition failed:",
+        error,
+      );
     }
-  }, [playerState, model]);
+  }, [
+    playerState,
+    model,
+  ]);
 
   if (!model) {
     return null;
@@ -1113,39 +1426,62 @@ export function PlayerModel3D({
 
   return (
     <group
-      position={[x, 0, z]}
-      rotation={[0, facing, 0]}
+      position={[
+        x,
+        0,
+        z,
+      ]}
     >
-      {(isSelected || hasBall) && (
-        <mesh
-          position={[0, 0.015, 0]}
-          rotation={[
-            -Math.PI / 2,
-            0,
-            0,
-          ]}
-        >
-          <ringGeometry
-            args={[0.32, 0.4, 32]}
-          />
+      <group
+        ref={
+          outerGroupRef
+        }
+        rotation={[
+          0,
+          currentFacingRef.current,
+          0,
+        ]}
+      >
+        {(isSelected ||
+          hasBall) && (
+          <mesh
+            position={[
+              0,
+              0.015,
+              0,
+            ]}
+            rotation={[
+              -Math.PI / 2,
+              0,
+              0,
+            ]}
+          >
+            <ringGeometry
+              args={[
+                0.32,
+                0.4,
+                32,
+              ]}
+            />
 
-          <meshBasicMaterial
-            color={
-              isSelected
-                ? "#5fe0ff"
-                : "#ffd700"
-            }
-            transparent
-            opacity={0.85}
-            depthWrite={false}
-          />
-        </mesh>
-      )}
+            <meshBasicMaterial
+              color={
+                isSelected
+                  ? "#5fe0ff"
+                  : "#ffd700"
+              }
+              transparent
+              opacity={0.85}
+              depthWrite={false}
+            />
+          </mesh>
+        )}
 
-      <primitive
-        object={model}
-        dispose={null}
-      />
+        <primitive
+          object={model}
+          dispose={null}
+        />
+      </group>
 
       <Billboard
         position={[
@@ -1155,10 +1491,17 @@ export function PlayerModel3D({
         ]}
       >
         <mesh
-          position={[0, 0, -0.01]}
+          position={[
+            0,
+            0,
+            -0.01,
+          ]}
         >
           <planeGeometry
-            args={[0.98, 0.24]}
+            args={[
+              0.98,
+              0.24,
+            ]}
           />
 
           <meshBasicMaterial
@@ -1212,7 +1555,10 @@ export function PlayerModel3D({
         >
           <mesh>
             <planeGeometry
-              args={[0.32, 0.18]}
+              args={[
+                0.32,
+                0.18,
+              ]}
             />
 
             <meshBasicMaterial
