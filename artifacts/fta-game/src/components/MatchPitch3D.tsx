@@ -1253,15 +1253,10 @@ function CommandArrows({
           command.followUp
             .targetPosition
         ) {
-          const passEnd =
-            pitchToWorld(
-              command.targetPosition,
-            );
-
           addArrow(
             [
-              passEnd.x,
-              passEnd.z,
+              playerWorld.x,
+              playerWorld.z,
             ],
             command.followUp
               .targetPosition,
@@ -1920,6 +1915,52 @@ export default function MatchPitch3D({
                     pitchToWorld(
                       player.position,
                     );
+                  const pendingCommand =
+                    pendingCommands.get(
+                      player.id,
+                    );
+
+                  let facing:
+                    number | undefined;
+
+                  if (
+                    pendingCommand
+                      ?.targetPosition
+                  ) {
+                    const targetWorld =
+                      pitchToWorld(
+                        pendingCommand.targetPosition,
+                      );
+
+                    facing = Math.atan2(
+                      targetWorld.x -
+                        worldPosition.x,
+                      targetWorld.z -
+                        worldPosition.z,
+                    );
+                  } else if (
+                    player.state ===
+                    "SHOOTING"
+                  ) {
+                    const goalPosition =
+                      pitchToWorld({
+                        x:
+                          player.teamId ===
+                          "player"
+                            ? PITCH_WIDTH
+                            : 0,
+                        y:
+                          PITCH_HEIGHT /
+                          2,
+                      });
+
+                    facing = Math.atan2(
+                      goalPosition.x -
+                        worldPosition.x,
+                      goalPosition.z -
+                        worldPosition.z,
+                    );
+                  }
 
                   return (
                     <PlayerModel3D
