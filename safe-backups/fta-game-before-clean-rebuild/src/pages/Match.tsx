@@ -167,7 +167,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const phaseRef = useRef<"planning" | "simulating" | "finished">("planning");
   const playersRef = useRef(players);
   const ballRef = useRef(ball);
-  const pendingCommandsRef = useRef(pendingCommands);
+  const pendingCommand =sRef = useRef(pendingCommands);
   // Tracks where the AI conceded goals this match so it can adapt its defensive shape
   const adaptiveAIRef = useRef<AdaptiveAIState>({ concededRows: [] });
 

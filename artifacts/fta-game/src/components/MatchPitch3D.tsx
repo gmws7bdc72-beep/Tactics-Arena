@@ -58,7 +58,7 @@ const PITCH_WORLD_HEIGHT =
  * The whole gameplay scene uses this one rotation:
  * pitch, goals, players, ball, tiles, and command arrows.
  */
-const MOBILE_SCENE_ROTATION_DEG = -82;
+const MOBILE_SCENE_ROTATION_DEG = 98;
 const MOBILE_SCENE_ROTATION =
   THREE.MathUtils.degToRad(
     MOBILE_SCENE_ROTATION_DEG,
@@ -1915,6 +1915,7 @@ export default function MatchPitch3D({
                     pitchToWorld(
                       player.position,
                     );
+
                   const pendingCommand =
                     pendingCommands.get(
                       player.id,
@@ -1923,45 +1924,46 @@ export default function MatchPitch3D({
                   let facing:
                     number | undefined;
 
+                  let facingTarget:
+                    Vec2 | undefined;
+
                   if (
                     pendingCommand
                       ?.targetPosition
                   ) {
-                    const targetWorld =
-                      pitchToWorld(
-                        pendingCommand.targetPosition,
-                      );
-
-                    facing = Math.atan2(
-                      targetWorld.x -
-                        worldPosition.x,
-                      targetWorld.z -
-                        worldPosition.z,
-                    );
+                    facingTarget =
+                      pendingCommand.targetPosition;
                   } else if (
                     player.state ===
                     "SHOOTING"
                   ) {
-                    const goalPosition =
-                      pitchToWorld({
-                        x:
-                          player.teamId ===
-                          "player"
-                            ? PITCH_WIDTH
-                            : 0,
-                        y:
-                          PITCH_HEIGHT /
-                          2,
-                      });
-
-                    facing = Math.atan2(
-                      goalPosition.x -
-                        worldPosition.x,
-                      goalPosition.z -
-                        worldPosition.z,
-                    );
+                    facingTarget = {
+                      x:
+                        player.teamId ===
+                        "player"
+                          ? PITCH_WIDTH
+                          : 0,
+                      y:
+                        PITCH_HEIGHT / 2,
+                    };
                   }
 
+                  if (facingTarget) {
+                    const targetWorld =
+                      pitchToWorld(
+                        facingTarget,
+                      );
+
+                    facing =
+                      Math.atan2(
+                        targetWorld.x -
+                          worldPosition.x,
+                        targetWorld.z -
+                          worldPosition.z,
+                      );
+                  }
+                  
+                    
                   return (
                     <PlayerModel3D
                       key={
@@ -2008,7 +2010,9 @@ export default function MatchPitch3D({
                         player.offside
                       }
                       playerState={
-                        player.state
+                        phase === "simulating"
+                          ? player.state
+                          : "IDLE"
                       }
                     />
                   );
