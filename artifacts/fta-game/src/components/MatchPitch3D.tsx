@@ -1,32 +1,100 @@
-import { useMemo, useCallback, useEffect } from "react";
-import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
+import {
+  Canvas,
+  useThree,
+  type ThreeEvent,
+} from "@react-three/fiber";
 import * as THREE from "three";
-import type { FrameSnapshot, TeamConfig, Vec2, Command } from "../engine/types";
+import type {
+  Command,
+  FrameSnapshot,
+  TeamConfig,
+  Vec2,
+} from "../engine/types";
 import { CommandType } from "../engine/types";
 import {
-  PITCH_WIDTH,
-  PITCH_HEIGHT,
-  GOAL_WIDTH,
   GOAL_TOP_Y,
-  PENALTY_AREA_WIDTH,
-  PENALTY_AREA_HEIGHT,
-  TILE_W,
-  TILE_H,
+  GOAL_WIDTH,
   GRID_COLS,
   GRID_ROWS,
+  PENALTY_AREA_HEIGHT,
+  PENALTY_AREA_WIDTH,
+  PITCH_HEIGHT,
+  PITCH_WIDTH,
+  TILE_H,
+  TILE_W,
 } from "../engine/constants";
-import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
+import {
+  getReachableTiles,
+  posToTile,
+  tileToPos,
+} from "../engine/grid";
 import { PlayerModel3D } from "./three/PlayerModel3D";
 import { Ball3D } from "./three/Ball3D";
 
-// World units per pitch pixel. Pitch is 744x460px -> ~18.6 x 11.5 world units.
+/*
+ * The match engine stores positions in pitch pixels.
+ * Three.js uses smaller world units.
+ */
 const SCALE = 1 / 40;
 
-// More 2.5D-ish mobile-friendly view:
-// - less top-down
-// - more yaw to the right
-const TILT_DEG = 50;
-const AZIMUTH_DEG = 32;
+const PITCH_WORLD_WIDTH =
+  PITCH_WIDTH * SCALE;
+
+const PITCH_WORLD_HEIGHT =
+  PITCH_HEIGHT * SCALE;
+
+/*
+ * Mobile orientation:
+ *
+ * -90 degrees would make the long pitch axis perfectly vertical.
+ * -82 degrees leaves a slight lean toward the right.
+ *
+ * The whole gameplay scene uses this one rotation:
+ * pitch, goals, players, ball, tiles, and command arrows.
+ */
+const MOBILE_SCENE_ROTATION_DEG = -82;
+const MOBILE_SCENE_ROTATION =
+  THREE.MathUtils.degToRad(
+    MOBILE_SCENE_ROTATION_DEG,
+  );
+
+/*
+ * Camera elevation is measured upward from the ground.
+ *
+ * Smaller = lower, more dramatic sideline-like angle.
+ * Larger = more top-down.
+ *
+ * The old camera was too top-down. Mobile is now lower.
+ */
+const MOBILE_CAMERA_ELEVATION_DEG = 36;
+const DESKTOP_CAMERA_ELEVATION_DEG = 42;
+
+/*
+ * A small horizontal camera offset gives the view additional yaw
+ * without turning the pitch into a strong diagonal.
+ */
+const MOBILE_CAMERA_AZIMUTH_DEG = 10;
+const DESKTOP_CAMERA_AZIMUTH_DEG = 12;
+
+const CAMERA_DISTANCE = 24;
+const CAMERA_TARGET_HEIGHT = 0.32;
+
+const MOBILE_CAMERA_PADDING_X = 1.08;
+const MOBILE_CAMERA_PADDING_Y = 1.06;
+
+const DESKTOP_CAMERA_PADDING_X = 1.1;
+const DESKTOP_CAMERA_PADDING_Y = 1.12;
+
+/*
+ * Include the players and labels when calculating the camera fit.
+ */
+const PLAYER_SCENE_HEIGHT = 2.35;
 
 interface Props {
   frame: FrameSnapshot | null;
@@ -37,11 +105,22 @@ interface Props {
   selectedPlayerId: string | null;
   passTargetMode: boolean;
   passOriginPos?: Vec2;
-  phase: "planning" | "simulating" | "finished";
+  phase:
+    | "planning"
+    | "simulating"
+    | "finished";
   isVertical?: boolean;
-  activePlanningTeam?: "player" | "ai";
-  onPlayerClick: (playerId: string, pos: Vec2) => void;
-  onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
+  activePlanningTeam?:
+    | "player"
+    | "ai";
+  onPlayerClick: (
+    playerId: string,
+    position: Vec2,
+  ) => void;
+  onTileClick: (
+    position: Vec2,
+    isEnemyTile: boolean,
+  ) => void;
 }
 
 type TileState =
@@ -51,201 +130,12 @@ type TileState =
   | "current"
   | "none";
 
-function pitchToWorld(
-  p: Vec2,
-  isVertical: boolean,
-): { x: number; z: number } {
-  const b = isVertical
-    ? { x: p.y, y: PITCH_WIDTH - p.x }
-    : { x: p.x, y: p.y };
-
-  const baseW = isVertical ? PITCH_HEIGHT : PITCH_WIDTH;
-  const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
-
-  return {
-    x: (b.x - baseW / 2) * SCALE,
-    z: (b.y - baseH / 2) * SCALE,
-  };
-}
-
-function worldToPitch(
-  x: number,
-  z: number,
-  isVertical: boolean,
-): Vec2 {
-  const baseW = isVertical ? PITCH_HEIGHT : PITCH_WIDTH;
-  const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
-  const bx = x / SCALE + baseW / 2;
-  const by = z / SCALE + baseH / 2;
-
-  const pitch = isVertical
-    ? { x: PITCH_WIDTH - by, y: bx }
-    : { x: bx, y: by };
-
-  return {
-    x: Math.max(0, Math.min(PITCH_WIDTH - 1, pitch.x)),
-    y: Math.max(0, Math.min(PITCH_HEIGHT - 1, pitch.y)),
-  };
-}
-
-const pitchW = PITCH_WIDTH * SCALE;
-const pitchH = PITCH_HEIGHT * SCALE;
-const PLAYER_HEIGHT_APPROX = 1.7;
-
-function ResponsiveCamera() {
-  const { camera, size } = useThree();
-
-  useEffect(() => {
-    const ortho = camera as THREE.OrthographicCamera;
-    const tilt = (TILT_DEG * Math.PI) / 180;
-    const azimuth = (AZIMUTH_DEG * Math.PI) / 180;
-
-    const targetDepth =
-      pitchH * Math.cos(tilt) +
-      PLAYER_HEIGHT_APPROX * Math.sin(tilt) * 1.35;
-
-    const padFactor = 1.1;
-
-    const zoomForWidth = size.width / (pitchW * padFactor);
-    const zoomForHeight = size.height / (targetDepth * padFactor);
-    ortho.zoom = Math.min(zoomForWidth, zoomForHeight);
-
-    const dist = 18;
-
-    ortho.position.set(
-      Math.sin(azimuth) * dist,
-      Math.sin(tilt) * dist,
-      Math.cos(azimuth) * dist,
-    );
-
-    // Slightly bias the look target downward so the pitch sits better in portrait.
-    ortho.lookAt(0, 0, pitchH * 0.06);
-    ortho.updateProjectionMatrix();
-  }, [camera, size]);
-
-  return null;
-}
-
-function createPitchTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = PITCH_WIDTH;
-  canvas.height = PITCH_HEIGHT;
-  const ctx = canvas.getContext("2d")!;
-
-  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grad.addColorStop(0, "#416e31");
-  grad.addColorStop(0.5, "#547f36");
-  grad.addColorStop(1, "#355a29");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  for (let col = 0; col < GRID_COLS; col++) {
-    ctx.fillStyle =
-      col % 2 === 0
-        ? "rgba(255,255,255,0.045)"
-        : "rgba(0,0,0,0.035)";
-    ctx.fillRect(col * TILE_W, 0, TILE_W, canvas.height);
-  }
-
-  ctx.strokeStyle = "rgba(255,255,255,0.78)";
-  ctx.lineWidth = 2.2;
-  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-
-  ctx.beginPath();
-  ctx.moveTo(PITCH_WIDTH / 2, 0);
-  ctx.lineTo(PITCH_WIDTH / 2, canvas.height);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(PITCH_WIDTH / 2, PITCH_HEIGHT / 2, 55, 0, Math.PI * 2);
-  ctx.stroke();
-
-  const paY = (PITCH_HEIGHT - PENALTY_AREA_HEIGHT) / 2;
-  ctx.strokeRect(
-    0,
-    paY,
-    PENALTY_AREA_WIDTH,
-    PENALTY_AREA_HEIGHT,
-  );
-  ctx.strokeRect(
-    PITCH_WIDTH - PENALTY_AREA_WIDTH,
-    paY,
-    PENALTY_AREA_WIDTH,
-    PENALTY_AREA_HEIGHT,
-  );
-
-  ctx.save();
-  ctx.setLineDash([7, 5]);
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 1.2;
-
-  ctx.beginPath();
-  ctx.moveTo(PITCH_WIDTH / 3, 0);
-  ctx.lineTo(PITCH_WIDTH / 3, canvas.height);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo((2 * PITCH_WIDTH) / 3, 0);
-  ctx.lineTo((2 * PITCH_WIDTH) / 3, canvas.height);
-  ctx.stroke();
-  ctx.restore();
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  tex.minFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-  return tex;
-}
-
-function GoalFrame({
-  atRightEnd,
-}: {
-  atRightEnd: boolean;
-}) {
-  const goalTop = pitchToWorld(
-    { x: 0, y: GOAL_TOP_Y },
-    false,
-  ).z;
-  const goalBottom = pitchToWorld(
-    { x: 0, y: GOAL_TOP_Y + GOAL_WIDTH },
-    false,
-  ).z;
-  const postHeight = 0.9;
-  const x = atRightEnd ? pitchW / 2 + 0.05 : -pitchW / 2 - 0.05;
-
-  return (
-    <group>
-      {[goalTop, goalBottom].map((z) => (
-        <mesh
-          key={z}
-          position={[x, postHeight / 2, z]}
-          castShadow
-        >
-          <cylinderGeometry
-            args={[0.035, 0.035, postHeight, 10]}
-          />
-          <meshStandardMaterial
-            color="#f5f5f5"
-            roughness={0.4}
-          />
-        </mesh>
-      ))}
-
-      <mesh
-        position={[x, postHeight, (goalTop + goalBottom) / 2]}
-        rotation={[Math.PI / 2, 0, 0]}
-        castShadow
-      >
-        <cylinderGeometry
-          args={[0.035, 0.035, Math.abs(goalBottom - goalTop), 10]}
-        />
-        <meshStandardMaterial
-          color="#f5f5f5"
-          roughness={0.4}
-        />
-      </mesh>
-    </group>
-  );
+interface ArrowDefinition {
+  key: string;
+  from: [number, number];
+  to: [number, number];
+  color: string;
+  arced: boolean;
 }
 
 const TILE_COLORS: Record<
@@ -253,29 +143,806 @@ const TILE_COLORS: Record<
   string
 > = {
   current: "#5fe0ff",
-  reachable: "#7CFC9A",
+  reachable: "#7cfc9a",
   "reachable-friendly": "#b4b4b4",
   "reachable-enemy": "#ff6000",
 };
 
-const GOALKEEPER_CHARACTER_INDEX: 0 | 1 | 2 = 2;
-const OUTFIELD_CHARACTER_INDICES: (0 | 1 | 2)[] = (
-  [0, 1, 2] as const
-).filter(
-  (i) => i !== GOALKEEPER_CHARACTER_INDEX,
-) as (0 | 1 | 2)[];
+/*
+ * Model index 2 is reserved for goalkeepers.
+ * Outfield players only use models 0 and 1.
+ */
+const GOALKEEPER_CHARACTER_INDEX:
+  | 0
+  | 1
+  | 2 = 2;
 
-function characterIndexFor(p: {
+const OUTFIELD_CHARACTER_INDICES: Array<
+  0 | 1 | 2
+> = [0, 1];
+
+function clamp(
+  value: number,
+  minimum: number,
+  maximum: number,
+): number {
+  return Math.max(
+    minimum,
+    Math.min(maximum, value),
+  );
+}
+
+/*
+ * All engine coordinates are converted to one normal landscape pitch.
+ *
+ * Mobile orientation is applied afterward by rotating one shared group.
+ * This prevents the pitch and players from using different transforms.
+ */
+function pitchToWorld(
+  position: Vec2,
+): {
+  x: number;
+  z: number;
+} {
+  return {
+    x:
+      (position.x -
+        PITCH_WIDTH / 2) *
+      SCALE,
+    z:
+      (position.y -
+        PITCH_HEIGHT / 2) *
+      SCALE,
+  };
+}
+
+function worldToPitch(
+  worldX: number,
+  worldZ: number,
+): Vec2 {
+  return {
+    x: clamp(
+      worldX / SCALE +
+        PITCH_WIDTH / 2,
+      0,
+      PITCH_WIDTH - 1,
+    ),
+    y: clamp(
+      worldZ / SCALE +
+        PITCH_HEIGHT / 2,
+      0,
+      PITCH_HEIGHT - 1,
+    ),
+  };
+}
+
+function inverseRotateXZ(
+  worldX: number,
+  worldZ: number,
+  angle: number,
+): {
+  x: number;
+  z: number;
+} {
+  const cosine =
+    Math.cos(angle);
+
+  const sine =
+    Math.sin(angle);
+
+  return {
+    x:
+      worldX * cosine -
+      worldZ * sine,
+    z:
+      worldX * sine +
+      worldZ * cosine,
+  };
+}
+
+function characterIndexFor(player: {
   role: string;
   jerseyNumber: number;
 }): 0 | 1 | 2 {
-  if (p.role === "goalkeeper") {
+  if (
+    player.role ===
+    "goalkeeper"
+  ) {
     return GOALKEEPER_CHARACTER_INDEX;
   }
 
+  const index =
+    Math.abs(
+      player.jerseyNumber,
+    ) %
+    OUTFIELD_CHARACTER_INDICES.length;
+
   return OUTFIELD_CHARACTER_INDICES[
-    p.jerseyNumber % OUTFIELD_CHARACTER_INDICES.length
+    index
   ];
+}
+
+/*
+ * Responsive orthographic camera.
+ *
+ * Rather than guessing a zoom value, this projects the corners of the
+ * rotated pitch into the camera's right/up coordinate system and fits the
+ * complete scene to the available screen.
+ */
+function ResponsiveCamera({
+  isVertical,
+}: {
+  isVertical: boolean;
+}) {
+  const {
+    camera,
+    size,
+  } = useThree();
+
+  useEffect(() => {
+    const orthographicCamera =
+      camera as
+        THREE.OrthographicCamera;
+
+    const elevationDegrees =
+      isVertical
+        ? MOBILE_CAMERA_ELEVATION_DEG
+        : DESKTOP_CAMERA_ELEVATION_DEG;
+
+    const azimuthDegrees =
+      isVertical
+        ? MOBILE_CAMERA_AZIMUTH_DEG
+        : DESKTOP_CAMERA_AZIMUTH_DEG;
+
+    const elevation =
+      THREE.MathUtils.degToRad(
+        elevationDegrees,
+      );
+
+    const azimuth =
+      THREE.MathUtils.degToRad(
+        azimuthDegrees,
+      );
+
+    const horizontalDistance =
+      Math.cos(elevation) *
+      CAMERA_DISTANCE;
+
+    const cameraHeight =
+      Math.sin(elevation) *
+      CAMERA_DISTANCE;
+
+    orthographicCamera.position.set(
+      Math.sin(azimuth) *
+        horizontalDistance,
+      cameraHeight,
+      Math.cos(azimuth) *
+        horizontalDistance,
+    );
+
+    const target =
+      new THREE.Vector3(
+        0,
+        CAMERA_TARGET_HEIGHT,
+        0,
+      );
+
+    orthographicCamera.lookAt(
+      target,
+    );
+
+    orthographicCamera.near =
+      0.1;
+
+    orthographicCamera.far =
+      120;
+
+    orthographicCamera.updateMatrixWorld(
+      true,
+    );
+
+    const sceneRotation =
+      isVertical
+        ? MOBILE_SCENE_ROTATION
+        : 0;
+
+    const forward =
+      target
+        .clone()
+        .sub(
+          orthographicCamera.position,
+        )
+        .normalize();
+
+    const worldUp =
+      new THREE.Vector3(
+        0,
+        1,
+        0,
+      );
+
+    const cameraRight =
+      new THREE.Vector3()
+        .crossVectors(
+          forward,
+          worldUp,
+        )
+        .normalize();
+
+    const cameraUp =
+      new THREE.Vector3()
+        .crossVectors(
+          cameraRight,
+          forward,
+        )
+        .normalize();
+
+    const halfPitchWidth =
+      PITCH_WORLD_WIDTH / 2;
+
+    const halfPitchHeight =
+      PITCH_WORLD_HEIGHT / 2;
+
+    const localCorners = [
+      new THREE.Vector3(
+        -halfPitchWidth,
+        0,
+        -halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        halfPitchWidth,
+        0,
+        -halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        halfPitchWidth,
+        0,
+        halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        -halfPitchWidth,
+        0,
+        halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        -halfPitchWidth,
+        PLAYER_SCENE_HEIGHT,
+        -halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        halfPitchWidth,
+        PLAYER_SCENE_HEIGHT,
+        -halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        halfPitchWidth,
+        PLAYER_SCENE_HEIGHT,
+        halfPitchHeight,
+      ),
+      new THREE.Vector3(
+        -halfPitchWidth,
+        PLAYER_SCENE_HEIGHT,
+        halfPitchHeight,
+      ),
+    ];
+
+    const sceneRotationMatrix =
+      new THREE.Matrix4()
+        .makeRotationY(
+          sceneRotation,
+        );
+
+    let minimumViewX =
+      Infinity;
+
+    let maximumViewX =
+      -Infinity;
+
+    let minimumViewY =
+      Infinity;
+
+    let maximumViewY =
+      -Infinity;
+
+    for (
+      const localCorner of
+      localCorners
+    ) {
+      const worldCorner =
+        localCorner
+          .clone()
+          .applyMatrix4(
+            sceneRotationMatrix,
+          );
+
+      const relative =
+        worldCorner
+          .clone()
+          .sub(target);
+
+      const viewX =
+        relative.dot(
+          cameraRight,
+        );
+
+      const viewY =
+        relative.dot(
+          cameraUp,
+        );
+
+      minimumViewX =
+        Math.min(
+          minimumViewX,
+          viewX,
+        );
+
+      maximumViewX =
+        Math.max(
+          maximumViewX,
+          viewX,
+        );
+
+      minimumViewY =
+        Math.min(
+          minimumViewY,
+          viewY,
+        );
+
+      maximumViewY =
+        Math.max(
+          maximumViewY,
+          viewY,
+        );
+    }
+
+    const projectedWidth =
+      Math.max(
+        0.1,
+        maximumViewX -
+          minimumViewX,
+      );
+
+    const projectedHeight =
+      Math.max(
+        0.1,
+        maximumViewY -
+          minimumViewY,
+      );
+
+    const horizontalPadding =
+      isVertical
+        ? MOBILE_CAMERA_PADDING_X
+        : DESKTOP_CAMERA_PADDING_X;
+
+    const verticalPadding =
+      isVertical
+        ? MOBILE_CAMERA_PADDING_Y
+        : DESKTOP_CAMERA_PADDING_Y;
+
+    const zoomForWidth =
+      size.width /
+      (projectedWidth *
+        horizontalPadding);
+
+    const zoomForHeight =
+      size.height /
+      (projectedHeight *
+        verticalPadding);
+
+    const calculatedZoom =
+      Math.min(
+        zoomForWidth,
+        zoomForHeight,
+      );
+
+    orthographicCamera.zoom =
+      clamp(
+        calculatedZoom,
+        18,
+        115,
+      );
+
+    orthographicCamera.updateProjectionMatrix();
+  }, [
+    camera,
+    size.width,
+    size.height,
+    isVertical,
+  ]);
+
+  return null;
+}
+
+function createPitchTexture(): THREE.CanvasTexture {
+  const canvas =
+    document.createElement(
+      "canvas",
+    );
+
+  canvas.width =
+    PITCH_WIDTH;
+
+  canvas.height =
+    PITCH_HEIGHT;
+
+  const context =
+    canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error(
+      "MatchPitch3D could not create the pitch texture.",
+    );
+  }
+
+  const grassGradient =
+    context.createLinearGradient(
+      0,
+      0,
+      0,
+      canvas.height,
+    );
+
+  grassGradient.addColorStop(
+    0,
+    "#416e31",
+  );
+
+  grassGradient.addColorStop(
+    0.5,
+    "#547f36",
+  );
+
+  grassGradient.addColorStop(
+    1,
+    "#355a29",
+  );
+
+  context.fillStyle =
+    grassGradient;
+
+  context.fillRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  /*
+   * Alternating mowing stripes.
+   */
+  for (
+    let column = 0;
+    column < GRID_COLS;
+    column += 1
+  ) {
+    context.fillStyle =
+      column % 2 === 0
+        ? "rgba(255,255,255,0.05)"
+        : "rgba(0,0,0,0.04)";
+
+    context.fillRect(
+      column * TILE_W,
+      0,
+      TILE_W,
+      canvas.height,
+    );
+  }
+
+  /*
+   * Light texture so the grass is not completely flat.
+   */
+  context.save();
+  context.globalAlpha =
+    0.11;
+
+  for (
+    let index = 0;
+    index < 190;
+    index += 1
+  ) {
+    const x =
+      (index * 193) %
+      PITCH_WIDTH;
+
+    const y =
+      (index * 97) %
+      PITCH_HEIGHT;
+
+    context.fillStyle =
+      index % 3 === 0
+        ? "rgba(255,235,175,0.34)"
+        : "rgba(25,20,10,0.25)";
+
+    context.fillRect(
+      x,
+      y,
+      1.15,
+      1.15,
+    );
+  }
+
+  context.restore();
+
+  const whiteLine =
+    "rgba(255,255,255,0.84)";
+
+  context.strokeStyle =
+    whiteLine;
+
+  context.lineWidth =
+    2.2;
+
+  /*
+   * Pitch boundary.
+   */
+  context.strokeRect(
+    1,
+    1,
+    canvas.width - 2,
+    canvas.height - 2,
+  );
+
+  /*
+   * Halfway line.
+   */
+  context.beginPath();
+
+  context.moveTo(
+    PITCH_WIDTH / 2,
+    0,
+  );
+
+  context.lineTo(
+    PITCH_WIDTH / 2,
+    PITCH_HEIGHT,
+  );
+
+  context.stroke();
+
+  /*
+   * Center circle.
+   */
+  context.beginPath();
+
+  context.arc(
+    PITCH_WIDTH / 2,
+    PITCH_HEIGHT / 2,
+    55,
+    0,
+    Math.PI * 2,
+  );
+
+  context.stroke();
+
+  /*
+   * Center spot.
+   */
+  context.beginPath();
+
+  context.arc(
+    PITCH_WIDTH / 2,
+    PITCH_HEIGHT / 2,
+    4,
+    0,
+    Math.PI * 2,
+  );
+
+  context.fillStyle =
+    "rgba(255,255,255,0.92)";
+
+  context.fill();
+
+  /*
+   * Penalty areas.
+   */
+  const penaltyAreaTop =
+    (PITCH_HEIGHT -
+      PENALTY_AREA_HEIGHT) /
+    2;
+
+  context.strokeRect(
+    0,
+    penaltyAreaTop,
+    PENALTY_AREA_WIDTH,
+    PENALTY_AREA_HEIGHT,
+  );
+
+  context.strokeRect(
+    PITCH_WIDTH -
+      PENALTY_AREA_WIDTH,
+    penaltyAreaTop,
+    PENALTY_AREA_WIDTH,
+    PENALTY_AREA_HEIGHT,
+  );
+
+  /*
+   * Tactical thirds.
+   */
+  context.save();
+
+  context.setLineDash(
+    [7, 5],
+  );
+
+  context.strokeStyle =
+    "rgba(255,255,255,0.34)";
+
+  context.lineWidth =
+    1.2;
+
+  context.beginPath();
+
+  context.moveTo(
+    PITCH_WIDTH / 3,
+    0,
+  );
+
+  context.lineTo(
+    PITCH_WIDTH / 3,
+    PITCH_HEIGHT,
+  );
+
+  context.stroke();
+
+  context.beginPath();
+
+  context.moveTo(
+    (2 * PITCH_WIDTH) / 3,
+    0,
+  );
+
+  context.lineTo(
+    (2 * PITCH_WIDTH) / 3,
+    PITCH_HEIGHT,
+  );
+
+  context.stroke();
+
+  context.restore();
+
+  const texture =
+    new THREE.CanvasTexture(
+      canvas,
+    );
+
+  texture.colorSpace =
+    THREE.SRGBColorSpace;
+
+  texture.minFilter =
+    THREE.LinearFilter;
+
+  texture.magFilter =
+    THREE.LinearFilter;
+
+  texture.generateMipmaps =
+    false;
+
+  texture.needsUpdate =
+    true;
+
+  return texture;
+}
+
+function GoalFrame({
+  atRightEnd,
+}: {
+  atRightEnd: boolean;
+}) {
+  const goalTop =
+    (GOAL_TOP_Y -
+      PITCH_HEIGHT / 2) *
+    SCALE;
+
+  const goalBottom =
+    (GOAL_TOP_Y +
+      GOAL_WIDTH -
+      PITCH_HEIGHT / 2) *
+    SCALE;
+
+  const postHeight =
+    0.9;
+
+  const postRadius =
+    0.035;
+
+  const goalX =
+    atRightEnd
+      ? PITCH_WORLD_WIDTH / 2 +
+        0.05
+      : -PITCH_WORLD_WIDTH / 2 -
+        0.05;
+
+  const goalCenterZ =
+    (goalTop +
+      goalBottom) /
+    2;
+
+  const crossbarLength =
+    Math.abs(
+      goalBottom -
+        goalTop,
+    );
+
+  return (
+    <group>
+      <mesh
+        position={[
+          goalX,
+          postHeight / 2,
+          goalTop,
+        ]}
+        castShadow
+      >
+        <cylinderGeometry
+          args={[
+            postRadius,
+            postRadius,
+            postHeight,
+            10,
+          ]}
+        />
+
+        <meshStandardMaterial
+          color="#f5f5f5"
+          roughness={0.4}
+          metalness={0}
+        />
+      </mesh>
+
+      <mesh
+        position={[
+          goalX,
+          postHeight / 2,
+          goalBottom,
+        ]}
+        castShadow
+      >
+        <cylinderGeometry
+          args={[
+            postRadius,
+            postRadius,
+            postHeight,
+            10,
+          ]}
+        />
+
+        <meshStandardMaterial
+          color="#f5f5f5"
+          roughness={0.4}
+          metalness={0}
+        />
+      </mesh>
+
+      <mesh
+        position={[
+          goalX,
+          postHeight,
+          goalCenterZ,
+        ]}
+        rotation={[
+          Math.PI / 2,
+          0,
+          0,
+        ]}
+        castShadow
+      >
+        <cylinderGeometry
+          args={[
+            postRadius,
+            postRadius,
+            crossbarLength,
+            10,
+          ]}
+        />
+
+        <meshStandardMaterial
+          color="#f5f5f5"
+          roughness={0.4}
+          metalness={0}
+        />
+      </mesh>
+    </group>
+  );
 }
 
 function Arrow3D({
@@ -289,67 +956,174 @@ function Arrow3D({
   color: string;
   arced?: boolean;
 }) {
-  const { line, headPos, headQuat } = useMemo(() => {
-    const y = 0.03;
-    const start = new THREE.Vector3(from[0], y, from[1]);
-    const end = new THREE.Vector3(to[0], y, to[1]);
+  const {
+    line,
+    headPosition,
+    headQuaternion,
+  } = useMemo(() => {
+    const lineHeight =
+      0.045;
 
-    let points: THREE.Vector3[];
+    const start =
+      new THREE.Vector3(
+        from[0],
+        lineHeight,
+        from[1],
+      );
+
+    const end =
+      new THREE.Vector3(
+        to[0],
+        lineHeight,
+        to[1],
+      );
+
+    let points:
+      THREE.Vector3[];
 
     if (arced) {
-      const mid = new THREE.Vector3(
-        (start.x + end.x) / 2,
-        y + 0.5,
-        (start.z + end.z) / 2,
-      );
-      const curve = new THREE.QuadraticBezierCurve3(
-        start,
-        mid,
-        end,
-      );
-      points = curve.getPoints(20);
+      const midpoint =
+        new THREE.Vector3(
+          (start.x +
+            end.x) /
+            2,
+          lineHeight +
+            0.55,
+          (start.z +
+            end.z) /
+            2,
+        );
+
+      const curve =
+        new THREE.QuadraticBezierCurve3(
+          start,
+          midpoint,
+          end,
+        );
+
+      points =
+        curve.getPoints(
+          22,
+        );
     } else {
-      points = [start, end];
+      points = [
+        start,
+        end,
+      ];
     }
 
-    const geo = new THREE.BufferGeometry().setFromPoints(points);
-    const mat = new THREE.LineDashedMaterial({
-      color,
-      dashSize: 0.15,
-      gapSize: 0.1,
-      transparent: true,
-      opacity: 0.85,
-    });
+    const geometry =
+      new THREE.BufferGeometry()
+        .setFromPoints(
+          points,
+        );
 
-    const lineObj = new THREE.Line(geo, mat);
-    lineObj.computeLineDistances();
+    const material =
+      new THREE.LineDashedMaterial({
+        color,
+        dashSize: 0.15,
+        gapSize: 0.1,
+        transparent: true,
+        opacity: 0.88,
+      });
 
-    const tangent = points[points.length - 1]
-      .clone()
-      .sub(points[points.length - 2])
-      .normalize();
+    const lineObject =
+      new THREE.Line(
+        geometry,
+        material,
+      );
 
-    const quat = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      tangent,
-    );
+    lineObject.computeLineDistances();
+
+    const tangent =
+      points[
+        points.length - 1
+      ]
+        .clone()
+        .sub(
+          points[
+            points.length - 2
+          ],
+        )
+        .normalize();
+
+    const quaternion =
+      new THREE.Quaternion()
+        .setFromUnitVectors(
+          new THREE.Vector3(
+            0,
+            1,
+            0,
+          ),
+          tangent,
+        );
 
     return {
-      line: lineObj,
-      headPos: end,
-      headQuat: quat,
+      line: lineObject,
+      headPosition: end,
+      headQuaternion:
+        quaternion,
     };
-  }, [from, to, color, arced]);
+  }, [
+    from[0],
+    from[1],
+    to[0],
+    to[1],
+    color,
+    arced,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      line.geometry.dispose();
+
+      if (
+        Array.isArray(
+          line.material,
+        )
+      ) {
+        for (
+          const material of
+          line.material
+        ) {
+          material.dispose();
+        }
+      } else {
+        line.material.dispose();
+      }
+    };
+  }, [line]);
 
   return (
     <group>
-      <primitive object={line} />
-      <mesh position={headPos} quaternion={headQuat}>
-        <coneGeometry args={[0.09, 0.22, 12]} />
+      <primitive
+        object={line}
+        dispose={null}
+      />
+
+      <mesh
+        position={
+          headPosition
+        }
+        quaternion={
+          headQuaternion
+        }
+      >
+        <coneGeometry
+          args={[
+            0.09,
+            0.22,
+            12,
+          ]}
+        />
+
         <meshBasicMaterial
           color={color}
           transparent
-          opacity={0.9}
+          opacity={0.92}
+          depthTest={false}
+          depthWrite={false}
+          toneMapped={false}
         />
       </mesh>
     </group>
@@ -359,114 +1133,184 @@ function Arrow3D({
 function CommandArrows({
   frame,
   pendingCommands,
-  isVertical,
 }: {
   frame: FrameSnapshot;
-  pendingCommands: Map<string, Command>;
-  isVertical: boolean;
+  pendingCommands:
+    Map<string, Command>;
 }) {
-  const arrows: {
-    key: string;
-    from: [number, number];
-    to: [number, number];
-    color: string;
-    arced: boolean;
-  }[] = [];
+  const arrows:
+    ArrowDefinition[] = [];
 
-  pendingCommands.forEach((cmd, playerId) => {
-    const pf = frame.players.find((p) => p.id === playerId);
-    if (!pf) return;
-
-    const fromWorld = pitchToWorld(pf.position, isVertical);
-
-    const push = (
-      fromXZ: [number, number],
-      toPitch: Vec2,
-      color: string,
-      arced: boolean,
-      key: string,
+  pendingCommands.forEach(
+    (
+      command,
+      playerId,
     ) => {
-      const w = pitchToWorld(toPitch, isVertical);
-      arrows.push({
-        key,
-        from: fromXZ,
-        to: [w.x, w.z],
-        color,
-        arced,
-      });
-    };
-
-    if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
-      push(
-        [fromWorld.x, fromWorld.z],
-        cmd.targetPosition,
-        "#00e676",
-        false,
-        `${playerId}-move`,
-      );
-
-      if (
-        cmd.followUp?.type === CommandType.PASS &&
-        cmd.followUp.targetPosition
-      ) {
-        const w = pitchToWorld(cmd.targetPosition, isVertical);
-        push(
-          [w.x, w.z],
-          cmd.followUp.targetPosition,
-          "#ff1744",
-          cmd.followUp.passStyle === "long",
-          `${playerId}-move-pass`,
+      const player =
+        frame.players.find(
+          (candidate) =>
+            candidate.id ===
+            playerId,
         );
-      }
-    } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
-      push(
-        [fromWorld.x, fromWorld.z],
-        cmd.targetPosition,
-        "#ffeb3b",
-        cmd.passStyle === "long",
-        `${playerId}-pass`,
-      );
 
-      if (
-        cmd.followUp?.type === CommandType.MOVE &&
-        cmd.followUp.targetPosition
-      ) {
-        const w = pitchToWorld(cmd.targetPosition, isVertical);
-        push(
-          [w.x, w.z],
-          cmd.followUp.targetPosition,
-          "#ff9800",
-          false,
-          `${playerId}-pass-move`,
-        );
+      if (!player) {
+        return;
       }
-    } else if (cmd.type === CommandType.SHOOT) {
-      const goalPitch: Vec2 = {
-        x: pf.teamId === "player" ? PITCH_WIDTH : 0,
-        y: PITCH_HEIGHT / 2,
+
+      const playerWorld =
+        pitchToWorld(
+          player.position,
+        );
+
+      const addArrow = (
+        from:
+          [number, number],
+        targetPosition: Vec2,
+        color: string,
+        arced: boolean,
+        key: string,
+      ) => {
+        const targetWorld =
+          pitchToWorld(
+            targetPosition,
+          );
+
+        arrows.push({
+          key,
+          from,
+          to: [
+            targetWorld.x,
+            targetWorld.z,
+          ],
+          color,
+          arced,
+        });
       };
 
-      push(
-        [fromWorld.x, fromWorld.z],
-        goalPitch,
-        "#ff6b35",
-        false,
-        `${playerId}-shoot`,
-      );
-    }
-  });
+      if (
+        command.type ===
+          CommandType.MOVE &&
+        command.targetPosition
+      ) {
+        addArrow(
+          [
+            playerWorld.x,
+            playerWorld.z,
+          ],
+          command.targetPosition,
+          "#00e676",
+          false,
+          `${playerId}-move`,
+        );
+
+        if (
+          command.followUp
+            ?.type ===
+            CommandType.PASS &&
+          command.followUp
+            .targetPosition
+        ) {
+          const moveEnd =
+            pitchToWorld(
+              command.targetPosition,
+            );
+
+          addArrow(
+            [
+              moveEnd.x,
+              moveEnd.z,
+            ],
+            command.followUp
+              .targetPosition,
+            "#ff1744",
+            command.followUp
+              .passStyle ===
+              "long",
+            `${playerId}-move-pass`,
+          );
+        }
+      } else if (
+        command.type ===
+          CommandType.PASS &&
+        command.targetPosition
+      ) {
+        addArrow(
+          [
+            playerWorld.x,
+            playerWorld.z,
+          ],
+          command.targetPosition,
+          "#ffeb3b",
+          command.passStyle ===
+            "long",
+          `${playerId}-pass`,
+        );
+
+        if (
+          command.followUp
+            ?.type ===
+            CommandType.MOVE &&
+          command.followUp
+            .targetPosition
+        ) {
+          const passEnd =
+            pitchToWorld(
+              command.targetPosition,
+            );
+
+          addArrow(
+            [
+              passEnd.x,
+              passEnd.z,
+            ],
+            command.followUp
+              .targetPosition,
+            "#ff9800",
+            false,
+            `${playerId}-pass-move`,
+          );
+        }
+      } else if (
+        command.type ===
+        CommandType.SHOOT
+      ) {
+        addArrow(
+          [
+            playerWorld.x,
+            playerWorld.z,
+          ],
+          {
+            x:
+              player.teamId ===
+              "player"
+                ? PITCH_WIDTH
+                : 0,
+            y:
+              PITCH_HEIGHT / 2,
+          },
+          "#ff6b35",
+          false,
+          `${playerId}-shoot`,
+        );
+      }
+    },
+  );
 
   return (
     <>
-      {arrows.map((a) => (
-        <Arrow3D
-          key={a.key}
-          from={a.from}
-          to={a.to}
-          color={a.color}
-          arced={a.arced}
-        />
-      ))}
+      {arrows.map(
+        (arrow) => (
+          <Arrow3D
+            key={arrow.key}
+            from={arrow.from}
+            to={arrow.to}
+            color={arrow.color}
+            arced={
+              arrow.arced
+            }
+          />
+        ),
+      )}
     </>
   );
 }
@@ -485,156 +1329,362 @@ export default function MatchPitch3D({
   onPlayerClick,
   onTileClick,
 }: Props) {
-  const pitchTexture = useMemo(() => createPitchTexture(), []);
-
-  const tileMap = useMemo((): Map<string, TileState> => {
-    const map = new Map<string, TileState>();
-
-    if (!frame || !selectedPlayerId || passTargetMode) {
-      return map;
-    }
-
-    const selPlayer = frame.players.find(
-      (p) => p.id === selectedPlayerId,
+  const pitchTexture =
+    useMemo(
+      () =>
+        createPitchTexture(),
+      [],
     );
 
-    if (!selPlayer) {
-      return map;
-    }
+  useEffect(() => {
+    return () => {
+      pitchTexture.dispose();
+    };
+  }, [pitchTexture]);
 
-    const pt = posToTile(selPlayer.position);
-    const isGK = selPlayer.role === "goalkeeper";
-    map.set(`${pt.col},${pt.row}`, "current");
+  const sceneRotation =
+    isVertical
+      ? MOBILE_SCENE_ROTATION
+      : 0;
 
-    const occupancy = new Map<string, "friendly" | "enemy">();
+  const tileMap =
+    useMemo(() => {
+      const map =
+        new Map<
+          string,
+          TileState
+        >();
 
-    for (const p of frame.players) {
-      if (p.id === selectedPlayerId) continue;
-      const t = posToTile(p.position);
-      occupancy.set(
-        `${t.col},${t.row}`,
-        p.teamId === selPlayer.teamId ? "friendly" : "enemy",
-      );
-    }
-
-    const reachable = getReachableTiles(
-      pt.col,
-      pt.row,
-      selPlayer.tileRange,
-      isGK,
-      selPlayer.teamId,
-    );
-
-    for (const t of reachable) {
-      const key = `${t.col},${t.row}`;
-      const occ = occupancy.get(key);
-
-      if (occ === "friendly") {
-        map.set(key, "reachable-friendly");
-      } else if (occ === "enemy") {
-        map.set(key, "reachable-enemy");
-      } else {
-        map.set(key, "reachable");
+      if (
+        !frame ||
+        !selectedPlayerId ||
+        passTargetMode
+      ) {
+        return map;
       }
-    }
 
-    return map;
-  }, [frame, selectedPlayerId, passTargetMode]);
-
-  const handleGroundClick = useCallback(
-    (e: ThreeEvent<MouseEvent>) => {
-      if (phase !== "planning" || !frame) return;
-      e.stopPropagation();
-
-      const pos = worldToPitch(e.point.x, e.point.z, isVertical);
-      const selectableTeam = activePlanningTeam ?? "player";
-
-      for (const p of frame.players) {
-        const isGK = p.role === "goalkeeper";
-        const hitR = 14 + (isGK ? 4 : 2) + 8;
-        const d = Math.hypot(
-          p.position.x - pos.x,
-          p.position.y - pos.y,
+      const selectedPlayer =
+        frame.players.find(
+          (player) =>
+            player.id ===
+            selectedPlayerId,
         );
 
-        if (d < hitR && p.teamId === selectableTeam) {
-          onPlayerClick(p.id, pos);
-          return;
+      if (!selectedPlayer) {
+        return map;
+      }
+
+      const selectedTile =
+        posToTile(
+          selectedPlayer.position,
+        );
+
+      const isGoalkeeper =
+        selectedPlayer.role ===
+        "goalkeeper";
+
+      map.set(
+        `${selectedTile.col},${selectedTile.row}`,
+        "current",
+      );
+
+      const occupancy =
+        new Map<
+          string,
+          | "friendly"
+          | "enemy"
+        >();
+
+      for (
+        const player of
+        frame.players
+      ) {
+        if (
+          player.id ===
+          selectedPlayerId
+        ) {
+          continue;
+        }
+
+        const tile =
+          posToTile(
+            player.position,
+          );
+
+        occupancy.set(
+          `${tile.col},${tile.row}`,
+          player.teamId ===
+            selectedPlayer.teamId
+            ? "friendly"
+            : "enemy",
+        );
+      }
+
+      const reachable =
+        getReachableTiles(
+          selectedTile.col,
+          selectedTile.row,
+          selectedPlayer.tileRange,
+          isGoalkeeper,
+          selectedPlayer.teamId,
+        );
+
+      for (
+        const tile of
+        reachable
+      ) {
+        const key =
+          `${tile.col},${tile.row}`;
+
+        const occupant =
+          occupancy.get(key);
+
+        if (
+          occupant ===
+          "friendly"
+        ) {
+          map.set(
+            key,
+            "reachable-friendly",
+          );
+        } else if (
+          occupant ===
+          "enemy"
+        ) {
+          map.set(
+            key,
+            "reachable-enemy",
+          );
+        } else {
+          map.set(
+            key,
+            "reachable",
+          );
         }
       }
 
-      if (!selectedPlayerId) return;
-
-      const selPlayer = frame.players.find(
-        (p) => p.id === selectedPlayerId,
-      );
-
-      if (!selPlayer || selPlayer.teamId !== selectableTeam) return;
-
-      const clickedCol = Math.max(
-        0,
-        Math.min(GRID_COLS - 1, Math.floor(pos.x / TILE_W)),
-      );
-
-      const clickedRow = Math.max(
-        0,
-        Math.min(GRID_ROWS - 1, Math.floor(pos.y / TILE_H)),
-      );
-
-      const selTile = posToTile(selPlayer.position);
-
-      if (clickedCol === selTile.col && clickedRow === selTile.row) {
-        return;
-      }
-
-      if (!passTargetMode) {
-        const isGK = selPlayer.role === "goalkeeper";
-        const reachable = getReachableTiles(
-          selTile.col,
-          selTile.row,
-          selPlayer.tileRange,
-          isGK,
-          selPlayer.teamId,
-        );
-
-        const isReachable = reachable.some(
-          (t) => t.col === clickedCol && t.row === clickedRow,
-        );
-
-        if (!isReachable) return;
-      }
-
-      const occupant = frame.players.find((p) => {
-        const t = posToTile(p.position);
-        return t.col === clickedCol && t.row === clickedRow;
-      });
-
-      if (
-        occupant?.teamId === selectableTeam &&
-        occupant.id !== selectedPlayerId
-      ) {
-        return;
-      }
-
-      const isEnemy =
-        occupant?.teamId !== undefined &&
-        occupant.teamId !== selectableTeam;
-
-      onTileClick(tileToPos(clickedCol, clickedRow), isEnemy);
-    },
-    [
-      phase,
+      return map;
+    }, [
       frame,
       selectedPlayerId,
       passTargetMode,
-      activePlanningTeam,
-      isVertical,
-      onPlayerClick,
-      onTileClick,
-    ],
-  );
+    ]);
 
-  if (!frame) return null;
+  const handleGroundClick =
+    useCallback(
+      (
+        event:
+          ThreeEvent<MouseEvent>,
+      ) => {
+        if (
+          phase !==
+            "planning" ||
+          !frame
+        ) {
+          return;
+        }
+
+        event.stopPropagation();
+
+        /*
+         * R3F returns the click in world coordinates.
+         * Undo the shared mobile rotation before converting back to
+         * the engine's pitch coordinates.
+         */
+        const localPoint =
+          inverseRotateXZ(
+            event.point.x,
+            event.point.z,
+            sceneRotation,
+          );
+
+        const clickedPosition =
+          worldToPitch(
+            localPoint.x,
+            localPoint.z,
+          );
+
+        const selectableTeam =
+          activePlanningTeam ??
+          "player";
+
+        for (
+          const player of
+          frame.players
+        ) {
+          const hitRadius =
+            14 +
+            (player.role ===
+            "goalkeeper"
+              ? 4
+              : 2) +
+            8;
+
+          const distance =
+            Math.hypot(
+              player.position.x -
+                clickedPosition.x,
+              player.position.y -
+                clickedPosition.y,
+            );
+
+          if (
+            distance <
+              hitRadius &&
+            player.teamId ===
+              selectableTeam
+          ) {
+            onPlayerClick(
+              player.id,
+              clickedPosition,
+            );
+
+            return;
+          }
+        }
+
+        if (
+          !selectedPlayerId
+        ) {
+          return;
+        }
+
+        const selectedPlayer =
+          frame.players.find(
+            (player) =>
+              player.id ===
+              selectedPlayerId,
+          );
+
+        if (
+          !selectedPlayer ||
+          selectedPlayer.teamId !==
+            selectableTeam
+        ) {
+          return;
+        }
+
+        const clickedColumn =
+          clamp(
+            Math.floor(
+              clickedPosition.x /
+                TILE_W,
+            ),
+            0,
+            GRID_COLS - 1,
+          );
+
+        const clickedRow =
+          clamp(
+            Math.floor(
+              clickedPosition.y /
+                TILE_H,
+            ),
+            0,
+            GRID_ROWS - 1,
+          );
+
+        const selectedTile =
+          posToTile(
+            selectedPlayer.position,
+          );
+
+        if (
+          clickedColumn ===
+            selectedTile.col &&
+          clickedRow ===
+            selectedTile.row
+        ) {
+          return;
+        }
+
+        if (
+          !passTargetMode
+        ) {
+          const reachable =
+            getReachableTiles(
+              selectedTile.col,
+              selectedTile.row,
+              selectedPlayer.tileRange,
+              selectedPlayer.role ===
+                "goalkeeper",
+              selectedPlayer.teamId,
+            );
+
+          const isReachable =
+            reachable.some(
+              (tile) =>
+                tile.col ===
+                  clickedColumn &&
+                tile.row ===
+                  clickedRow,
+            );
+
+          if (!isReachable) {
+            return;
+          }
+        }
+
+        const occupant =
+          frame.players.find(
+            (player) => {
+              const tile =
+                posToTile(
+                  player.position,
+                );
+
+              return (
+                tile.col ===
+                  clickedColumn &&
+                tile.row ===
+                  clickedRow
+              );
+            },
+          );
+
+        if (
+          occupant?.teamId ===
+            selectableTeam &&
+          occupant.id !==
+            selectedPlayerId
+        ) {
+          return;
+        }
+
+        const isEnemy =
+          occupant?.teamId !==
+            undefined &&
+          occupant.teamId !==
+            selectableTeam;
+
+        onTileClick(
+          tileToPos(
+            clickedColumn,
+            clickedRow,
+          ),
+          isEnemy,
+        );
+      },
+      [
+        phase,
+        frame,
+        selectedPlayerId,
+        passTargetMode,
+        activePlanningTeam,
+        sceneRotation,
+        onPlayerClick,
+        onTileClick,
+      ],
+    );
+
+  if (!frame) {
+    return null;
+  }
+
+  const ballWorld =
+    pitchToWorld(
+      frame.ball.position,
+    );
 
   return (
     <div
@@ -642,118 +1692,303 @@ export default function MatchPitch3D({
         width: "100%",
         height: "100%",
         position: "relative",
-        background:
-          "radial-gradient(circle at center, #47754a 0%, #2b4e34 55%, #17301f 100%)",
         overflow: "hidden",
+        background:
+          "radial-gradient(circle at 50% 45%, #47764a 0%, #315d3a 45%, #1d3e29 72%, #11271b 100%)",
       }}
     >
-      <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+        }}
+      >
         <Canvas
           shadows
           orthographic
+          dpr={[
+            1,
+            1.35,
+          ]}
           camera={{
-            position: [1.5, 12, 12],
+            position: [
+              0,
+              16,
+              15,
+            ],
             zoom: 40,
-            near: -50,
-            far: 50,
+            near: 0.1,
+            far: 120,
+          }}
+          gl={{
+            antialias: true,
+            alpha: true,
+            powerPreference:
+              "high-performance",
           }}
         >
-          <ResponsiveCamera />
+          <ResponsiveCamera
+            isVertical={
+              isVertical
+            }
+          />
 
-          <ambientLight intensity={0.7} />
+          <ambientLight
+            intensity={0.88}
+          />
+
+          <hemisphereLight
+            intensity={0.58}
+            color="#ffffff"
+            groundColor="#26472d"
+          />
 
           <directionalLight
-            position={[pitchW * 0.3, 10, pitchH * 0.5]}
-            intensity={1.15}
+            position={[
+              6,
+              12,
+              7,
+            ]}
+            intensity={1.18}
             castShadow
-            shadow-mapSize-width={1024}
-            shadow-mapSize-height={1024}
+            shadow-mapSize-width={
+              1024
+            }
+            shadow-mapSize-height={
+              1024
+            }
+            shadow-camera-left={
+              -14
+            }
+            shadow-camera-right={
+              14
+            }
+            shadow-camera-top={
+              14
+            }
+            shadow-camera-bottom={
+              -14
+            }
           />
 
-          <mesh
-            rotation={[-Math.PI / 2, 0, 0]}
-            receiveShadow
-            onClick={handleGroundClick}
+          {/*
+           * Every gameplay object uses the same group rotation.
+           * Nothing has separate mobile coordinate-remapping logic.
+           */}
+          <group
+            rotation={[
+              0,
+              sceneRotation,
+              0,
+            ]}
           >
-            <planeGeometry args={[pitchW, pitchH]} />
-            <meshStandardMaterial
-              map={pitchTexture}
-              roughness={0.95}
-            />
-          </mesh>
-
-          <GoalFrame atRightEnd={false} />
-          <GoalFrame atRightEnd={true} />
-
-          {Array.from(tileMap.entries()).map(([key, state]) => {
-            if (state === "none") return null;
-
-            const [col, row] = key.split(",").map(Number);
-            const center = pitchToWorld(tileToPos(col, row), isVertical);
-
-            return (
-              <mesh
-                key={key}
-                position={[center.x, 0.008, center.z]}
-                rotation={[-Math.PI / 2, 0, 0]}
-              >
-                <planeGeometry
-                  args={[TILE_W * SCALE * 0.88, TILE_H * SCALE * 0.88]}
-                />
-                <meshBasicMaterial
-                  color={TILE_COLORS[state]}
-                  transparent
-                  opacity={0.4}
-                />
-              </mesh>
-            );
-          })}
-
-          {phase === "planning" && (
-            <CommandArrows
-              frame={frame}
-              pendingCommands={pendingCommands}
-              isVertical={isVertical}
-            />
-          )}
-
-          {frame.players.map((p) => {
-            const isPlayerTeam = p.teamId === "player";
-            const world = pitchToWorld(p.position, isVertical);
-
-            return (
-              <PlayerModel3D
-                key={p.id}
-                x={world.x}
-                z={world.z}
-                characterIndex={characterIndexFor(p)}
-                teamColor={
-                  isPlayerTeam
-                    ? playerTeam.jerseyColor
-                    : aiTeamColor
-                }
-                secondaryColor={
-                  isPlayerTeam
-                    ? playerTeam.secondaryColor
-                    : aiTeamSecondaryColor
-                }
-                jerseyNumber={p.jerseyNumber}
-                name={p.name}
-                role={p.role}
-                isSelected={p.id === selectedPlayerId}
-                hasBall={frame.ball.ownerId === p.id}
-                offside={p.offside}
-                playerState={p.state}
+            <mesh
+              rotation={[
+                -Math.PI / 2,
+                0,
+                0,
+              ]}
+              receiveShadow
+              onClick={
+                handleGroundClick
+              }
+            >
+              <planeGeometry
+                args={[
+                  PITCH_WORLD_WIDTH,
+                  PITCH_WORLD_HEIGHT,
+                ]}
               />
-            );
-          })}
 
-          <Ball3D
-            x={pitchToWorld(frame.ball.position, isVertical).x}
-            z={pitchToWorld(frame.ball.position, isVertical).z}
-            y={(frame.ball.height ?? 0) * SCALE}
-            active={phase === "simulating"}
-          />
+              <meshStandardMaterial
+                map={pitchTexture}
+                color="#ffffff"
+                roughness={0.95}
+                metalness={0}
+                side={
+                  THREE.DoubleSide
+                }
+              />
+            </mesh>
+
+            <GoalFrame
+              atRightEnd={
+                false
+              }
+            />
+
+            <GoalFrame
+              atRightEnd
+            />
+
+            {Array.from(
+              tileMap.entries(),
+            ).map(
+              ([
+                key,
+                state,
+              ]) => {
+                if (
+                  state ===
+                  "none"
+                ) {
+                  return null;
+                }
+
+                const [
+                  column,
+                  row,
+                ] = key
+                  .split(",")
+                  .map(Number);
+
+                const center =
+                  pitchToWorld(
+                    tileToPos(
+                      column,
+                      row,
+                    ),
+                  );
+
+                return (
+                  <mesh
+                    key={key}
+                    position={[
+                      center.x,
+                      0.022,
+                      center.z,
+                    ]}
+                    rotation={[
+                      -Math.PI /
+                        2,
+                      0,
+                      0,
+                    ]}
+                  >
+                    <planeGeometry
+                      args={[
+                        TILE_W *
+                          SCALE *
+                          0.88,
+                        TILE_H *
+                          SCALE *
+                          0.88,
+                      ]}
+                    />
+
+                    <meshBasicMaterial
+                      color={
+                        TILE_COLORS[
+                          state
+                        ]
+                      }
+                      transparent
+                      opacity={0.4}
+                      depthWrite={
+                        false
+                      }
+                      toneMapped={
+                        false
+                      }
+                    />
+                  </mesh>
+                );
+              },
+            )}
+
+            {phase ===
+              "planning" && (
+              <CommandArrows
+                frame={frame}
+                pendingCommands={
+                  pendingCommands
+                }
+              />
+            )}
+
+            <Suspense
+              fallback={null}
+            >
+              {frame.players.map(
+                (player) => {
+                  const isPlayerTeam =
+                    player.teamId ===
+                    "player";
+
+                  const worldPosition =
+                    pitchToWorld(
+                      player.position,
+                    );
+
+                  return (
+                    <PlayerModel3D
+                      key={
+                        player.id
+                      }
+                      x={
+                        worldPosition.x
+                      }
+                      z={
+                        worldPosition.z
+                      }
+                      characterIndex={characterIndexFor(
+                        player,
+                      )}
+                      teamColor={
+                        isPlayerTeam
+                          ? playerTeam.jerseyColor
+                          : aiTeamColor
+                      }
+                      secondaryColor={
+                        isPlayerTeam
+                          ? playerTeam.secondaryColor
+                          : aiTeamSecondaryColor
+                      }
+                      jerseyNumber={
+                        player.jerseyNumber
+                      }
+                      name={
+                        player.name
+                      }
+                      role={
+                        player.role
+                      }
+                      isSelected={
+                        player.id ===
+                        selectedPlayerId
+                      }
+                      hasBall={
+                        frame.ball
+                          .ownerId ===
+                        player.id
+                      }
+                      offside={
+                        player.offside
+                      }
+                      playerState={
+                        player.state
+                      }
+                    />
+                  );
+                },
+              )}
+            </Suspense>
+
+            <Ball3D
+              x={ballWorld.x}
+              z={ballWorld.z}
+              y={
+                (frame.ball.height ??
+                  0) *
+                SCALE
+              }
+              active={
+                phase ===
+                "simulating"
+              }
+            />
+          </group>
         </Canvas>
       </div>
     </div>
