@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   Canvas,
+  useFrame,
   useThree,
   type ThreeEvent,
 } from "@react-three/fiber";
@@ -51,11 +52,10 @@ const PITCH_WORLD_HEIGHT =
   PITCH_HEIGHT * SCALE;
 
 /*
- * The mobile pitch is mostly vertical with a slight clockwise lean.
+ * Mobile pitch orientation.
  *
- * The former -82° orientation placed the opponent's goal nearest the
- * viewer. Rotating it by 180° keeps the same lean while putting the
- * player's own goal nearest the bottom of the screen.
+ * The player's goal is the near end.
+ * The pitch is almost vertical with a slight clockwise lean.
  */
 const MOBILE_SCENE_ROTATION_DEG = 98;
 
@@ -65,34 +65,89 @@ const MOBILE_SCENE_ROTATION =
   );
 
 /*
- * Mobile uses perspective to imitate the supplied reference:
+ * Fixed mobile perspective camera.
  *
- * - near end larger
- * - far end narrower
- * - strong vertical depth
- * - less width stretching
- * - player's goal closest to the viewer
+ * We intentionally do NOT fit the entire pitch inside the screen.
+ * The camera only shows roughly 70–80% of the pitch at once.
  */
-const MOBILE_CAMERA_FOV = 31;
+const MOBILE_CAMERA_FOV = 33;
 
 /*
- * Additional horizontal padding deliberately makes the pitch narrower
- * on phones instead of allowing it to stretch across the entire width.
+ * Camera is positioned 41 degrees toward the right side when viewed
+ * from directly behind the player's own goal.
  */
-const MOBILE_CAMERA_PADDING_X = 1.2;
-const MOBILE_CAMERA_PADDING_Y = 1.045;
-
-const MOBILE_CAMERA_TARGET_HEIGHT = 0.5;
+const MOBILE_CAMERA_AZIMUTH_DEG = 41;
 
 /*
- * Positive local X points toward the opponent's goal.
- * A small positive target offset looks farther upfield.
+ * Downward camera angle.
  */
-const MOBILE_CAMERA_TARGET_FORWARD =
-  PITCH_WORLD_WIDTH * 0.045;
+const MOBILE_CAMERA_ELEVATION_DEG = 48;
 
 /*
- * Desktop retains an orthographic 2.5D presentation.
+ * Distance from the moving camera target.
+ *
+ * Lower values zoom in.
+ * Higher values zoom out.
+ */
+const MOBILE_CAMERA_DISTANCE = 17;
+
+/*
+ * Camera looks slightly above ground level.
+ */
+const MOBILE_CAMERA_TARGET_HEIGHT = 0.36;
+
+/*
+ * How far the camera can travel along the pitch.
+ *
+ * 0.29 means the camera target moves from:
+ *
+ * -29% of pitch length to +29% of pitch length.
+ *
+ * This leaves the extreme goal areas visible without allowing the camera
+ * to travel so far that it looks outside the pitch.
+ */
+const MOBILE_CAMERA_PAN_RANGE =
+  PITCH_WORLD_WIDTH * 0.29;
+
+/*
+ * Initial mobile camera position.
+ *
+ * 0 = player's own goal
+ * 0.5 = midfield
+ * 1 = opponent goal
+ */
+const MOBILE_INITIAL_PAN = 0.16;
+
+/*
+ * Drag sensitivity.
+ *
+ * Vertical dragging controls most of the movement.
+ * Horizontal dragging contributes slightly because the displayed pitch
+ * is rotated and the desired movement feels somewhat diagonal.
+ */
+const MOBILE_VERTICAL_DRAG_SENSITIVITY = 1.05;
+const MOBILE_HORIZONTAL_DRAG_SENSITIVITY = 0.3;
+
+/*
+ * Wheel/trackpad sensitivity.
+ */
+const MOBILE_WHEEL_SENSITIVITY = 0.0009;
+
+/*
+ * Smoothness of camera travel.
+ *
+ * Higher values react more quickly.
+ */
+const MOBILE_CAMERA_PAN_DAMPING = 10;
+
+/*
+ * Number of screen pixels the pointer must travel before it is treated
+ * as a camera drag rather than a tap.
+ */
+const MOBILE_DRAG_THRESHOLD = 7;
+
+/*
+ * Desktop retains the existing orthographic camera.
  */
 const DESKTOP_CAMERA_ELEVATION_DEG = 42;
 const DESKTOP_CAMERA_AZIMUTH_DEG = 12;
@@ -332,7 +387,13 @@ function createSceneFitCorners(
   );
 }
 
-function MobilePerspectiveCamera({
+/*
+ * Fixed, draggable mobile camera.
+ *
+ * Camera movement is isolated here, so the pitch, players, goals, ball,
+ * tiles, and command arrows remain completely unchanged.
+ */
+function MobileScrollingCamera({
   sceneRotation,
 }: {
   sceneRotation: number;
@@ -343,232 +404,486 @@ function MobilePerspectiveCamera({
     );
 
   const {
+    gl,
     size,
   } = useThree();
 
-  useEffect(() => {
-    const camera =
-      cameraRef.current;
-
-    if (
-      !camera ||
-      size.width <= 0 ||
-      size.height <= 0
-    ) {
-      return;
-    }
-
-    camera.fov =
-      MOBILE_CAMERA_FOV;
-
-    camera.aspect =
-      size.width /
-      size.height;
-
-    camera.near =
-      0.1;
-
-    camera.far =
-      220;
-
-    camera.up.set(
-      0,
-      1,
-      0,
+  const currentPanRef =
+    useRef(
+      MOBILE_INITIAL_PAN,
     );
 
-    const rotationQuaternion =
-      new THREE.Quaternion()
-        .setFromAxisAngle(
-          new THREE.Vector3(
-            0,
-            1,
-            0,
+  const targetPanRef =
+    useRef(
+      MOBILE_INITIAL_PAN,
+    );
+
+  const activePointerIdRef =
+    useRef<number | null>(
+      null,
+    );
+
+  const pointerStartRef =
+    useRef({
+      x: 0,
+      y: 0,
+      pan: MOBILE_INITIAL_PAN,
+    });
+
+  const didDragRef =
+    useRef(false);
+
+  const suppressClickRef =
+    useRef(false);
+
+  const rotationQuaternion =
+    useMemo(
+      () =>
+        new THREE.Quaternion()
+          .setFromAxisAngle(
+            new THREE.Vector3(
+              0,
+              1,
+              0,
+            ),
+            sceneRotation,
           ),
-          sceneRotation,
+      [sceneRotation],
+    );
+
+  const azimuth =
+    useMemo(
+      () =>
+        THREE.MathUtils.degToRad(
+          MOBILE_CAMERA_AZIMUTH_DEG,
+        ),
+      [],
+    );
+
+  const elevation =
+    useMemo(
+      () =>
+        THREE.MathUtils.degToRad(
+          MOBILE_CAMERA_ELEVATION_DEG,
+        ),
+      [],
+    );
+
+  /*
+   * Camera offset in unrotated pitch coordinates.
+   *
+   * Negative X places the camera behind the player's own goal.
+   * Positive Z moves it toward the right side.
+   */
+  const localCameraOffset =
+    useMemo(() => {
+      const horizontalDistance =
+        Math.cos(elevation) *
+        MOBILE_CAMERA_DISTANCE;
+
+      const verticalDistance =
+        Math.sin(elevation) *
+        MOBILE_CAMERA_DISTANCE;
+
+      return new THREE.Vector3(
+        -Math.cos(azimuth) *
+          horizontalDistance,
+        verticalDistance,
+        Math.sin(azimuth) *
+          horizontalDistance,
+      );
+    }, [
+      azimuth,
+      elevation,
+    ]);
+
+  useEffect(() => {
+    const canvas =
+      gl.domElement;
+
+    const previousTouchAction =
+      canvas.style.touchAction;
+
+    const previousCursor =
+      canvas.style.cursor;
+
+    canvas.style.touchAction =
+      "none";
+
+    const handlePointerDown = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        null
+      ) {
+        return;
+      }
+
+      activePointerIdRef.current =
+        event.pointerId;
+
+      pointerStartRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        pan: targetPanRef.current,
+      };
+
+      didDragRef.current =
+        false;
+
+      try {
+        canvas.setPointerCapture(
+          event.pointerId,
         );
+      } catch {
+        // Some mobile browsers may reject pointer capture.
+      }
+    };
+
+    const handlePointerMove = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        event.pointerId
+      ) {
+        return;
+      }
+
+      const deltaX =
+        event.clientX -
+        pointerStartRef.current.x;
+
+      const deltaY =
+        event.clientY -
+        pointerStartRef.current.y;
+
+      const distance =
+        Math.hypot(
+          deltaX,
+          deltaY,
+        );
+
+      if (
+        distance >=
+        MOBILE_DRAG_THRESHOLD
+      ) {
+        didDragRef.current =
+          true;
+
+        suppressClickRef.current =
+          true;
+
+        canvas.style.cursor =
+          "grabbing";
+      }
+
+      if (
+        !didDragRef.current
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const normalizedVertical =
+        size.height > 0
+          ? deltaY /
+            size.height
+          : 0;
+
+      const normalizedHorizontal =
+        size.width > 0
+          ? deltaX /
+            size.width
+          : 0;
+
+      /*
+       * Dragging upward moves toward the opponent goal.
+       * Dragging downward moves toward the player's own goal.
+       *
+       * Horizontal drag contributes slightly to create the requested
+       * diagonal/horizontal-ish scrolling feeling.
+       */
+      const panDelta =
+        -normalizedVertical *
+          MOBILE_VERTICAL_DRAG_SENSITIVITY -
+        normalizedHorizontal *
+          MOBILE_HORIZONTAL_DRAG_SENSITIVITY;
+
+      targetPanRef.current =
+        clamp(
+          pointerStartRef.current.pan +
+            panDelta,
+          0,
+          1,
+        );
+    };
+
+    const finishPointer = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        event.pointerId
+      ) {
+        return;
+      }
+
+      activePointerIdRef.current =
+        null;
+
+      canvas.style.cursor =
+        previousCursor;
+
+      try {
+        canvas.releasePointerCapture(
+          event.pointerId,
+        );
+      } catch {
+        // Pointer may already have been released.
+      }
+
+      /*
+       * Leave the click suppression flag active until the next click event.
+       */
+      if (
+        !didDragRef.current
+      ) {
+        suppressClickRef.current =
+          false;
+      }
+    };
+
+    const handleWheel = (
+      event: WheelEvent,
+    ) => {
+      event.preventDefault();
+
+      targetPanRef.current =
+        clamp(
+          targetPanRef.current +
+            event.deltaY *
+              MOBILE_WHEEL_SENSITIVITY,
+          0,
+          1,
+        );
+    };
 
     /*
-     * Local negative X is behind the player's own goal.
-     *
-     * The camera sits behind that near goal and slightly to one side,
-     * producing the same kind of depth as the supplied reference.
+     * Stop R3F from treating the release after a camera drag as a tile click.
      */
-    const localCameraDirection =
-      new THREE.Vector3(
-        -1,
-        0.88,
-        0.17,
-      ).normalize();
-
-    const cameraDirection =
-      localCameraDirection
-        .clone()
-        .applyQuaternion(
-          rotationQuaternion,
-        )
-        .normalize();
-
-    const localTarget =
-      new THREE.Vector3(
-        MOBILE_CAMERA_TARGET_FORWARD,
-        MOBILE_CAMERA_TARGET_HEIGHT,
-        0,
-      );
-
-    const target =
-      localTarget
-        .clone()
-        .applyQuaternion(
-          rotationQuaternion,
-        );
-
-    const fitCorners =
-      createSceneFitCorners(
-        sceneRotation,
-      );
-
-    const horizontalLimit =
-      1 /
-      MOBILE_CAMERA_PADDING_X;
-
-    const verticalLimit =
-      1 /
-      MOBILE_CAMERA_PADDING_Y;
-
-    const placeCamera = (
-      distance: number,
+    const handleClickCapture = (
+      event: MouseEvent,
     ) => {
-      camera.position
-        .copy(target)
-        .addScaledVector(
-          cameraDirection,
-          distance,
-        );
+      if (
+        !suppressClickRef.current
+      ) {
+        return;
+      }
 
-      camera.lookAt(
-        target,
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      suppressClickRef.current =
+        false;
+    };
+
+    canvas.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointermove",
+      handlePointerMove,
+      {
+        passive: false,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointerup",
+      finishPointer,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointercancel",
+      finishPointer,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "wheel",
+      handleWheel,
+      {
+        passive: false,
+      },
+    );
+
+    canvas.addEventListener(
+      "click",
+      handleClickCapture,
+      true,
+    );
+
+    return () => {
+      canvas.style.touchAction =
+        previousTouchAction;
+
+      canvas.style.cursor =
+        previousCursor;
+
+      canvas.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
       );
 
-      camera.updateProjectionMatrix();
+      canvas.removeEventListener(
+        "pointermove",
+        handlePointerMove,
+      );
 
-      camera.updateMatrixWorld(
+      canvas.removeEventListener(
+        "pointerup",
+        finishPointer,
+      );
+
+      canvas.removeEventListener(
+        "pointercancel",
+        finishPointer,
+      );
+
+      canvas.removeEventListener(
+        "wheel",
+        handleWheel,
+      );
+
+      canvas.removeEventListener(
+        "click",
+        handleClickCapture,
         true,
       );
     };
-
-    const fitsAtDistance = (
-      distance: number,
-    ): boolean => {
-      placeCamera(
-        distance,
-      );
-
-      let maximumX = 0;
-      let maximumY = 0;
-
-      for (
-        const corner of
-        fitCorners
-      ) {
-        const projected =
-          corner
-            .clone()
-            .project(
-              camera,
-            );
-
-        if (
-          !Number.isFinite(
-            projected.x,
-          ) ||
-          !Number.isFinite(
-            projected.y,
-          ) ||
-          !Number.isFinite(
-            projected.z,
-          ) ||
-          projected.z < -1 ||
-          projected.z > 1
-        ) {
-          return false;
-        }
-
-        maximumX =
-          Math.max(
-            maximumX,
-            Math.abs(
-              projected.x,
-            ),
-          );
-
-        maximumY =
-          Math.max(
-            maximumY,
-            Math.abs(
-              projected.y,
-            ),
-          );
-      }
-
-      return (
-        maximumX <=
-          horizontalLimit &&
-        maximumY <=
-          verticalLimit
-      );
-    };
-
-    let minimumDistance =
-      8;
-
-    let maximumDistance =
-      48;
-
-    while (
-      !fitsAtDistance(
-        maximumDistance,
-      ) &&
-      maximumDistance < 180
-    ) {
-      maximumDistance *=
-        1.25;
-    }
-
-    for (
-      let iteration = 0;
-      iteration < 30;
-      iteration += 1
-    ) {
-      const middleDistance =
-        (
-          minimumDistance +
-          maximumDistance
-        ) /
-        2;
-
-      if (
-        fitsAtDistance(
-          middleDistance,
-        )
-      ) {
-        maximumDistance =
-          middleDistance;
-      } else {
-        minimumDistance =
-          middleDistance;
-      }
-    }
-
-    placeCamera(
-      maximumDistance *
-        1.012,
-    );
   }, [
+    gl,
     size.width,
     size.height,
-    sceneRotation,
   ]);
+
+  useFrame(
+    (_, delta) => {
+      const camera =
+        cameraRef.current;
+
+      if (!camera) {
+        return;
+      }
+
+      const safeDelta =
+        Math.min(
+          delta,
+          0.05,
+        );
+
+      const dampingFactor =
+        1 -
+        Math.exp(
+          -MOBILE_CAMERA_PAN_DAMPING *
+            safeDelta,
+        );
+
+      currentPanRef.current =
+        THREE.MathUtils.lerp(
+          currentPanRef.current,
+          targetPanRef.current,
+          dampingFactor,
+        );
+
+      const localTargetX =
+        THREE.MathUtils.lerp(
+          -MOBILE_CAMERA_PAN_RANGE,
+          MOBILE_CAMERA_PAN_RANGE,
+          currentPanRef.current,
+        );
+
+      const localTarget =
+        new THREE.Vector3(
+          localTargetX,
+          MOBILE_CAMERA_TARGET_HEIGHT,
+          0,
+        );
+
+      /*
+       * Move the camera and its aim point together along the pitch.
+       * This preserves the same 41-degree perspective throughout the scroll.
+       */
+      const localCameraPosition =
+        localTarget
+          .clone()
+          .add(
+            localCameraOffset,
+          );
+
+      const worldTarget =
+        localTarget
+          .clone()
+          .applyQuaternion(
+            rotationQuaternion,
+          );
+
+      const worldCameraPosition =
+        localCameraPosition
+          .clone()
+          .applyQuaternion(
+            rotationQuaternion,
+          );
+
+      camera.position.copy(
+        worldCameraPosition,
+      );
+
+      camera.up.set(
+        0,
+        1,
+        0,
+      );
+
+      camera.lookAt(
+        worldTarget,
+      );
+
+      camera.aspect =
+        size.width /
+        Math.max(
+          1,
+          size.height,
+        );
+
+      camera.fov =
+        MOBILE_CAMERA_FOV;
+
+      camera.near =
+        0.1;
+
+      camera.far =
+        220;
+
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(
+        true,
+      );
+    },
+  );
 
   return (
     <PerspectiveCamera
@@ -581,8 +896,8 @@ function MobilePerspectiveCamera({
       far={220}
       position={[
         0,
-        18,
-        20,
+        15,
+        15,
       ]}
     />
   );
@@ -937,11 +1252,8 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.restore();
 
-  const whiteLine =
-    "rgba(255,255,255,0.84)";
-
   context.strokeStyle =
-    whiteLine;
+    "rgba(255,255,255,0.84)";
 
   context.lineWidth =
     2.2;
@@ -1524,10 +1836,6 @@ function CommandArrows({
           `${playerId}-pass`,
         );
 
-        /*
-         * Pass-then-move begins from the original player's starting tile,
-         * not from the destination of the pass.
-         */
         if (
           command.followUp
             ?.type ===
@@ -1987,6 +2295,10 @@ export default function MatchPitch3D({
             1,
             1.35,
           ]}
+          style={{
+            touchAction:
+              "none",
+          }}
           gl={{
             antialias: true,
             alpha: true,
@@ -1995,7 +2307,7 @@ export default function MatchPitch3D({
           }}
         >
           {isVertical ? (
-            <MobilePerspectiveCamera
+            <MobileScrollingCamera
               sceneRotation={
                 sceneRotation
               }
@@ -2199,10 +2511,6 @@ export default function MatchPitch3D({
                   let facingTarget:
                     Vec2 | undefined;
 
-                  /*
-                   * During planning, face toward the primary command target.
-                   * During a shot, face the opposing goal.
-                   */
                   if (
                     pendingCommand
                       ?.targetPosition
