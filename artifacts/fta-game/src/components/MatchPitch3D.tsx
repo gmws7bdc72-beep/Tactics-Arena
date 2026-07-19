@@ -3,12 +3,17 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
 } from "react";
 import {
   Canvas,
   useThree,
   type ThreeEvent,
 } from "@react-three/fiber";
+import {
+  OrthographicCamera,
+  PerspectiveCamera,
+} from "@react-three/drei";
 import * as THREE from "three";
 import type {
   Command,
@@ -37,10 +42,6 @@ import {
 import { PlayerModel3D } from "./three/PlayerModel3D";
 import { Ball3D } from "./three/Ball3D";
 
-/*
- * The match engine stores positions in pitch pixels.
- * Three.js uses smaller world units.
- */
 const SCALE = 1 / 40;
 
 const PITCH_WORLD_WIDTH =
@@ -50,50 +51,56 @@ const PITCH_WORLD_HEIGHT =
   PITCH_HEIGHT * SCALE;
 
 /*
- * Mobile orientation:
+ * The mobile pitch is mostly vertical with a slight clockwise lean.
  *
- * -90 degrees would make the long pitch axis perfectly vertical.
- * -82 degrees leaves a slight lean toward the right.
- *
- * The whole gameplay scene uses this one rotation:
- * pitch, goals, players, ball, tiles, and command arrows.
+ * The former -82° orientation placed the opponent's goal nearest the
+ * viewer. Rotating it by 180° keeps the same lean while putting the
+ * player's own goal nearest the bottom of the screen.
  */
 const MOBILE_SCENE_ROTATION_DEG = 98;
+
 const MOBILE_SCENE_ROTATION =
   THREE.MathUtils.degToRad(
     MOBILE_SCENE_ROTATION_DEG,
   );
 
 /*
- * Camera elevation is measured upward from the ground.
+ * Mobile uses perspective to imitate the supplied reference:
  *
- * Smaller = lower, more dramatic sideline-like angle.
- * Larger = more top-down.
- *
- * The old camera was too top-down. Mobile is now lower.
+ * - near end larger
+ * - far end narrower
+ * - strong vertical depth
+ * - less width stretching
+ * - player's goal closest to the viewer
  */
-const MOBILE_CAMERA_ELEVATION_DEG = 36;
-const DESKTOP_CAMERA_ELEVATION_DEG = 42;
+const MOBILE_CAMERA_FOV = 31;
 
 /*
- * A small horizontal camera offset gives the view additional yaw
- * without turning the pitch into a strong diagonal.
+ * Additional horizontal padding deliberately makes the pitch narrower
+ * on phones instead of allowing it to stretch across the entire width.
  */
-const MOBILE_CAMERA_AZIMUTH_DEG = 10;
+const MOBILE_CAMERA_PADDING_X = 1.2;
+const MOBILE_CAMERA_PADDING_Y = 1.045;
+
+const MOBILE_CAMERA_TARGET_HEIGHT = 0.5;
+
+/*
+ * Positive local X points toward the opponent's goal.
+ * A small positive target offset looks farther upfield.
+ */
+const MOBILE_CAMERA_TARGET_FORWARD =
+  PITCH_WORLD_WIDTH * 0.045;
+
+/*
+ * Desktop retains an orthographic 2.5D presentation.
+ */
+const DESKTOP_CAMERA_ELEVATION_DEG = 42;
 const DESKTOP_CAMERA_AZIMUTH_DEG = 12;
-
-const CAMERA_DISTANCE = 24;
-const CAMERA_TARGET_HEIGHT = 0.32;
-
-const MOBILE_CAMERA_PADDING_X = 1.08;
-const MOBILE_CAMERA_PADDING_Y = 1.06;
-
+const DESKTOP_CAMERA_DISTANCE = 24;
+const DESKTOP_CAMERA_TARGET_HEIGHT = 0.32;
 const DESKTOP_CAMERA_PADDING_X = 1.1;
 const DESKTOP_CAMERA_PADDING_Y = 1.12;
 
-/*
- * Include the players and labels when calculating the camera fit.
- */
 const PLAYER_SCENE_HEIGHT = 2.35;
 
 interface Props {
@@ -148,10 +155,6 @@ const TILE_COLORS: Record<
   "reachable-enemy": "#ff6000",
 };
 
-/*
- * Model index 2 is reserved for goalkeepers.
- * Outfield players only use models 0 and 1.
- */
 const GOALKEEPER_CHARACTER_INDEX:
   | 0
   | 1
@@ -172,12 +175,6 @@ function clamp(
   );
 }
 
-/*
- * All engine coordinates are converted to one normal landscape pitch.
- *
- * Mobile orientation is applied afterward by rotating one shared group.
- * This prevents the pitch and players from using different transforms.
- */
 function pitchToWorld(
   position: Vec2,
 ): {
@@ -262,110 +259,429 @@ function characterIndexFor(player: {
   ];
 }
 
-/*
- * Responsive orthographic camera.
- *
- * Rather than guessing a zoom value, this projects the corners of the
- * rotated pitch into the camera's right/up coordinate system and fits the
- * complete scene to the available screen.
- */
-function ResponsiveCamera({
-  isVertical,
+function createSceneFitCorners(
+  sceneRotation: number,
+): THREE.Vector3[] {
+  const halfPitchWidth =
+    PITCH_WORLD_WIDTH / 2;
+
+  const halfPitchHeight =
+    PITCH_WORLD_HEIGHT / 2;
+
+  const rotationQuaternion =
+    new THREE.Quaternion()
+      .setFromAxisAngle(
+        new THREE.Vector3(
+          0,
+          1,
+          0,
+        ),
+        sceneRotation,
+      );
+
+  const corners = [
+    new THREE.Vector3(
+      -halfPitchWidth,
+      0,
+      -halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      halfPitchWidth,
+      0,
+      -halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      halfPitchWidth,
+      0,
+      halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      -halfPitchWidth,
+      0,
+      halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      -halfPitchWidth,
+      PLAYER_SCENE_HEIGHT,
+      -halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      halfPitchWidth,
+      PLAYER_SCENE_HEIGHT,
+      -halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      halfPitchWidth,
+      PLAYER_SCENE_HEIGHT,
+      halfPitchHeight,
+    ),
+    new THREE.Vector3(
+      -halfPitchWidth,
+      PLAYER_SCENE_HEIGHT,
+      halfPitchHeight,
+    ),
+  ];
+
+  return corners.map(
+    (corner) =>
+      corner
+        .clone()
+        .applyQuaternion(
+          rotationQuaternion,
+        ),
+  );
+}
+
+function MobilePerspectiveCamera({
+  sceneRotation,
 }: {
-  isVertical: boolean;
+  sceneRotation: number;
 }) {
+  const cameraRef =
+    useRef<THREE.PerspectiveCamera>(
+      null,
+    );
+
   const {
-    camera,
     size,
   } = useThree();
 
   useEffect(() => {
-    const orthographicCamera =
-      camera as
-        THREE.OrthographicCamera;
+    const camera =
+      cameraRef.current;
 
-    const elevationDegrees =
-      isVertical
-        ? MOBILE_CAMERA_ELEVATION_DEG
-        : DESKTOP_CAMERA_ELEVATION_DEG;
+    if (
+      !camera ||
+      size.width <= 0 ||
+      size.height <= 0
+    ) {
+      return;
+    }
 
-    const azimuthDegrees =
-      isVertical
-        ? MOBILE_CAMERA_AZIMUTH_DEG
-        : DESKTOP_CAMERA_AZIMUTH_DEG;
+    camera.fov =
+      MOBILE_CAMERA_FOV;
+
+    camera.aspect =
+      size.width /
+      size.height;
+
+    camera.near =
+      0.1;
+
+    camera.far =
+      220;
+
+    camera.up.set(
+      0,
+      1,
+      0,
+    );
+
+    const rotationQuaternion =
+      new THREE.Quaternion()
+        .setFromAxisAngle(
+          new THREE.Vector3(
+            0,
+            1,
+            0,
+          ),
+          sceneRotation,
+        );
+
+    /*
+     * Local negative X is behind the player's own goal.
+     *
+     * The camera sits behind that near goal and slightly to one side,
+     * producing the same kind of depth as the supplied reference.
+     */
+    const localCameraDirection =
+      new THREE.Vector3(
+        -1,
+        0.88,
+        0.17,
+      ).normalize();
+
+    const cameraDirection =
+      localCameraDirection
+        .clone()
+        .applyQuaternion(
+          rotationQuaternion,
+        )
+        .normalize();
+
+    const localTarget =
+      new THREE.Vector3(
+        MOBILE_CAMERA_TARGET_FORWARD,
+        MOBILE_CAMERA_TARGET_HEIGHT,
+        0,
+      );
+
+    const target =
+      localTarget
+        .clone()
+        .applyQuaternion(
+          rotationQuaternion,
+        );
+
+    const fitCorners =
+      createSceneFitCorners(
+        sceneRotation,
+      );
+
+    const horizontalLimit =
+      1 /
+      MOBILE_CAMERA_PADDING_X;
+
+    const verticalLimit =
+      1 /
+      MOBILE_CAMERA_PADDING_Y;
+
+    const placeCamera = (
+      distance: number,
+    ) => {
+      camera.position
+        .copy(target)
+        .addScaledVector(
+          cameraDirection,
+          distance,
+        );
+
+      camera.lookAt(
+        target,
+      );
+
+      camera.updateProjectionMatrix();
+
+      camera.updateMatrixWorld(
+        true,
+      );
+    };
+
+    const fitsAtDistance = (
+      distance: number,
+    ): boolean => {
+      placeCamera(
+        distance,
+      );
+
+      let maximumX = 0;
+      let maximumY = 0;
+
+      for (
+        const corner of
+        fitCorners
+      ) {
+        const projected =
+          corner
+            .clone()
+            .project(
+              camera,
+            );
+
+        if (
+          !Number.isFinite(
+            projected.x,
+          ) ||
+          !Number.isFinite(
+            projected.y,
+          ) ||
+          !Number.isFinite(
+            projected.z,
+          ) ||
+          projected.z < -1 ||
+          projected.z > 1
+        ) {
+          return false;
+        }
+
+        maximumX =
+          Math.max(
+            maximumX,
+            Math.abs(
+              projected.x,
+            ),
+          );
+
+        maximumY =
+          Math.max(
+            maximumY,
+            Math.abs(
+              projected.y,
+            ),
+          );
+      }
+
+      return (
+        maximumX <=
+          horizontalLimit &&
+        maximumY <=
+          verticalLimit
+      );
+    };
+
+    let minimumDistance =
+      8;
+
+    let maximumDistance =
+      48;
+
+    while (
+      !fitsAtDistance(
+        maximumDistance,
+      ) &&
+      maximumDistance < 180
+    ) {
+      maximumDistance *=
+        1.25;
+    }
+
+    for (
+      let iteration = 0;
+      iteration < 30;
+      iteration += 1
+    ) {
+      const middleDistance =
+        (
+          minimumDistance +
+          maximumDistance
+        ) /
+        2;
+
+      if (
+        fitsAtDistance(
+          middleDistance,
+        )
+      ) {
+        maximumDistance =
+          middleDistance;
+      } else {
+        minimumDistance =
+          middleDistance;
+      }
+    }
+
+    placeCamera(
+      maximumDistance *
+        1.012,
+    );
+  }, [
+    size.width,
+    size.height,
+    sceneRotation,
+  ]);
+
+  return (
+    <PerspectiveCamera
+      ref={cameraRef}
+      makeDefault
+      fov={
+        MOBILE_CAMERA_FOV
+      }
+      near={0.1}
+      far={220}
+      position={[
+        0,
+        18,
+        20,
+      ]}
+    />
+  );
+}
+
+function DesktopOrthographicCamera() {
+  const cameraRef =
+    useRef<THREE.OrthographicCamera>(
+      null,
+    );
+
+  const {
+    size,
+  } = useThree();
+
+  useEffect(() => {
+    const camera =
+      cameraRef.current;
+
+    if (
+      !camera ||
+      size.width <= 0 ||
+      size.height <= 0
+    ) {
+      return;
+    }
 
     const elevation =
       THREE.MathUtils.degToRad(
-        elevationDegrees,
+        DESKTOP_CAMERA_ELEVATION_DEG,
       );
 
     const azimuth =
       THREE.MathUtils.degToRad(
-        azimuthDegrees,
+        DESKTOP_CAMERA_AZIMUTH_DEG,
       );
 
     const horizontalDistance =
-      Math.cos(elevation) *
-      CAMERA_DISTANCE;
+      Math.cos(
+        elevation,
+      ) *
+      DESKTOP_CAMERA_DISTANCE;
 
     const cameraHeight =
-      Math.sin(elevation) *
-      CAMERA_DISTANCE;
+      Math.sin(
+        elevation,
+      ) *
+      DESKTOP_CAMERA_DISTANCE;
 
-    orthographicCamera.position.set(
-      Math.sin(azimuth) *
+    camera.position.set(
+      Math.sin(
+        azimuth,
+      ) *
         horizontalDistance,
       cameraHeight,
-      Math.cos(azimuth) *
+      Math.cos(
+        azimuth,
+      ) *
         horizontalDistance,
     );
 
     const target =
       new THREE.Vector3(
         0,
-        CAMERA_TARGET_HEIGHT,
+        DESKTOP_CAMERA_TARGET_HEIGHT,
         0,
       );
 
-    orthographicCamera.lookAt(
+    camera.lookAt(
       target,
     );
 
-    orthographicCamera.near =
+    camera.near =
       0.1;
 
-    orthographicCamera.far =
+    camera.far =
       120;
 
-    orthographicCamera.updateMatrixWorld(
+    camera.updateMatrixWorld(
       true,
     );
-
-    const sceneRotation =
-      isVertical
-        ? MOBILE_SCENE_ROTATION
-        : 0;
 
     const forward =
       target
         .clone()
         .sub(
-          orthographicCamera.position,
+          camera.position,
         )
         .normalize();
-
-    const worldUp =
-      new THREE.Vector3(
-        0,
-        1,
-        0,
-      );
 
     const cameraRight =
       new THREE.Vector3()
         .crossVectors(
           forward,
-          worldUp,
+          new THREE.Vector3(
+            0,
+            1,
+            0,
+          ),
         )
         .normalize();
 
@@ -377,60 +693,10 @@ function ResponsiveCamera({
         )
         .normalize();
 
-    const halfPitchWidth =
-      PITCH_WORLD_WIDTH / 2;
-
-    const halfPitchHeight =
-      PITCH_WORLD_HEIGHT / 2;
-
-    const localCorners = [
-      new THREE.Vector3(
-        -halfPitchWidth,
+    const corners =
+      createSceneFitCorners(
         0,
-        -halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        halfPitchWidth,
-        0,
-        -halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        halfPitchWidth,
-        0,
-        halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        -halfPitchWidth,
-        0,
-        halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        -halfPitchWidth,
-        PLAYER_SCENE_HEIGHT,
-        -halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        halfPitchWidth,
-        PLAYER_SCENE_HEIGHT,
-        -halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        halfPitchWidth,
-        PLAYER_SCENE_HEIGHT,
-        halfPitchHeight,
-      ),
-      new THREE.Vector3(
-        -halfPitchWidth,
-        PLAYER_SCENE_HEIGHT,
-        halfPitchHeight,
-      ),
-    ];
-
-    const sceneRotationMatrix =
-      new THREE.Matrix4()
-        .makeRotationY(
-          sceneRotation,
-        );
+      );
 
     let minimumViewX =
       Infinity;
@@ -445,20 +711,15 @@ function ResponsiveCamera({
       -Infinity;
 
     for (
-      const localCorner of
-      localCorners
+      const corner of
+      corners
     ) {
-      const worldCorner =
-        localCorner
-          .clone()
-          .applyMatrix4(
-            sceneRotationMatrix,
-          );
-
       const relative =
-        worldCorner
+        corner
           .clone()
-          .sub(target);
+          .sub(
+            target,
+          );
 
       const viewX =
         relative.dot(
@@ -509,48 +770,66 @@ function ResponsiveCamera({
           minimumViewY,
       );
 
-    const horizontalPadding =
-      isVertical
-        ? MOBILE_CAMERA_PADDING_X
-        : DESKTOP_CAMERA_PADDING_X;
-
-    const verticalPadding =
-      isVertical
-        ? MOBILE_CAMERA_PADDING_Y
-        : DESKTOP_CAMERA_PADDING_Y;
-
     const zoomForWidth =
       size.width /
-      (projectedWidth *
-        horizontalPadding);
+      (
+        projectedWidth *
+        DESKTOP_CAMERA_PADDING_X
+      );
 
     const zoomForHeight =
       size.height /
-      (projectedHeight *
-        verticalPadding);
-
-    const calculatedZoom =
-      Math.min(
-        zoomForWidth,
-        zoomForHeight,
+      (
+        projectedHeight *
+        DESKTOP_CAMERA_PADDING_Y
       );
 
-    orthographicCamera.zoom =
+    camera.zoom =
       clamp(
-        calculatedZoom,
+        Math.min(
+          zoomForWidth,
+          zoomForHeight,
+        ),
         18,
         115,
       );
 
-    orthographicCamera.updateProjectionMatrix();
+    camera.updateProjectionMatrix();
   }, [
-    camera,
     size.width,
     size.height,
-    isVertical,
   ]);
 
-  return null;
+  return (
+    <OrthographicCamera
+      ref={cameraRef}
+      makeDefault
+      left={
+        -size.width /
+        2
+      }
+      right={
+        size.width /
+        2
+      }
+      top={
+        size.height /
+        2
+      }
+      bottom={
+        -size.height /
+        2
+      }
+      position={[
+        0,
+        16,
+        15,
+      ]}
+      zoom={40}
+      near={0.1}
+      far={120}
+    />
+  );
 }
 
 function createPitchTexture(): THREE.CanvasTexture {
@@ -607,9 +886,6 @@ function createPitchTexture(): THREE.CanvasTexture {
     canvas.height,
   );
 
-  /*
-   * Alternating mowing stripes.
-   */
   for (
     let column = 0;
     column < GRID_COLS;
@@ -628,10 +904,8 @@ function createPitchTexture(): THREE.CanvasTexture {
     );
   }
 
-  /*
-   * Light texture so the grass is not completely flat.
-   */
   context.save();
+
   context.globalAlpha =
     0.11;
 
@@ -672,9 +946,6 @@ function createPitchTexture(): THREE.CanvasTexture {
   context.lineWidth =
     2.2;
 
-  /*
-   * Pitch boundary.
-   */
   context.strokeRect(
     1,
     1,
@@ -682,9 +953,6 @@ function createPitchTexture(): THREE.CanvasTexture {
     canvas.height - 2,
   );
 
-  /*
-   * Halfway line.
-   */
   context.beginPath();
 
   context.moveTo(
@@ -699,9 +967,6 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.stroke();
 
-  /*
-   * Center circle.
-   */
   context.beginPath();
 
   context.arc(
@@ -714,9 +979,6 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.stroke();
 
-  /*
-   * Center spot.
-   */
   context.beginPath();
 
   context.arc(
@@ -732,12 +994,11 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.fill();
 
-  /*
-   * Penalty areas.
-   */
   const penaltyAreaTop =
-    (PITCH_HEIGHT -
-      PENALTY_AREA_HEIGHT) /
+    (
+      PITCH_HEIGHT -
+      PENALTY_AREA_HEIGHT
+    ) /
     2;
 
   context.strokeRect(
@@ -755,9 +1016,6 @@ function createPitchTexture(): THREE.CanvasTexture {
     PENALTY_AREA_HEIGHT,
   );
 
-  /*
-   * Tactical thirds.
-   */
   context.save();
 
   context.setLineDash(
@@ -787,12 +1045,20 @@ function createPitchTexture(): THREE.CanvasTexture {
   context.beginPath();
 
   context.moveTo(
-    (2 * PITCH_WIDTH) / 3,
+    (
+      2 *
+      PITCH_WIDTH
+    ) /
+      3,
     0,
   );
 
   context.lineTo(
-    (2 * PITCH_WIDTH) / 3,
+    (
+      2 *
+      PITCH_WIDTH
+    ) /
+      3,
     PITCH_HEIGHT,
   );
 
@@ -829,14 +1095,18 @@ function GoalFrame({
   atRightEnd: boolean;
 }) {
   const goalTop =
-    (GOAL_TOP_Y -
-      PITCH_HEIGHT / 2) *
+    (
+      GOAL_TOP_Y -
+      PITCH_HEIGHT / 2
+    ) *
     SCALE;
 
   const goalBottom =
-    (GOAL_TOP_Y +
+    (
+      GOAL_TOP_Y +
       GOAL_WIDTH -
-      PITCH_HEIGHT / 2) *
+      PITCH_HEIGHT / 2
+    ) *
     SCALE;
 
   const postHeight =
@@ -847,14 +1117,18 @@ function GoalFrame({
 
   const goalX =
     atRightEnd
-      ? PITCH_WORLD_WIDTH / 2 +
+      ? PITCH_WORLD_WIDTH /
+          2 +
         0.05
-      : -PITCH_WORLD_WIDTH / 2 -
+      : -PITCH_WORLD_WIDTH /
+          2 -
         0.05;
 
   const goalCenterZ =
-    (goalTop +
-      goalBottom) /
+    (
+      goalTop +
+      goalBottom
+    ) /
     2;
 
   const crossbarLength =
@@ -984,13 +1258,17 @@ function Arrow3D({
     if (arced) {
       const midpoint =
         new THREE.Vector3(
-          (start.x +
-            end.x) /
+          (
+            start.x +
+            end.x
+          ) /
             2,
           lineHeight +
             0.55,
-          (start.z +
-            end.z) /
+          (
+            start.z +
+            end.z
+          ) /
             2,
         );
 
@@ -1246,6 +1524,10 @@ function CommandArrows({
           `${playerId}-pass`,
         );
 
+        /*
+         * Pass-then-move begins from the original player's starting tile,
+         * not from the destination of the pass.
+         */
         if (
           command.followUp
             ?.type ===
@@ -1281,7 +1563,8 @@ function CommandArrows({
                 ? PITCH_WIDTH
                 : 0,
             y:
-              PITCH_HEIGHT / 2,
+              PITCH_HEIGHT /
+              2,
           },
           "#ff6b35",
           false,
@@ -1432,7 +1715,9 @@ export default function MatchPitch3D({
           `${tile.col},${tile.row}`;
 
         const occupant =
-          occupancy.get(key);
+          occupancy.get(
+            key,
+          );
 
         if (
           occupant ===
@@ -1481,11 +1766,6 @@ export default function MatchPitch3D({
 
         event.stopPropagation();
 
-        /*
-         * R3F returns the click in world coordinates.
-         * Undo the shared mobile rotation before converting back to
-         * the engine's pitch coordinates.
-         */
         const localPoint =
           inverseRotateXZ(
             event.point.x,
@@ -1509,10 +1789,12 @@ export default function MatchPitch3D({
         ) {
           const hitRadius =
             14 +
-            (player.role ===
-            "goalkeeper"
-              ? 4
-              : 2) +
+            (
+              player.role ===
+              "goalkeeper"
+                ? 4
+                : 2
+            ) +
             8;
 
           const distance =
@@ -1701,21 +1983,10 @@ export default function MatchPitch3D({
       >
         <Canvas
           shadows
-          orthographic
           dpr={[
             1,
             1.35,
           ]}
-          camera={{
-            position: [
-              0,
-              16,
-              15,
-            ],
-            zoom: 40,
-            near: 0.1,
-            far: 120,
-          }}
           gl={{
             antialias: true,
             alpha: true,
@@ -1723,11 +1994,15 @@ export default function MatchPitch3D({
               "high-performance",
           }}
         >
-          <ResponsiveCamera
-            isVertical={
-              isVertical
-            }
-          />
+          {isVertical ? (
+            <MobilePerspectiveCamera
+              sceneRotation={
+                sceneRotation
+              }
+            />
+          ) : (
+            <DesktopOrthographicCamera />
+          )}
 
           <ambientLight
             intensity={0.88}
@@ -1767,10 +2042,6 @@ export default function MatchPitch3D({
             }
           />
 
-          {/*
-           * Every gameplay object uses the same group rotation.
-           * Nothing has separate mobile coordinate-remapping logic.
-           */}
           <group
             rotation={[
               0,
@@ -1780,7 +2051,8 @@ export default function MatchPitch3D({
           >
             <mesh
               rotation={[
-                -Math.PI / 2,
+                -Math.PI /
+                  2,
                 0,
                 0,
               ]}
@@ -1927,6 +2199,10 @@ export default function MatchPitch3D({
                   let facingTarget:
                     Vec2 | undefined;
 
+                  /*
+                   * During planning, face toward the primary command target.
+                   * During a shot, face the opposing goal.
+                   */
                   if (
                     pendingCommand
                       ?.targetPosition
@@ -1944,11 +2220,14 @@ export default function MatchPitch3D({
                           ? PITCH_WIDTH
                           : 0,
                       y:
-                        PITCH_HEIGHT / 2,
+                        PITCH_HEIGHT /
+                        2,
                     };
                   }
 
-                  if (facingTarget) {
+                  if (
+                    facingTarget
+                  ) {
                     const targetWorld =
                       pitchToWorld(
                         facingTarget,
@@ -1962,8 +2241,7 @@ export default function MatchPitch3D({
                           worldPosition.z,
                       );
                   }
-                  
-                    
+
                   return (
                     <PlayerModel3D
                       key={
@@ -1974,6 +2252,9 @@ export default function MatchPitch3D({
                       }
                       z={
                         worldPosition.z
+                      }
+                      facing={
+                        facing
                       }
                       characterIndex={characterIndexFor(
                         player,
@@ -2010,7 +2291,8 @@ export default function MatchPitch3D({
                         player.offside
                       }
                       playerState={
-                        phase === "simulating"
+                        phase ===
+                        "simulating"
                           ? player.state
                           : "IDLE"
                       }
@@ -2021,11 +2303,17 @@ export default function MatchPitch3D({
             </Suspense>
 
             <Ball3D
-              x={ballWorld.x}
-              z={ballWorld.z}
+              x={
+                ballWorld.x
+              }
+              z={
+                ballWorld.z
+              }
               y={
-                (frame.ball.height ??
-                  0) *
+                (
+                  frame.ball.height ??
+                  0
+                ) *
                 SCALE
               }
               active={
