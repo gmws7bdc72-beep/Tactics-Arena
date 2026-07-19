@@ -59,9 +59,9 @@ const ACTION_SOURCE_INDEX: Record<PlayerActionKey, number> = {
  * Players were previously 1.72 world units tall.
  * This keeps them slightly smaller.
  */
-const TARGET_PLAYER_HEIGHT = 1.55;
+const TARGET_PLAYER_HEIGHT = 1.15;
 
-const MAX_TEXTURE_WIDTH = 1024;
+const MAX_TEXTURE_WIDTH = 1024;to 
 const TURN_SPEED = 14;
 const MOVEMENT_EPSILON_SQUARED = 0.000001;
 
