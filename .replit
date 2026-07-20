@@ -30,7 +30,7 @@ localPort = 24785
 externalPort = 80
 
 [nix]
-packages = ["zip"]
+packages = ["zip", "psmisc"]
 
 [deployment]
 deploymentTarget = "autoscale"
