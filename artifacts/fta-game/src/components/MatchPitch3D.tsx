@@ -5,8 +5,6 @@ import {
   useMemo,
   useRef,
   type MutableRefObject,
-  type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   Canvas,
@@ -14,7 +12,6 @@ import {
   useThree,
   type ThreeEvent,
 } from "@react-three/fiber";
-import { OrthographicCamera } from "@react-three/drei";
 import * as THREE from "three";
 import type {
   Command,
@@ -43,71 +40,66 @@ import {
 import { PlayerModel3D } from "./three/PlayerModel3D";
 import { Ball3D } from "./three/Ball3D";
 
+/*
+ * Match-engine coordinates are stored in pitch pixels.
+ * Three.js uses smaller world units.
+ */
 const SCALE = 1 / 40;
 
-const PITCH_WORLD_WIDTH = PITCH_WIDTH * SCALE;
-const PITCH_WORLD_HEIGHT = PITCH_HEIGHT * SCALE;
+const PITCH_WORLD_WIDTH =
+  PITCH_WIDTH * SCALE;
+
+const PITCH_WORLD_HEIGHT =
+  PITCH_HEIGHT * SCALE;
 
 /*
- * The pitch is nearly vertical on mobile, with a slight clockwise lean.
- * The player's own goal is the near end.
- */
-const MOBILE_SCENE_ROTATION_DEG = 98;
-
-const MOBILE_SCENE_ROTATION = THREE.MathUtils.degToRad(
-  MOBILE_SCENE_ROTATION_DEG,
-);
-
-/*
- * Fixed mobile perspective camera.
+ * MOBILE CAMERA
  *
- * It intentionally shows only around 70–80% of the field.
- * The rest can be reached by dragging along the field.
+ * The camera is positioned 41 degrees toward the right side from a
+ * straight-behind-the-player-goal position.
+ *
+ * The pitch itself is not separately rotated. The camera azimuth creates
+ * the diagonal presentation. This avoids rotating both the camera and the
+ * pitch and accidentally cancelling or reversing the intended angle.
  */
-const MOBILE_CAMERA_FOV = 30;
+const MOBILE_CAMERA_FOV = 33;
 
-/*
- * Camera sits 41 degrees toward the right side from directly behind
- * the player's own goal.
- */
 const MOBILE_CAMERA_AZIMUTH_DEG = 41;
 const MOBILE_CAMERA_ELEVATION_DEG = 48;
 
-/*
- * Lower distance = closer view.
- * Higher distance = more pitch visible.
- */
-const MOBILE_CAMERA_DISTANCE = 15.5;
-
-const MOBILE_CAMERA_TARGET_HEIGHT = 0.38;
+const MOBILE_CAMERA_DISTANCE = 17;
+const MOBILE_CAMERA_TARGET_HEIGHT = 0.36;
 
 /*
- * How far the camera target moves along the long axis of the pitch.
+ * The camera shows only part of the pitch and can travel along its length.
+ *
+ * 0 = own-goal side
+ * 0.5 = midfield
+ * 1 = opponent-goal side
  */
+const MOBILE_INITIAL_PAN = 0.16;
+
 const MOBILE_CAMERA_PAN_RANGE =
   PITCH_WORLD_WIDTH * 0.34;
 
-/*
- * 0 = player's own end
- * 0.5 = midfield
- * 1 = opponent's end
- */
-const MOBILE_INITIAL_PAN = 0.12;
+const MOBILE_CAMERA_PAN_DAMPING = 10;
 
-const MOBILE_CAMERA_PAN_DAMPING = 11;
-
-const MOBILE_DRAG_THRESHOLD_PX = 8;
-const MOBILE_VERTICAL_DRAG_SENSITIVITY = 1.08;
-const MOBILE_HORIZONTAL_DRAG_SENSITIVITY = 0.32;
+const MOBILE_VERTICAL_DRAG_SENSITIVITY = 1.05;
+const MOBILE_HORIZONTAL_DRAG_SENSITIVITY = 0.3;
 const MOBILE_WHEEL_SENSITIVITY = 0.0009;
 
+const MOBILE_DRAG_THRESHOLD = 7;
+
 /*
- * Desktop camera remains orthographic.
+ * DESKTOP CAMERA
+ *
+ * Desktop continues using the previous orthographic presentation.
  */
 const DESKTOP_CAMERA_ELEVATION_DEG = 42;
 const DESKTOP_CAMERA_AZIMUTH_DEG = 12;
 const DESKTOP_CAMERA_DISTANCE = 24;
 const DESKTOP_CAMERA_TARGET_HEIGHT = 0.32;
+
 const DESKTOP_CAMERA_PADDING_X = 1.1;
 const DESKTOP_CAMERA_PADDING_Y = 1.12;
 
@@ -122,9 +114,14 @@ interface Props {
   selectedPlayerId: string | null;
   passTargetMode: boolean;
   passOriginPos?: Vec2;
-  phase: "planning" | "simulating" | "finished";
+  phase:
+    | "planning"
+    | "simulating"
+    | "finished";
   isVertical?: boolean;
-  activePlanningTeam?: "player" | "ai";
+  activePlanningTeam?:
+    | "player"
+    | "ai";
   onPlayerClick: (
     playerId: string,
     position: Vec2,
@@ -150,14 +147,6 @@ interface ArrowDefinition {
   arced: boolean;
 }
 
-interface DragState {
-  pointerId: number | null;
-  startX: number;
-  startY: number;
-  startPan: number;
-  didDrag: boolean;
-}
-
 const TILE_COLORS: Record<
   Exclude<TileState, "none">,
   string
@@ -168,7 +157,10 @@ const TILE_COLORS: Record<
   "reachable-enemy": "#ff6000",
 };
 
-const GOALKEEPER_CHARACTER_INDEX: 0 | 1 | 2 = 2;
+const GOALKEEPER_CHARACTER_INDEX:
+  | 0
+  | 1
+  | 2 = 2;
 
 const OUTFIELD_CHARACTER_INDICES: Array<
   0 | 1 | 2
@@ -181,7 +173,10 @@ function clamp(
 ): number {
   return Math.max(
     minimum,
-    Math.min(maximum, value),
+    Math.min(
+      maximum,
+      value,
+    ),
   );
 }
 
@@ -225,59 +220,36 @@ function worldToPitch(
   };
 }
 
-function inverseRotateXZ(
-  worldX: number,
-  worldZ: number,
-  angle: number,
-): {
-  x: number;
-  z: number;
-} {
-  const cosine = Math.cos(angle);
-  const sine = Math.sin(angle);
-
-  return {
-    x:
-      worldX * cosine -
-      worldZ * sine,
-
-    z:
-      worldX * sine +
-      worldZ * cosine,
-  };
-}
-
 function characterIndexFor(player: {
   role: string;
   jerseyNumber: number;
 }): 0 | 1 | 2 {
-  if (player.role === "goalkeeper") {
+  if (
+    player.role ===
+    "goalkeeper"
+  ) {
     return GOALKEEPER_CHARACTER_INDEX;
   }
 
   const index =
-    Math.abs(player.jerseyNumber) %
+    Math.abs(
+      player.jerseyNumber,
+    ) %
     OUTFIELD_CHARACTER_INDICES.length;
 
-  return OUTFIELD_CHARACTER_INDICES[index];
+  return OUTFIELD_CHARACTER_INDICES[
+    index
+  ];
 }
 
-function createSceneFitCorners(
-  sceneRotation: number,
-): THREE.Vector3[] {
+function createSceneFitCorners(): THREE.Vector3[] {
   const halfPitchWidth =
     PITCH_WORLD_WIDTH / 2;
 
   const halfPitchHeight =
     PITCH_WORLD_HEIGHT / 2;
 
-  const rotationQuaternion =
-    new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0),
-      sceneRotation,
-    );
-
-  const corners = [
+  return [
     new THREE.Vector3(
       -halfPitchWidth,
       0,
@@ -326,76 +298,90 @@ function createSceneFitCorners(
       halfPitchHeight,
     ),
   ];
-
-  return corners.map((corner) =>
-    corner
-      .clone()
-      .applyQuaternion(rotationQuaternion),
-  );
 }
 
 /*
- * Uses the Canvas's built-in PerspectiveCamera.
+ * Uses the perspective camera created directly by Canvas.
  *
- * This avoids swapping default cameras during the mobile render,
- * which could leave the Canvas looking at the wrong camera.
+ * This component does not create or replace the active camera. It only
+ * positions the existing camera, preventing the previous default-camera
+ * conflict that could leave the WebGL scene rendering transparent.
  */
 function MobileScrollingCamera({
-  sceneRotation,
   currentPanRef,
   targetPanRef,
+  suppressGroundClickRef,
 }: {
-  sceneRotation: number;
-  currentPanRef: MutableRefObject<number>;
-  targetPanRef: MutableRefObject<number>;
+  currentPanRef:
+    MutableRefObject<number>;
+  targetPanRef:
+    MutableRefObject<number>;
+  suppressGroundClickRef:
+    MutableRefObject<boolean>;
 }) {
   const {
     camera,
+    gl,
     size,
   } = useThree();
 
-  const rotationQuaternion = useMemo(
-    () =>
-      new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0),
-        sceneRotation,
-      ),
-    [sceneRotation],
-  );
-
-  const localCameraOffset = useMemo(() => {
-    const azimuth =
-      THREE.MathUtils.degToRad(
-        MOBILE_CAMERA_AZIMUTH_DEG,
-      );
-
-    const elevation =
-      THREE.MathUtils.degToRad(
-        MOBILE_CAMERA_ELEVATION_DEG,
-      );
-
-    const horizontalDistance =
-      Math.cos(elevation) *
-      MOBILE_CAMERA_DISTANCE;
-
-    const verticalDistance =
-      Math.sin(elevation) *
-      MOBILE_CAMERA_DISTANCE;
-
-    /*
-     * Negative X is behind the player's own goal.
-     * Positive Z moves the camera toward the right side.
-     */
-    return new THREE.Vector3(
-      -Math.cos(azimuth) *
-        horizontalDistance,
-
-      verticalDistance,
-
-      Math.sin(azimuth) *
-        horizontalDistance,
+  const activePointerIdRef =
+    useRef<number | null>(
+      null,
     );
-  }, []);
+
+  const pointerStartRef =
+    useRef({
+      x: 0,
+      y: 0,
+      pan: MOBILE_INITIAL_PAN,
+    });
+
+  const didDragRef =
+    useRef(false);
+
+  const cameraOffset =
+    useMemo(() => {
+      const azimuth =
+        THREE.MathUtils.degToRad(
+          MOBILE_CAMERA_AZIMUTH_DEG,
+        );
+
+      const elevation =
+        THREE.MathUtils.degToRad(
+          MOBILE_CAMERA_ELEVATION_DEG,
+        );
+
+      const horizontalDistance =
+        Math.cos(
+          elevation,
+        ) *
+        MOBILE_CAMERA_DISTANCE;
+
+      const verticalDistance =
+        Math.sin(
+          elevation,
+        ) *
+        MOBILE_CAMERA_DISTANCE;
+
+      /*
+       * Negative X is behind the player's own goal.
+       * Positive Z is toward the right touchline.
+       */
+      return new THREE.Vector3(
+        -Math.cos(
+          azimuth,
+        ) *
+          horizontalDistance,
+
+        verticalDistance,
+
+        Math.sin(
+          azimuth,
+        ) *
+          horizontalDistance,
+      );
+    }, []);
 
   useEffect(() => {
     if (
@@ -410,6 +396,13 @@ function MobileScrollingCamera({
     camera.fov =
       MOBILE_CAMERA_FOV;
 
+    camera.aspect =
+      size.width /
+      Math.max(
+        size.height,
+        1,
+      );
+
     camera.near = 0.1;
     camera.far = 220;
 
@@ -419,124 +412,400 @@ function MobileScrollingCamera({
       0,
     );
 
-    camera.aspect =
-      size.width /
-      Math.max(1, size.height);
-
     camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
   }, [
     camera,
     size.width,
     size.height,
   ]);
 
-  useFrame((_, delta) => {
+  useEffect(() => {
+    const canvas =
+      gl.domElement;
+
+    const previousTouchAction =
+      canvas.style.touchAction;
+
+    const previousCursor =
+      canvas.style.cursor;
+
+    canvas.style.touchAction =
+      "none";
+
+    const handlePointerDown = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        null
+      ) {
+        return;
+      }
+
+      activePointerIdRef.current =
+        event.pointerId;
+
+      pointerStartRef.current = {
+        x:
+          event.clientX,
+
+        y:
+          event.clientY,
+
+        pan:
+          targetPanRef.current,
+      };
+
+      didDragRef.current =
+        false;
+
+      try {
+        canvas.setPointerCapture(
+          event.pointerId,
+        );
+      } catch {
+        // Embedded mobile browsers may reject pointer capture.
+      }
+    };
+
+    const handlePointerMove = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        event.pointerId
+      ) {
+        return;
+      }
+
+      const deltaX =
+        event.clientX -
+        pointerStartRef.current.x;
+
+      const deltaY =
+        event.clientY -
+        pointerStartRef.current.y;
+
+      const distance =
+        Math.hypot(
+          deltaX,
+          deltaY,
+        );
+
+      if (
+        distance >=
+        MOBILE_DRAG_THRESHOLD
+      ) {
+        didDragRef.current =
+          true;
+
+        suppressGroundClickRef.current =
+          true;
+
+        canvas.style.cursor =
+          "grabbing";
+      }
+
+      if (
+        !didDragRef.current
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const normalizedX =
+        deltaX /
+        Math.max(
+          size.width,
+          1,
+        );
+
+      const normalizedY =
+        deltaY /
+        Math.max(
+          size.height,
+          1,
+        );
+
+      /*
+       * Drag upward to move toward the opponent goal.
+       * Drag downward to move toward the player's own goal.
+       *
+       * Horizontal motion contributes slightly because the field is viewed
+       * diagonally from the right side.
+       */
+      const panDelta =
+        -normalizedY *
+          MOBILE_VERTICAL_DRAG_SENSITIVITY -
+        normalizedX *
+          MOBILE_HORIZONTAL_DRAG_SENSITIVITY;
+
+      targetPanRef.current =
+        clamp(
+          pointerStartRef.current.pan +
+            panDelta,
+          0,
+          1,
+        );
+    };
+
+    const finishPointer = (
+      event: PointerEvent,
+    ) => {
+      if (
+        activePointerIdRef.current !==
+        event.pointerId
+      ) {
+        return;
+      }
+
+      activePointerIdRef.current =
+        null;
+
+      canvas.style.cursor =
+        previousCursor;
+
+      try {
+        canvas.releasePointerCapture(
+          event.pointerId,
+        );
+      } catch {
+        // The pointer may already have been released.
+      }
+    };
+
+    const handleWheel = (
+      event: WheelEvent,
+    ) => {
+      event.preventDefault();
+
+      targetPanRef.current =
+        clamp(
+          targetPanRef.current +
+            event.deltaY *
+              MOBILE_WHEEL_SENSITIVITY,
+          0,
+          1,
+        );
+    };
+
+    const handleClickCapture = (
+      event: MouseEvent,
+    ) => {
+      if (
+        !suppressGroundClickRef.current
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      suppressGroundClickRef.current =
+        false;
+    };
+
+    canvas.addEventListener(
+      "pointerdown",
+      handlePointerDown,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointermove",
+      handlePointerMove,
+      {
+        passive: false,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointerup",
+      finishPointer,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "pointercancel",
+      finishPointer,
+      {
+        passive: true,
+      },
+    );
+
+    canvas.addEventListener(
+      "wheel",
+      handleWheel,
+      {
+        passive: false,
+      },
+    );
+
+    canvas.addEventListener(
+      "click",
+      handleClickCapture,
+      true,
+    );
+
+    return () => {
+      canvas.style.touchAction =
+        previousTouchAction;
+
+      canvas.style.cursor =
+        previousCursor;
+
+      canvas.removeEventListener(
+        "pointerdown",
+        handlePointerDown,
+      );
+
+      canvas.removeEventListener(
+        "pointermove",
+        handlePointerMove,
+      );
+
+      canvas.removeEventListener(
+        "pointerup",
+        finishPointer,
+      );
+
+      canvas.removeEventListener(
+        "pointercancel",
+        finishPointer,
+      );
+
+      canvas.removeEventListener(
+        "wheel",
+        handleWheel,
+      );
+
+      canvas.removeEventListener(
+        "click",
+        handleClickCapture,
+        true,
+      );
+    };
+  }, [
+    gl,
+    size.width,
+    size.height,
+    targetPanRef,
+    suppressGroundClickRef,
+  ]);
+
+  useFrame(
+    (_, delta) => {
+      if (
+        !(
+          camera instanceof
+          THREE.PerspectiveCamera
+        )
+      ) {
+        return;
+      }
+
+      const safeDelta =
+        Math.min(
+          delta,
+          0.05,
+        );
+
+      const dampingFactor =
+        1 -
+        Math.exp(
+          -MOBILE_CAMERA_PAN_DAMPING *
+            safeDelta,
+        );
+
+      currentPanRef.current =
+        THREE.MathUtils.lerp(
+          currentPanRef.current,
+          targetPanRef.current,
+          dampingFactor,
+        );
+
+      const targetX =
+        THREE.MathUtils.lerp(
+          -MOBILE_CAMERA_PAN_RANGE,
+          MOBILE_CAMERA_PAN_RANGE,
+          currentPanRef.current,
+        );
+
+      const target =
+        new THREE.Vector3(
+          targetX,
+          MOBILE_CAMERA_TARGET_HEIGHT,
+          0,
+        );
+
+      camera.position
+        .copy(
+          target,
+        )
+        .add(
+          cameraOffset,
+        );
+
+      camera.up.set(
+        0,
+        1,
+        0,
+      );
+
+      camera.lookAt(
+        target,
+      );
+
+      camera.fov =
+        MOBILE_CAMERA_FOV;
+
+      camera.aspect =
+        size.width /
+        Math.max(
+          size.height,
+          1,
+        );
+
+      camera.near =
+        0.1;
+
+      camera.far =
+        220;
+
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld(true);
+    },
+  );
+
+  return null;
+}
+
+/*
+ * Uses the orthographic camera created directly by Canvas.
+ */
+function DesktopOrthographicCamera() {
+  const {
+    camera,
+    size,
+  } = useThree();
+
+  useEffect(() => {
     if (
       !(
         camera instanceof
-        THREE.PerspectiveCamera
+        THREE.OrthographicCamera
       )
     ) {
       return;
     }
 
-    const safeDelta =
-      Math.min(delta, 0.05);
-
-    const damping =
-      1 -
-      Math.exp(
-        -MOBILE_CAMERA_PAN_DAMPING *
-          safeDelta,
-      );
-
-    currentPanRef.current =
-      THREE.MathUtils.lerp(
-        currentPanRef.current,
-        targetPanRef.current,
-        damping,
-      );
-
-    const localTargetX =
-      THREE.MathUtils.lerp(
-        -MOBILE_CAMERA_PAN_RANGE,
-        MOBILE_CAMERA_PAN_RANGE,
-        currentPanRef.current,
-      );
-
-    const localTarget =
-      new THREE.Vector3(
-        localTargetX,
-        MOBILE_CAMERA_TARGET_HEIGHT,
-        0,
-      );
-
-    const localCameraPosition =
-      localTarget
-        .clone()
-        .add(localCameraOffset);
-
-    const worldTarget =
-      localTarget
-        .clone()
-        .applyQuaternion(
-          rotationQuaternion,
-        );
-
-    const worldCameraPosition =
-      localCameraPosition
-        .clone()
-        .applyQuaternion(
-          rotationQuaternion,
-        );
-
-    camera.position.copy(
-      worldCameraPosition,
-    );
-
-    camera.up.set(
-      0,
-      1,
-      0,
-    );
-
-    camera.lookAt(
-      worldTarget,
-    );
-
-    camera.aspect =
-      size.width /
-      Math.max(1, size.height);
-
-    camera.fov =
-      MOBILE_CAMERA_FOV;
-
-    camera.near = 0.1;
-    camera.far = 220;
-
-    camera.updateProjectionMatrix();
-    camera.updateMatrixWorld(true);
-  });
-
-  return null;
-}
-
-function DesktopOrthographicCamera() {
-  const cameraRef =
-    useRef<THREE.OrthographicCamera>(
-      null,
-    );
-
-  const {
-    size,
-  } = useThree();
-
-  useEffect(() => {
-    const camera =
-      cameraRef.current;
-
     if (
-      !camera ||
       size.width <= 0 ||
       size.height <= 0
     ) {
@@ -554,20 +823,28 @@ function DesktopOrthographicCamera() {
       );
 
     const horizontalDistance =
-      Math.cos(elevation) *
+      Math.cos(
+        elevation,
+      ) *
       DESKTOP_CAMERA_DISTANCE;
 
     const cameraHeight =
-      Math.sin(elevation) *
+      Math.sin(
+        elevation,
+      ) *
       DESKTOP_CAMERA_DISTANCE;
 
     camera.position.set(
-      Math.sin(azimuth) *
+      Math.sin(
+        azimuth,
+      ) *
         horizontalDistance,
 
       cameraHeight,
 
-      Math.cos(azimuth) *
+      Math.cos(
+        azimuth,
+      ) *
         horizontalDistance,
     );
 
@@ -578,24 +855,37 @@ function DesktopOrthographicCamera() {
         0,
       );
 
-    camera.lookAt(target);
+    camera.lookAt(
+      target,
+    );
 
-    camera.near = 0.1;
-    camera.far = 120;
+    camera.near =
+      0.1;
 
-    camera.updateMatrixWorld(true);
+    camera.far =
+      120;
+
+    camera.updateMatrixWorld(
+      true,
+    );
 
     const forward =
       target
         .clone()
-        .sub(camera.position)
+        .sub(
+          camera.position,
+        )
         .normalize();
 
     const cameraRight =
       new THREE.Vector3()
         .crossVectors(
           forward,
-          new THREE.Vector3(0, 1, 0),
+          new THREE.Vector3(
+            0,
+            1,
+            0,
+          ),
         )
         .normalize();
 
@@ -608,24 +898,40 @@ function DesktopOrthographicCamera() {
         .normalize();
 
     const corners =
-      createSceneFitCorners(0);
+      createSceneFitCorners();
 
-    let minimumViewX = Infinity;
-    let maximumViewX = -Infinity;
-    let minimumViewY = Infinity;
-    let maximumViewY = -Infinity;
+    let minimumViewX =
+      Infinity;
 
-    for (const corner of corners) {
+    let maximumViewX =
+      -Infinity;
+
+    let minimumViewY =
+      Infinity;
+
+    let maximumViewY =
+      -Infinity;
+
+    for (
+      const corner of
+      corners
+    ) {
       const relative =
         corner
           .clone()
-          .sub(target);
+          .sub(
+            target,
+          );
 
       const viewX =
-        relative.dot(cameraRight);
+        relative.dot(
+          cameraRight,
+        );
 
       const viewY =
-        relative.dot(cameraUp);
+        relative.dot(
+          cameraUp,
+        );
 
       minimumViewX =
         Math.min(
@@ -692,36 +998,12 @@ function DesktopOrthographicCamera() {
 
     camera.updateProjectionMatrix();
   }, [
+    camera,
     size.width,
     size.height,
   ]);
 
-  return (
-    <OrthographicCamera
-      ref={cameraRef}
-      makeDefault
-      left={
-        -size.width / 2
-      }
-      right={
-        size.width / 2
-      }
-      top={
-        size.height / 2
-      }
-      bottom={
-        -size.height / 2
-      }
-      position={[
-        0,
-        16,
-        15,
-      ]}
-      zoom={40}
-      near={0.1}
-      far={120}
-    />
-  );
+  return null;
 }
 
 function createPitchTexture(): THREE.CanvasTexture {
@@ -737,7 +1019,9 @@ function createPitchTexture(): THREE.CanvasTexture {
     PITCH_HEIGHT;
 
   const context =
-    canvas.getContext("2d");
+    canvas.getContext(
+      "2d",
+    );
 
   if (!context) {
     throw new Error(
@@ -778,6 +1062,9 @@ function createPitchTexture(): THREE.CanvasTexture {
     canvas.height,
   );
 
+  /*
+   * Alternating mowing stripes.
+   */
   for (
     let column = 0;
     column < GRID_COLS;
@@ -796,6 +1083,9 @@ function createPitchTexture(): THREE.CanvasTexture {
     );
   }
 
+  /*
+   * Light grass texture.
+   */
   context.save();
 
   context.globalAlpha =
@@ -835,6 +1125,9 @@ function createPitchTexture(): THREE.CanvasTexture {
   context.lineWidth =
     2.2;
 
+  /*
+   * Outer boundary.
+   */
   context.strokeRect(
     1,
     1,
@@ -842,6 +1135,9 @@ function createPitchTexture(): THREE.CanvasTexture {
     canvas.height - 2,
   );
 
+  /*
+   * Halfway line.
+   */
   context.beginPath();
 
   context.moveTo(
@@ -856,6 +1152,9 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.stroke();
 
+  /*
+   * Center circle.
+   */
   context.beginPath();
 
   context.arc(
@@ -868,6 +1167,9 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.stroke();
 
+  /*
+   * Center spot.
+   */
   context.beginPath();
 
   context.arc(
@@ -883,6 +1185,9 @@ function createPitchTexture(): THREE.CanvasTexture {
 
   context.fill();
 
+  /*
+   * Penalty areas.
+   */
   const penaltyAreaTop =
     (
       PITCH_HEIGHT -
@@ -905,6 +1210,9 @@ function createPitchTexture(): THREE.CanvasTexture {
     PENALTY_AREA_HEIGHT,
   );
 
+  /*
+   * Tactical thirds.
+   */
   context.save();
 
   context.setLineDash(
@@ -998,8 +1306,11 @@ function GoalFrame({
     ) *
     SCALE;
 
-  const postHeight = 0.9;
-  const postRadius = 0.035;
+  const postHeight =
+    0.9;
+
+  const postRadius =
+    0.035;
 
   const goalX =
     atRightEnd
@@ -1168,7 +1479,9 @@ function Arrow3D({
         );
 
       points =
-        curve.getPoints(22);
+        curve.getPoints(
+          22,
+        );
     } else {
       points = [
         start,
@@ -1178,7 +1491,9 @@ function Arrow3D({
 
     const geometry =
       new THREE.BufferGeometry()
-        .setFromPoints(points);
+        .setFromPoints(
+          points,
+        );
 
     const material =
       new THREE.LineDashedMaterial({
@@ -1221,8 +1536,12 @@ function Arrow3D({
         );
 
     return {
-      line: lineObject,
-      headPosition: end,
+      line:
+        lineObject,
+
+      headPosition:
+        end,
+
       headQuaternion:
         quaternion,
     };
@@ -1259,8 +1578,12 @@ function Arrow3D({
   return (
     <group>
       <primitive
-        object={line}
-        dispose={null}
+        object={
+          line
+        }
+        dispose={
+          null
+        }
       />
 
       <mesh
@@ -1432,6 +1755,9 @@ function CommandArrows({
           `${playerId}-pass`,
         );
 
+        /*
+         * Pass-then-move begins at the player's original tile.
+         */
         if (
           command.followUp
             ?.type ===
@@ -1473,7 +1799,8 @@ function CommandArrows({
                 : 0,
 
             y:
-              PITCH_HEIGHT / 2,
+              PITCH_HEIGHT /
+              2,
           },
 
           "#ff6b35",
@@ -1491,11 +1818,21 @@ function CommandArrows({
       {arrows.map(
         (arrow) => (
           <Arrow3D
-            key={arrow.key}
-            from={arrow.from}
-            to={arrow.to}
-            color={arrow.color}
-            arced={arrow.arced}
+            key={
+              arrow.key
+            }
+            from={
+              arrow.from
+            }
+            to={
+              arrow.to
+            }
+            color={
+              arrow.color
+            }
+            arced={
+              arrow.arced
+            }
           />
         ),
       )}
@@ -1534,16 +1871,6 @@ export default function MatchPitch3D({
       MOBILE_INITIAL_PAN,
     );
 
-  const dragStateRef =
-    useRef<DragState>({
-      pointerId: null,
-      startX: 0,
-      startY: 0,
-      startPan:
-        MOBILE_INITIAL_PAN,
-      didDrag: false,
-    });
-
   const suppressGroundClickRef =
     useRef(false);
 
@@ -1552,204 +1879,6 @@ export default function MatchPitch3D({
       pitchTexture.dispose();
     };
   }, [pitchTexture]);
-
-  const sceneRotation =
-    isVertical
-      ? MOBILE_SCENE_ROTATION
-      : 0;
-
-  const handleCameraPointerDown =
-    useCallback(
-      (
-        event:
-          ReactPointerEvent<HTMLDivElement>,
-      ) => {
-        if (!isVertical) {
-          return;
-        }
-
-        if (
-          dragStateRef.current
-            .pointerId !== null
-        ) {
-          return;
-        }
-
-        dragStateRef.current = {
-          pointerId:
-            event.pointerId,
-
-          startX:
-            event.clientX,
-
-          startY:
-            event.clientY,
-
-          startPan:
-            targetPanRef.current,
-
-          didDrag:
-            false,
-        };
-
-        try {
-          event.currentTarget.setPointerCapture(
-            event.pointerId,
-          );
-        } catch {
-          // Some embedded mobile browsers reject pointer capture.
-        }
-      },
-      [isVertical],
-    );
-
-  const handleCameraPointerMove =
-    useCallback(
-      (
-        event:
-          ReactPointerEvent<HTMLDivElement>,
-      ) => {
-        const dragState =
-          dragStateRef.current;
-
-        if (
-          !isVertical ||
-          dragState.pointerId !==
-            event.pointerId
-        ) {
-          return;
-        }
-
-        const deltaX =
-          event.clientX -
-          dragState.startX;
-
-        const deltaY =
-          event.clientY -
-          dragState.startY;
-
-        const distance =
-          Math.hypot(
-            deltaX,
-            deltaY,
-          );
-
-        if (
-          !dragState.didDrag &&
-          distance >=
-            MOBILE_DRAG_THRESHOLD_PX
-        ) {
-          dragState.didDrag =
-            true;
-
-          suppressGroundClickRef.current =
-            true;
-        }
-
-        if (
-          !dragState.didDrag
-        ) {
-          return;
-        }
-
-        event.preventDefault();
-
-        const width =
-          Math.max(
-            1,
-            event.currentTarget
-              .clientWidth,
-          );
-
-        const height =
-          Math.max(
-            1,
-            event.currentTarget
-              .clientHeight,
-          );
-
-        const normalizedHorizontal =
-          deltaX / width;
-
-        const normalizedVertical =
-          deltaY / height;
-
-        const panDelta =
-          -normalizedVertical *
-            MOBILE_VERTICAL_DRAG_SENSITIVITY -
-          normalizedHorizontal *
-            MOBILE_HORIZONTAL_DRAG_SENSITIVITY;
-
-        targetPanRef.current =
-          clamp(
-            dragState.startPan +
-              panDelta,
-            0,
-            1,
-          );
-      },
-      [isVertical],
-    );
-
-  const finishCameraPointer =
-    useCallback(
-      (
-        event:
-          ReactPointerEvent<HTMLDivElement>,
-      ) => {
-        const dragState =
-          dragStateRef.current;
-
-        if (
-          dragState.pointerId !==
-          event.pointerId
-        ) {
-          return;
-        }
-
-        try {
-          event.currentTarget.releasePointerCapture(
-            event.pointerId,
-          );
-        } catch {
-          // Pointer may already be released.
-        }
-
-        dragStateRef.current = {
-          pointerId: null,
-          startX: 0,
-          startY: 0,
-          startPan:
-            targetPanRef.current,
-          didDrag: false,
-        };
-      },
-      [],
-    );
-
-  const handleCameraWheel =
-    useCallback(
-      (
-        event:
-          ReactWheelEvent<HTMLDivElement>,
-      ) => {
-        if (!isVertical) {
-          return;
-        }
-
-        event.preventDefault();
-
-        targetPanRef.current =
-          clamp(
-            targetPanRef.current +
-              event.deltaY *
-                MOBILE_WHEEL_SENSITIVITY,
-            0,
-            1,
-          );
-      },
-      [isVertical],
-    );
 
   const tileMap =
     useMemo(() => {
@@ -1795,7 +1924,8 @@ export default function MatchPitch3D({
       const occupancy =
         new Map<
           string,
-          "friendly" | "enemy"
+          | "friendly"
+          | "enemy"
         >();
 
       for (
@@ -1841,7 +1971,9 @@ export default function MatchPitch3D({
           `${tile.col},${tile.row}`;
 
         const occupant =
-          occupancy.get(key);
+          occupancy.get(
+            key,
+          );
 
         if (
           occupant ===
@@ -1901,17 +2033,14 @@ export default function MatchPitch3D({
 
         event.stopPropagation();
 
-        const localPoint =
-          inverseRotateXZ(
-            event.point.x,
-            event.point.z,
-            sceneRotation,
-          );
-
+        /*
+         * The pitch is no longer separately rotated on mobile.
+         * The event point is already in pitch-world coordinates.
+         */
         const clickedPosition =
           worldToPitch(
-            localPoint.x,
-            localPoint.z,
+            event.point.x,
+            event.point.z,
           );
 
         const selectableTeam =
@@ -2084,7 +2213,6 @@ export default function MatchPitch3D({
         selectedPlayerId,
         passTargetMode,
         activePlanningTeam,
-        sceneRotation,
         onPlayerClick,
         onTileClick,
       ],
@@ -2099,33 +2227,65 @@ export default function MatchPitch3D({
       frame.ball.position,
     );
 
+  const canvasCamera =
+    isVertical
+      ? {
+          position:
+            [
+              -10,
+              12,
+              7,
+            ] as [
+              number,
+              number,
+              number,
+            ],
+
+          fov:
+            MOBILE_CAMERA_FOV,
+
+          near:
+            0.1,
+
+          far:
+            220,
+        }
+      : {
+          position:
+            [
+              0,
+              16,
+              15,
+            ] as [
+              number,
+              number,
+              number,
+            ],
+
+          zoom:
+            40,
+
+          near:
+            0.1,
+
+          far:
+            120,
+        };
+
   return (
     <div
-      onPointerDown={
-        handleCameraPointerDown
-      }
-      onPointerMove={
-        handleCameraPointerMove
-      }
-      onPointerUp={
-        finishCameraPointer
-      }
-      onPointerCancel={
-        finishCameraPointer
-      }
-      onWheel={
-        handleCameraWheel
-      }
       style={{
-        width: "100%",
-        height: "100%",
-        position: "relative",
-        overflow: "hidden",
+        width:
+          "100%",
 
-        touchAction:
-          isVertical
-            ? "none"
-            : "auto",
+        height:
+          "100%",
+
+        position:
+          "relative",
+
+        overflow:
+          "hidden",
 
         background:
           "radial-gradient(circle at 50% 45%, #47764a 0%, #315d3a 45%, #1d3e29 72%, #11271b 100%)",
@@ -2133,32 +2293,33 @@ export default function MatchPitch3D({
     >
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 1,
+          position:
+            "absolute",
+
+          inset:
+            0,
+
+          zIndex:
+            1,
         }}
       >
         <Canvas
           shadows
+          orthographic={
+            !isVertical
+          }
           dpr={[
             1,
             1.35,
           ]}
-          camera={{
-            position: [
-              0,
-              12,
-              16,
-            ],
-
-            fov:
-              MOBILE_CAMERA_FOV,
-
-            near:
-              0.1,
-
-            far:
-              220,
+          camera={
+            canvasCamera
+          }
+          style={{
+            touchAction:
+              isVertical
+                ? "none"
+                : "auto",
           }}
           gl={{
             antialias:
@@ -2173,14 +2334,14 @@ export default function MatchPitch3D({
         >
           {isVertical ? (
             <MobileScrollingCamera
-              sceneRotation={
-                sceneRotation
-              }
               currentPanRef={
                 currentPanRef
               }
               targetPanRef={
                 targetPanRef
+              }
+              suppressGroundClickRef={
+                suppressGroundClickRef
               }
             />
           ) : (
@@ -2231,16 +2392,15 @@ export default function MatchPitch3D({
             }
           />
 
-          <group
-            rotation={[
-              0,
-              sceneRotation,
-              0,
-            ]}
-          >
+          {/*
+           * No mobile rotation is applied here.
+           * The 41-degree perspective is produced by the camera.
+           */}
+          <group>
             <mesh
               rotation={[
-                -Math.PI / 2,
+                -Math.PI /
+                  2,
                 0,
                 0,
               ]}
@@ -2300,9 +2460,14 @@ export default function MatchPitch3D({
                 const [
                   column,
                   row,
-                ] = key
-                  .split(",")
-                  .map(Number);
+                ] =
+                  key
+                    .split(
+                      ",",
+                    )
+                    .map(
+                      Number,
+                    );
 
                 const center =
                   pitchToWorld(
@@ -2314,7 +2479,9 @@ export default function MatchPitch3D({
 
                 return (
                   <mesh
-                    key={key}
+                    key={
+                      key
+                    }
                     position={[
                       center.x,
                       0.022,
