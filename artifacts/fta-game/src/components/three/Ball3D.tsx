@@ -48,11 +48,8 @@ function createBallTexture(): THREE.CanvasTexture {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.needsUpdate = true;
-  texture.minFilter = THREE.LinearFilter;
-  texture.generateMipmaps = false;
   return texture;
 }
-
 
 export function Ball3D({ x, y = 0, z, radius = 0.11, active = false }: Ball3DProps) {
   const texture = useMemo(() => createBallTexture(), []);
