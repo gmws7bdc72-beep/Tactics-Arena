@@ -1,0 +1,217 @@
+export const TEAM_TACTICS: Record<TeamTacticId, TeamTactic> = {
+  slow_possession: {
+    id: "slow_possession",
+    name: "Slow Possession Progression",
+    description:
+      "Patient buildup, recycling passes, short support angles, and careful control before entering the box.",
+    tempo: 2,
+    risk: 2,
+    pressIntensity: 4,
+    defensiveLine: 5,
+    longBallFrequency: 1,
+    restDefenseDepth: 5,
+    progression: "slow",
+
+    outOfPossessionName: "Compact Zonal Mid Block",
+    outOfPossessionDescription:
+      "Drops into a calm mid block, protects central passing lanes, and avoids reckless chasing. Midfielders screen, defenders hold shape.",
+    markingStyle: "zonal",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "bad_touch",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  balanced_build_up: {
+    id: "balanced_build_up",
+    name: "Balanced Build-Up",
+    description:
+      "Mixes short passing, safe dribbles, selective forward passes, and balanced rest defense.",
+    tempo: 5,
+    risk: 5,
+    pressIntensity: 5,
+    defensiveLine: 6,
+    longBallFrequency: 3,
+    restDefenseDepth: 4,
+    progression: "balanced",
+
+    outOfPossessionName: "Balanced Hybrid Block",
+    outOfPossessionDescription:
+      "Starts zonal, then picks up nearby runners when the ball enters dangerous areas. No extreme pressing, no parking the bus.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "back_pass",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  direct_play: {
+    id: "direct_play",
+    name: "Direct Play",
+    description:
+      "Looks forward early, plays vertical, and uses long diagonals when the midfield gets crowded.",
+    tempo: 7,
+    risk: 6,
+    pressIntensity: 5,
+    defensiveLine: 6,
+    longBallFrequency: 6,
+    restDefenseDepth: 4,
+    progression: "direct",
+
+    outOfPossessionName: "Direct Mid Block",
+    outOfPossessionDescription:
+      "Keeps two players ready to break, while defenders and midfielders protect the center. Presses loose touches but does not overcommit.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "compact",
+    pressTrigger: "bad_touch",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  counter_press: {
+    id: "counter_press",
+    name: "Counter Press",
+    description:
+      "Aggressive pressure after losing the ball, fast regains, then quick attacks before the defense resets.",
+    tempo: 7,
+    risk: 7,
+    pressIntensity: 9,
+    defensiveLine: 8,
+    longBallFrequency: 4,
+    restDefenseDepth: 4,
+    progression: "direct",
+
+    outOfPossessionName: "High Counter-Press",
+    outOfPossessionDescription:
+      "Hunts the ball immediately, presses high, and uses man-oriented pressure around the carrier. Risky, fast, and chaotic.",
+    markingStyle: "hybrid",
+    blockHeight: "high",
+    defensiveShape: "aggressive",
+    pressTrigger: "always",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  low_block_counter: {
+    id: "low_block_counter",
+    name: "Low Block Counter",
+    description:
+      "Sits deeper, protects the box, keeps a strong rest defender, then breaks forward quickly.",
+    tempo: 6,
+    risk: 5,
+    pressIntensity: 3,
+    defensiveLine: 3,
+    longBallFrequency: 7,
+    restDefenseDepth: 6,
+    progression: "counter",
+
+    outOfPossessionName: "Low Block Man Protection",
+    outOfPossessionDescription:
+      "Defenders stay deep, protect the box, and man-mark the biggest forward threat. They invite pressure, then counter.",
+    markingStyle: "man_marking",
+    blockHeight: "low",
+    defensiveShape: "protect_box",
+    pressTrigger: "none",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  quick_counterattack: {
+    id: "quick_counterattack",
+    name: "Quick Counterattack",
+    description:
+      "First look is forward. Second look is a runner behind the line. Very fast and risky.",
+    tempo: 9,
+    risk: 8,
+    pressIntensity: 6,
+    defensiveLine: 5,
+    longBallFrequency: 7,
+    restDefenseDepth: 5,
+    progression: "counter",
+
+    outOfPossessionName: "Trap-and-Sprint Defense",
+    outOfPossessionDescription:
+      "Lets the opponent enter bait zones, then jumps passing lanes and immediately releases runners. More aggressive than a low block.",
+    markingStyle: "hybrid",
+    blockHeight: "mid",
+    defensiveShape: "aggressive",
+    pressTrigger: "wide_trap",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  wide_crossing: {
+    id: "wide_crossing",
+    name: "Wide Crossing",
+    description:
+      "Moves the ball wide, attacks the far post, and uses diagonal long balls into crossing zones.",
+    tempo: 6,
+    risk: 6,
+    pressIntensity: 5,
+    defensiveLine: 5,
+    longBallFrequency: 6,
+    restDefenseDepth: 4,
+    progression: "direct",
+
+    outOfPossessionName: "Wide Trap Zonal Defense",
+    outOfPossessionDescription:
+      "Protects the middle, allows the ball wide, then traps near the sideline with nearby defenders and midfielders.",
+    markingStyle: "zonal",
+    blockHeight: "mid",
+    defensiveShape: "wide",
+    pressTrigger: "wide_trap",
+    markPriority: {
+      defender: "forward",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+
+  long_ball_target: {
+    id: "long_ball_target",
+    name: "Long-Ball Target Man",
+    description:
+      "Goalkeeper and defenders launch aerial balls toward a strong forward who can win first contact.",
+    tempo: 7,
+    risk: 7,
+    pressIntensity: 4,
+    defensiveLine: 4,
+    longBallFrequency: 9,
+    restDefenseDepth: 6,
+    progression: "direct",
+
+    outOfPossessionName: "Deep Aerial Protection",
+    outOfPossessionDescription:
+      "Stays deep, wins headers, protects the central lane, and keeps strong defenders close to dangerous forwards.",
+    markingStyle: "man_marking",
+    blockHeight: "low",
+    defensiveShape: "protect_box",
+    pressTrigger: "back_pass",
+    markPriority: {
+      defender: "striker",
+      midfielder: "midfielder",
+      forward: "defender",
+    },
+  },
+};
