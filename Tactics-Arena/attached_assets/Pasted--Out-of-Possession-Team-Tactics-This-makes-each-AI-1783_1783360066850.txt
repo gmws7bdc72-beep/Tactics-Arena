@@ -1,0 +1,288 @@
+// ─── Out-of-Possession Team Tactics ────────────────────────────────────────
+// This makes each AI team defend differently:
+// zonal, man marking, hybrid, low/mid/high block, wide traps, box protection.
+
+function roleMatchesMarkPriority(
+  marker: SimPlayer,
+  target: SimPlayer,
+  tactic: TeamTactic,
+): boolean {
+  const priority = tactic.markPriority;
+
+  if (!priority) return false;
+
+  if (marker.role === "defender") {
+    return target.role === priority.defender;
+  }
+
+  if (marker.role === "midfielder") {
+    return target.role === priority.midfielder;
+  }
+
+  if (marker.role === "forward" || marker.role === "striker") {
+    return target.role === priority.forward;
+  }
+
+  return false;
+}
+
+function blockColForRole(player: SimPlayer, tactic: TeamTactic): number {
+  const low =
+    tactic.blockHeight === "low" ||
+    tactic.defensiveShape === "protect_box";
+
+  const high =
+    tactic.blockHeight === "high" ||
+    tactic.pressTrigger === "always";
+
+  if (low) {
+    if (player.role === "defender") return GRID_COLS - 4;
+    if (player.role === "midfielder") return GRID_COLS - 6;
+    return GRID_COLS - 8;
+  }
+
+  if (high) {
+    if (player.role === "defender") return GRID_COLS - 7;
+    if (player.role === "midfielder") return GRID_COLS - 9;
+    return GRID_COLS - 11;
+  }
+
+  // mid block
+  if (player.role === "defender") return GRID_COLS - 5;
+  if (player.role === "midfielder") return GRID_COLS - 7;
+  return GRID_COLS - 9;
+}
+
+function clampAITile(tile: TilePos): TilePos {
+  return {
+    col: Math.max(0, Math.min(GRID_COLS - 1, tile.col)),
+    row: Math.max(0, Math.min(GRID_ROWS - 1, tile.row)),
+  };
+}
+
+function findAssignedMark(
+  marker: SimPlayer,
+  opponents: SimPlayer[],
+  tactic: TeamTactic,
+): SimPlayer | null {
+  const possible = opponents.filter((opp) =>
+    roleMatchesMarkPriority(marker, opp, tactic),
+  );
+
+  if (possible.length === 0) return null;
+
+  const markerTile = posToTile(marker.position);
+
+  return possible
+    .map((opp) => ({
+      opp,
+      dist: tileDist(markerTile, posToTile(opp.position)),
+    }))
+    .sort((a, b) => a.dist - b.dist)[0]?.opp ?? null;
+}
+
+function manMarkTile(
+  marker: SimPlayer,
+  target: SimPlayer,
+  ballTile: TilePos,
+  tactic: TeamTactic,
+): TilePos {
+  const targetTile = posToTile(target.position);
+
+  // AI defends the right goal, so it wants to stand slightly goal-side,
+  // meaning one column to the right of the target.
+  let col = targetTile.col + 1;
+  let row = targetTile.row;
+
+  if (marker.role === "defender") {
+    col = targetTile.col + 1;
+  }
+
+  if (marker.role === "midfielder") {
+    col = targetTile.col;
+  }
+
+  if (marker.role === "forward" || marker.role === "striker") {
+    col = targetTile.col - 1;
+  }
+
+  // Low block teams do not chase marks too far out.
+  if (tactic.blockHeight === "low") {
+    col = Math.max(col, GRID_COLS - 7);
+  }
+
+  // High press teams can follow higher.
+  if (tactic.blockHeight === "high") {
+    col = Math.max(2, col);
+  }
+
+  // If the marked player has the ball, close tighter.
+  if (targetTile.col === ballTile.col && targetTile.row === ballTile.row) {
+    col = targetTile.col + 1;
+    row = targetTile.row;
+  }
+
+  return clampAITile({ col, row });
+}
+
+function zonalBlockTile(
+  player: SimPlayer,
+  playerIndex: number,
+  ballTile: TilePos,
+  tactic: TeamTactic,
+): TilePos {
+  const baseCol = blockColForRole(player, tactic);
+  const centerRow = Math.floor(GRID_ROWS / 2);
+
+  let row = centerRow;
+
+  if (player.role === "defender") {
+    const defenderRows = [centerRow - 2, centerRow, centerRow + 2];
+    row = defenderRows[playerIndex % defenderRows.length];
+  } else if (player.role === "midfielder") {
+    const midRows = [centerRow - 1, centerRow + 1, centerRow];
+    row = midRows[playerIndex % midRows.length];
+  } else {
+    row = ballTile.row;
+  }
+
+  // Compact teams squeeze toward the ball side but stay central.
+  if (tactic.defensiveShape === "compact") {
+    row = Math.round((row * 2 + ballTile.row) / 3);
+  }
+
+  // Wide-trap teams slide harder to the wing.
+  if (
+    tactic.defensiveShape === "wide" ||
+    tactic.pressTrigger === "wide_trap"
+  ) {
+    if (ballTile.row <= 2) row = Math.max(0, row - 1);
+    if (ballTile.row >= GRID_ROWS - 3) row = Math.min(GRID_ROWS - 1, row + 1);
+  }
+
+  // Protect-box teams stay very central and deep.
+  if (tactic.defensiveShape === "protect_box") {
+    row = Math.round((row + centerRow) / 2);
+  }
+
+  let col = baseCol;
+
+  // High block steps toward the ball.
+  if (tactic.blockHeight === "high") {
+    col = Math.max(1, Math.min(baseCol, ballTile.col + 2));
+  }
+
+  // Low block refuses to get dragged too high.
+  if (tactic.blockHeight === "low") {
+    col = Math.max(baseCol, GRID_COLS - 7);
+  }
+
+  return clampAITile({ col, row });
+}
+
+function shouldPressBall(
+  player: SimPlayer,
+  ballTile: TilePos,
+  tactic: TeamTactic,
+): boolean {
+  if (player.role === "goalkeeper") return false;
+
+  const pt = posToTile(player.position);
+  const dist = tileDist(pt, ballTile);
+
+  if (tactic.pressTrigger === "always") {
+    return dist <= 5;
+  }
+
+  if (tactic.pressTrigger === "wide_trap") {
+    const ballWide = ballTile.row <= 2 || ballTile.row >= GRID_ROWS - 3;
+    return ballWide && dist <= 4;
+  }
+
+  if (tactic.pressTrigger === "back_pass") {
+    // If opponent is closer to their own goal, step up.
+    return ballTile.col > Math.floor(GRID_COLS / 2) && dist <= 4;
+  }
+
+  if (tactic.pressTrigger === "bad_touch") {
+    return dist <= 3;
+  }
+
+  return false;
+}
+
+function outOfPossessionTacticCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  pt: TilePos,
+  aiPlayers: SimPlayer[],
+  playerPlayers: SimPlayer[],
+  ball: SimBall,
+  ballTile: TilePos,
+  claimed: Set<string>,
+  friendly: Set<string>,
+  tactic: TeamTactic,
+): Command {
+  if (player.role === "goalkeeper") {
+    return currentCmd;
+  }
+
+  const playerIndex = aiPlayers.findIndex((p) => p.id === player.id);
+
+  // 1. Pressing trigger has priority.
+  // Counter-press teams and wide-trap teams actually jump to the ball.
+  if (shouldPressBall(player, ballTile, tactic)) {
+    const pressTile = clampAITile({
+      col: ballTile.col + 1,
+      row: ballTile.row,
+    });
+
+    const key = tileKey(pressTile.col, pressTile.row);
+
+    if (!claimed.has(key)) {
+      claimed.add(key);
+
+      return {
+        type: CommandType.MOVE,
+        targetPosition: tileToPos(pressTile.col, pressTile.row),
+      };
+    }
+  }
+
+  // 2. Man-marking teams assign players to roles.
+  if (
+    tactic.markingStyle === "man_marking" ||
+    tactic.markingStyle === "hybrid"
+  ) {
+    const mark = findAssignedMark(player, playerPlayers, tactic);
+
+    if (mark) {
+      const markTile = manMarkTile(player, mark, ballTile, tactic);
+      const key = tileKey(markTile.col, markTile.row);
+
+      if (!claimed.has(key)) {
+        claimed.add(key);
+
+        return {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(markTile.col, markTile.row),
+        };
+      }
+    }
+  }
+
+  // 3. Pure zonal or fallback behavior.
+  const zoneTile = zonalBlockTile(player, playerIndex, ballTile, tactic);
+  const key = tileKey(zoneTile.col, zoneTile.row);
+
+  if (!claimed.has(key)) {
+    claimed.add(key);
+
+    return {
+      type: CommandType.MOVE,
+      targetPosition: tileToPos(zoneTile.col, zoneTile.row),
+    };
+  }
+
+  return currentCmd;
+}

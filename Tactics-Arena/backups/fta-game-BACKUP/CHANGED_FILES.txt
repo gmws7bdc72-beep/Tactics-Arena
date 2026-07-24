@@ -1,0 +1,43 @@
+Football Tactics Arena upgrade
+
+Changed files:
+- src/engine/types.ts
+- src/game/players.ts
+- src/game/league.ts
+- src/game/twoPlayer.ts
+- src/engine/ai.ts
+- src/engine/simulation.ts
+- src/components/PitchCanvas.tsx
+- src/pages/Match.tsx
+- src/pages/OnlineMatch.tsx
+- src/pages/Home.tsx
+- src/pages/TeamProfiles.tsx
+- src/App.tsx
+
+Added/updated features:
+- Full player stat system for every player on every team.
+- Team tactics programmed for every AI team.
+- Tactics range from slow possession progression to direct play, pressing, low-block counters, wide crossing, quick counters, and long-ball target-man football.
+- Long-ball command support: aerial passes travel above the pitch, draw differently, and cannot be intercepted like normal ground passes until the ball drops near its landing point.
+- AI long-ball decision logic based on team tactic, player long passing, vision, aerial ability, pressure, and target movement.
+- Team Profiles screen from the home menu to view every team, tactic, and every player's stats.
+- Permanent rest-defense anchor: at least one AI defender/midfielder stays significantly behind the rest of the team.
+- Saved/older player teams still work; missing new stats fall back safely in display and simulation.
+
+Install plan:
+1. Upload fta-game-upgraded.zip to the top level of Replit.
+2. Run:
+   cd ~/workspace
+   rm -rf /tmp/fta-upgrade
+   mkdir -p /tmp/fta-upgrade
+   unzip -q fta-game-upgraded.zip -d /tmp/fta-upgrade
+   ls /tmp/fta-upgrade/artifacts/fta-game
+   rm -rf artifacts/fta-game-BACKUP
+   cp -r artifacts/fta-game artifacts/fta-game-BACKUP
+   rm -rf artifacts/fta-game
+   cp -r /tmp/fta-upgrade/artifacts/fta-game artifacts/fta-game
+
+Undo plan:
+   cd ~/workspace
+   rm -rf artifacts/fta-game
+   mv artifacts/fta-game-BACKUP artifacts/fta-game
