@@ -29,6 +29,8 @@ import {
   normalizeSleeveStyle,
 } from "../game/visuals";
 
+const PLAYER_VISUAL_SCALE = 1.12;
+
 interface Props {
   frame: FrameSnapshot | null;
   playerTeam: TeamConfig;
@@ -1103,12 +1105,23 @@ export default function PitchCanvas({
       const kitStyle = isPlayerTeam ? playerKitStyle : opponentKitStyle;
       const sleeveStyle = isPlayerTeam ? playerSleeveStyle : opponentSleeveStyle;
       const r = view.radius(
-        isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
+        (isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS) * PLAYER_VISUAL_SCALE,
         p.position.y,
       );
 
       let facing = facingByPlayerRef.current.get(p.id);
-      if (speed > 0.55) {
+      if (
+        (p.state === "PASSING" || p.state === "SHOOTING") &&
+        p.actionTarget
+      ) {
+        const targetPoint = view.project(p.actionTarget);
+        const rawAngle = Math.atan2(
+          targetPoint.y - pos.y,
+          targetPoint.x - pos.x,
+        );
+        facing = Math.round(rawAngle / (Math.PI / 4)) * (Math.PI / 4);
+        facingByPlayerRef.current.set(p.id, facing);
+      } else if (speed > 0.55) {
         const directionPoint = view.project({
           x: p.position.x + p.velocity.x * 0.05,
           y: p.position.y + p.velocity.y * 0.05,
@@ -1143,6 +1156,8 @@ export default function PitchCanvas({
         jerseyNumber: p.jerseyNumber,
         role: p.role,
         state: p.state,
+        stateTimer: p.stateTimer,
+        actionPassStyle: p.actionPassStyle,
         facing: facing ?? 0,
         time: animationTime,
         speed,
@@ -1174,7 +1189,8 @@ export default function PitchCanvas({
       const ownerSpeed = Math.hypot(owner.velocity.x, owner.velocity.y);
       const ownerFacing = facingByPlayerRef.current.get(owner.id) ?? 0;
       const ownerRadius = view.radius(
-        owner.role === "goalkeeper" ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
+        (owner.role === "goalkeeper" ? PLAYER_RADIUS + 3 : PLAYER_RADIUS) *
+          PLAYER_VISUAL_SCALE,
         owner.position.y,
       );
       const moving = ownerSpeed > 0.55 || owner.state === "MOVING" || owner.state === "DRIBBLING";

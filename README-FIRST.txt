@@ -1,29 +1,23 @@
-FOOTBALL TACTICS ARENA — VISUAL OVERHAUL PATCH
+FOOTBALL TACTICS ARENA — PLAYER SIZE, NAMEPLATES, AND KICK ANIMATIONS UPDATE
 
-This ZIP contains only the 11 files needed for the complete 2.5D player,
-kit, appearance, and animation overhaul.
+This ZIP is meant to be extracted over the already-installed Visual Overhaul project.
+It overwrites only seven source files.
 
-Apply from the Replit PROJECT WORKSPACE root:
+From the main Replit project workspace, run:
 
-  unzip -o FTA-Visual-Overhaul-PATCH.zip
+  unzip -o FTA-Player-Scale-Names-Kick-Animations-PATCH.zip
   cd artifacts/fta-game
   pnpm typecheck && pnpm build
 
-Then run/test the app and redeploy the published Replit version.
+Then test the game and redeploy the Replit app.
 
-Included features:
-- deterministic hairstyles, hair colors, skin tones, and facial hair
-- solid, vertical-stripe, horizontal-stripe, and diagonal-sash shirts
-- primary, secondary, and split sleeve treatments
-- Kit Workshop with live jersey preview
-- idle, run, dribble, pass, shot, contest, and recovery poses
-- eight-direction player facing
-- presentation-only dribble touches with possession snapback
-- offline and online kit/appearance propagation
+Included changes:
+- Player sprites are 12% larger without changing collision or simulation sizes.
+- Player names sit below/around the feet instead of above the head.
+- Ground passes use a short, compact inside-foot motion.
+- Long balls use a smoother, graceful full-body kick.
+- Shots use a faster, more explosive version of the long-ball motion.
+- Players turn toward the pass/shot target during the wind-up.
+- Move-then-pass combo commands now show the passing animation too.
 
-Validation performed before packaging:
-- patch applied cleanly to the uploaded clean source snapshot
-- all 90 TypeScript/TSX source files passed TypeScript syntax transpilation
-
-A complete dependency-backed build could not be run in ChatGPT's isolated runtime
-because the pnpm registry was unavailable. Run the two validation commands above in Replit.
+No cache deletion is required.

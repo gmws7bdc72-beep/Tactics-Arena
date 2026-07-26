@@ -57,6 +57,17 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
+      stateTimer: p.stateTimer,
+      actionPassStyle:
+        p.command?.type === CommandType.PASS
+          ? (p.command.passStyle ?? "ground")
+          : undefined,
+      actionTarget:
+        p.command?.type === CommandType.PASS && p.command.targetPosition
+          ? { ...p.command.targetPosition }
+          : p.command?.type === CommandType.SHOOT
+            ? { x: p.teamId === "player" ? PITCH_WIDTH : 0, y: PITCH_HEIGHT / 2 }
+            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,

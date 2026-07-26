@@ -192,6 +192,12 @@ export interface FrameSnapshot {
     position: Vec2;
     velocity: Vec2;
     state: PlayerState;
+    /** Remaining wind-up time, used only to synchronize presentation animations. */
+    stateTimer?: number;
+    /** The kind of pass currently being prepared. */
+    actionPassStyle?: PassStyle;
+    /** Screen-facing target for a pass or shot wind-up. */
+    actionTarget?: Vec2;
     name: string;
     jerseyNumber: number;
     role: PlayerRole;

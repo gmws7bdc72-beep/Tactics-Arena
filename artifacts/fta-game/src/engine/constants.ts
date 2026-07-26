@@ -33,6 +33,8 @@ export const PASS_SPEED = 160;
 export const SHOT_SPEED = 380;
 
 export const PASS_WIND_UP = 0.25;
+// Long balls use a longer, smoother wind-up so the full-body kick reads clearly.
+export const LONG_PASS_WIND_UP = 0.75;
 export const PASS_RECOVERY = 0.4;
 export const SHOT_WIND_UP = 0.35;
 export const SHOT_RECOVERY = 0.6;
