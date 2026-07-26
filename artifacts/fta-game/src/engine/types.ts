@@ -1,3 +1,15 @@
+export type PlayerRole = "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+
+export type KitStyle = "solid" | "vertical-stripes" | "horizontal-stripes" | "diagonal-sash";
+export type SleeveStyle = "primary" | "secondary" | "split";
+
+export interface PlayerAppearance {
+  skinTone: string;
+  hairColor: string;
+  hairStyle: "short" | "fade" | "curly" | "mohawk" | "bald" | "dreadlocks";
+  facialHair: "none" | "stubble" | "goatee" | "full";
+}
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -108,7 +120,8 @@ export interface Ability {
 export interface PlayerCard {
   id: string;
   name: string;
-  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+  role: PlayerRole;
+  appearance?: PlayerAppearance;
   stats: PlayerStats;
   ability: AbilityId;
   jerseyNumber: number;
@@ -131,7 +144,8 @@ export interface SimPlayer {
   recoveryTimer: number;
   name: string;
   jerseyNumber: number;
-  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+  role: PlayerRole;
+  appearance?: PlayerAppearance;
 }
 
 export interface SimBall {
@@ -180,7 +194,8 @@ export interface FrameSnapshot {
     state: PlayerState;
     name: string;
     jerseyNumber: number;
-    role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+    role: PlayerRole;
+    appearance?: PlayerAppearance;
     tileRange: number;
     offside?: boolean;
   }[];
@@ -206,6 +221,8 @@ export interface TeamConfig {
   name: string;
   jerseyColor: string;
   secondaryColor: string;
+  kitStyle?: KitStyle;
+  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   players: PlayerCard[];
   formationId: string;

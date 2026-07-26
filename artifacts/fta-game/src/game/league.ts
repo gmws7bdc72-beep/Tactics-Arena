@@ -9,9 +9,12 @@ import type {
   ScheduledMatch,
   TeamTactic,
   TeamTacticId,
+  KitStyle,
+  SleeveStyle,
 } from "../engine/types";
 import { TILE_H, TILE_W } from "../engine/constants";
 import { getAIFormationById } from "./formations";
+import { deriveKitStyle, deriveSleeveStyle } from "./visuals";
 
 export interface AITeamDef {
   id: string;
@@ -21,6 +24,8 @@ export interface AITeamDef {
   players: PlayerCard[];
   jerseyColor: string;
   secondaryColor: string;
+  kitStyle?: KitStyle;
+  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   tacticId: TeamTacticId;
   tactic: TeamTactic;
@@ -387,6 +392,8 @@ function mkTeam(
     tactic: TEAM_TACTICS[tacticId],
     jerseyColor,
     secondaryColor,
+    kitStyle: deriveKitStyle(id),
+    sleeveStyle: deriveSleeveStyle(id),
     crestIcon,
     players,
   };
