@@ -3,8 +3,10 @@ import type {
   PlayerAppearance,
   PlayerRole,
   SleeveStyle,
+  PassStyle,
 } from "../../engine/types";
 import { createPlayerAppearance, stableHash } from "../../game/visuals";
+import { LONG_PASS_WIND_UP, PASS_WIND_UP, SHOT_WIND_UP } from "../../engine/constants";
 
 type AnimationState =
   | "IDLE"
@@ -25,6 +27,8 @@ export interface AnimatedPlayerSpriteArgs {
   jerseyNumber: number;
   role: PlayerRole;
   state: AnimationState | string;
+  stateTimer?: number;
+  actionPassStyle?: PassStyle;
   facing: number;
   time: number;
   speed: number;
@@ -49,6 +53,36 @@ export interface PossessionBallOffsetArgs {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function easeInOutCubic(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function easeOutCubic(value: number): number {
+  const t = clamp(value, 0, 1);
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function kickMotion(
+  progress: number,
+  backSwing: number,
+  followThrough: number,
+  backswingEnd: number,
+  strikeEnd: number,
+): number {
+  const t = clamp(progress, 0, 1);
+  if (t <= backswingEnd) {
+    return -backSwing * easeInOutCubic(t / Math.max(backswingEnd, 0.001));
+  }
+
+  const strike = easeOutCubic(
+    (t - backswingEnd) / Math.max(strikeEnd - backswingEnd, 0.001),
+  );
+  return -backSwing + (backSwing + followThrough) * strike;
 }
 
 function rgba(hex: string, alpha: number): string {
@@ -305,6 +339,8 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
     jerseyNumber,
     role,
     state,
+    stateTimer,
+    actionPassStyle = "ground",
     facing,
     time,
     speed,
@@ -323,12 +359,54 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const dribbling = ownsBall && moving;
   const isShooting = state === "SHOOTING";
   const isPassing = state === "PASSING";
+  const isLongPass = isPassing && actionPassStyle === "long";
   const isContesting = state === "CONTESTING";
   const isRecovering = state === "RECOVERING";
   const gaitSpeed = dribbling ? 11.5 : 9.2;
   const gait = moving ? Math.sin(time * gaitSpeed + phaseOffset) : 0;
   const idleBreath = moving ? 0 : Math.sin(time * 2.1 + phaseOffset) * r * 0.045;
-  const actionKick = isShooting ? 1 : isPassing ? 0.55 : 0;
+
+  const actionDuration = isShooting
+    ? SHOT_WIND_UP
+    : isLongPass
+      ? LONG_PASS_WIND_UP
+      : PASS_WIND_UP;
+  const actionProgress = isPassing || isShooting
+    ? typeof stateTimer === "number"
+      ? clamp(1 - stateTimer / Math.max(actionDuration, 0.001), 0, 1)
+      : (time * (isLongPass ? 1.8 : isShooting ? 3.2 : 3.8) + phaseOffset) % 1
+    : 0;
+
+  // A ground pass is deliberately compact: almost no backswing and only a
+  // short inside-foot follow-through. Long balls use the same idea stretched
+  // into a graceful full-body motion; shots snap through that larger arc fast.
+  const actionKick = isLongPass
+    ? kickMotion(actionProgress, r * 0.34, r * 0.84, 0.38, 0.88)
+    : isShooting
+      ? kickMotion(actionProgress, r * 0.3, r * 0.98, 0.22, 0.66)
+      : isPassing
+        ? kickMotion(actionProgress, r * 0.08, r * 0.34, 0.28, 0.72)
+        : 0;
+  const actionStrike = easeOutCubic(
+    clamp((actionProgress - (isLongPass ? 0.32 : isShooting ? 0.16 : 0.22)) / 0.56, 0, 1),
+  );
+  const actionLift = isLongPass
+    ? Math.sin(clamp(actionProgress, 0, 1) * Math.PI) * r * 0.18
+    : isShooting
+      ? Math.sin(clamp(actionProgress, 0, 1) * Math.PI) * r * 0.15
+      : isPassing
+        ? Math.sin(clamp(actionProgress, 0, 1) * Math.PI) * r * 0.035
+        : 0;
+  const actionPlant = (isPassing || isShooting) ? -actionKick * 0.08 : 0;
+  const actionLean = isLongPass
+    ? r * (-0.08 + actionStrike * 0.2)
+    : isShooting
+      ? r * (-0.055 + actionStrike * 0.23)
+      : isPassing
+        ? r * actionStrike * 0.025
+        : 0;
+  const kickWithLeft = stableHash(`${id}:kick-foot`) % 2 === 0;
+
   const frontX = Math.cos(facing);
   const frontY = Math.sin(facing);
   const sideX = -frontY;
@@ -342,7 +420,10 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const hipY = y + r * 0.37 + idleBreath;
   const torsoY = y - bodyHeight * 0.38 + idleBreath;
   const torsoCenterX = x + sideFacing * r * 0.08;
-  const lean = (moving ? r * 0.07 : 0) + (dribbling ? r * 0.05 : 0);
+  const lean =
+    (moving ? r * 0.07 : 0) +
+    (dribbling ? r * 0.05 : 0) +
+    actionLean;
   const torsoCenterY = torsoY + lean * frontY;
   const stride = moving ? gait * r * 0.38 : 0;
   const armSwing = moving ? -gait * r * 0.32 : 0;
@@ -371,12 +452,26 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const leftHipX = legBaseX - bodyWidth * 0.22;
   const rightHipX = legBaseX + bodyWidth * 0.22;
   const recoverDrop = isRecovering ? r * 0.18 : 0;
-  const legForwardA = stride + actionKick * r * 0.62;
-  const legForwardB = -stride - actionKick * r * 0.2;
+  const leftAction = kickWithLeft ? actionKick : actionPlant;
+  const rightAction = kickWithLeft ? actionPlant : actionKick;
+  const legForwardA = stride + leftAction;
+  const legForwardB = -stride + rightAction;
   const leftFootX = leftHipX + sideX * legForwardA + frontX * legForwardA * 0.42;
-  const leftFootY = hipY + r * 0.62 + sideY * legForwardA * 0.34 + frontY * legForwardA * 0.2 + recoverDrop;
+  const leftFootY =
+    hipY +
+    r * 0.62 +
+    sideY * legForwardA * 0.34 +
+    frontY * legForwardA * 0.2 +
+    recoverDrop -
+    (kickWithLeft ? actionLift : 0);
   const rightFootX = rightHipX + sideX * legForwardB + frontX * legForwardB * 0.42;
-  const rightFootY = hipY + r * 0.62 + sideY * legForwardB * 0.34 + frontY * legForwardB * 0.2 + recoverDrop;
+  const rightFootY =
+    hipY +
+    r * 0.62 +
+    sideY * legForwardB * 0.34 +
+    frontY * legForwardB * 0.2 +
+    recoverDrop -
+    (kickWithLeft ? 0 : actionLift);
 
   ctx.save();
   line(ctx, leftHipX, hipY, leftFootX, leftFootY, "#171717", Math.max(3, r * 0.22));
@@ -405,11 +500,34 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const leftShoulderX = torsoCenterX - bodyWidth * 0.46;
   const rightShoulderX = torsoCenterX + bodyWidth * 0.46;
   const contestSpread = isContesting ? r * 0.42 : 0;
-  const passPoint = isPassing ? r * 0.36 : 0;
-  const leftHandX = leftShoulderX - bodyWidth * 0.32 + sideX * armSwing - frontX * contestSpread;
-  const leftHandY = shoulderY + r * 0.31 + sideY * armSwing * 0.3 - Math.abs(contestSpread) * 0.24;
-  const rightHandX = rightShoulderX + bodyWidth * 0.32 - sideX * armSwing + frontX * (contestSpread + passPoint);
-  const rightHandY = shoulderY + r * 0.3 - sideY * armSwing * 0.3 - passPoint * 0.28;
+  const passPoint = isPassing && !isLongPass ? r * 0.11 * actionStrike : 0;
+  const actionBalance = isLongPass
+    ? r * 0.36 * actionStrike
+    : isShooting
+      ? r * 0.43 * actionStrike
+      : isPassing
+        ? r * 0.1 * actionStrike
+        : 0;
+  const leftHandX =
+    leftShoulderX -
+    bodyWidth * 0.32 +
+    sideX * armSwing -
+    frontX * (contestSpread + actionBalance);
+  const leftHandY =
+    shoulderY +
+    r * 0.31 +
+    sideY * armSwing * 0.3 -
+    Math.abs(contestSpread + actionBalance) * 0.24;
+  const rightHandX =
+    rightShoulderX +
+    bodyWidth * 0.32 -
+    sideX * armSwing +
+    frontX * (contestSpread + passPoint + actionBalance * 0.58);
+  const rightHandY =
+    shoulderY +
+    r * 0.3 -
+    sideY * armSwing * 0.3 -
+    (passPoint + actionBalance * 0.42) * 0.28;
 
   line(ctx, leftShoulderX, shoulderY, leftHandX, leftHandY, sleeveColor, Math.max(3, r * 0.2));
   line(ctx, rightShoulderX, shoulderY, rightHandX, rightHandY, sleeveColor, Math.max(3, r * 0.2));
@@ -445,13 +563,24 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   ctx.fillText(String(jerseyNumber), torsoCenterX, torsoCenterY + torsoH * 0.5);
   ctx.restore();
 
-  const nameWidth = clamp(r * 3.3, 28, 54);
-  const nameHeight = clamp(r * 0.7, 8, 13);
-  const nameY = headY - headRadius * 1.55;
+  const nameWidth = clamp(r * 3.55, 32, 64);
+  const nameHeight = clamp(r * 0.68, 9, 15);
+  const feetBottom = Math.max(leftFootY, rightFootY);
+  const desiredNameY = feetBottom + r * 0.16;
+  const canvasHeight = ctx.canvas.clientHeight || ctx.canvas.height;
+  const nameY = clamp(
+    desiredNameY,
+    3,
+    Math.max(3, canvasHeight - nameHeight - 3),
+  );
   ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.72)";
+  ctx.fillStyle = "rgba(0,0,0,0.76)";
   roundedRectPath(ctx, x - nameWidth / 2, nameY, nameWidth, nameHeight, 4);
   ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 1;
+  roundedRectPath(ctx, x - nameWidth / 2, nameY, nameWidth, nameHeight, 4);
+  ctx.stroke();
   ctx.fillStyle = "#ffffff";
   ctx.font = `700 ${Math.round(nameHeight * 0.55)}px Inter, sans-serif`;
   ctx.textAlign = "center";
