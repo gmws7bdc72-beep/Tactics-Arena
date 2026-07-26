@@ -1,1 +1,0 @@
-cd ~/workspace/artifacts/fta-game && echo "---- package scripts ----" && node -e "console.log(require('./package.json').scripts)" && echo "---- possible server files ----" && find . -maxdepth 4 -type f \( -iname "*server*" -o -iname "*socket*" -o -iname "*online*" -o -iname "*multiplayer*" -o -iname "*ws*" \) | sort
