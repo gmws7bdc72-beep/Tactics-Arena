@@ -1,0 +1,11 @@
+src/components/PitchCanvas.tsx
+src/components/render/AnimatedPlayerSprite.ts
+src/engine/simulation.ts
+src/engine/types.ts
+src/game/league.ts
+src/game/persistence.ts
+src/game/visuals.ts
+src/pages/Customize.tsx
+src/pages/Match.tsx
+src/pages/OnlineLobby.tsx
+src/pages/OnlineMatch.tsx

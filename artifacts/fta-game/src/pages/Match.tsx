@@ -12,6 +12,7 @@ import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
 import { loadMatch, saveMatch } from "../game/persistence";
+import { createPlayerAppearance, deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 
 interface Props {
   team: TeamConfig;
@@ -41,6 +42,7 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     name: card.name,
     jerseyNumber: card.jerseyNumber,
     role: card.role,
+    appearance: card.appearance ?? createPlayerAppearance(card.id, card.role),
   };
 }
 
@@ -58,6 +60,7 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
+      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
@@ -786,9 +789,18 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         )}
         <PitchCanvas
           frame={liveFrame}
-          playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
+          playerTeam={twoPlayer && p1TeamDef ? {
+            ...team,
+            jerseyColor: p1TeamDef.jerseyColor,
+            secondaryColor: p1TeamDef.secondaryColor,
+            kitStyle: p1TeamDef.kitStyle ?? deriveKitStyle(p1TeamDef.id),
+            sleeveStyle: p1TeamDef.sleeveStyle ?? deriveSleeveStyle(p1TeamDef.id),
+            crestIcon: p1TeamDef.crestIcon,
+          } : team}
           aiTeamColor={effectiveAiColor}
           aiTeamSecondaryColor={effectiveAiSecondaryColor}
+          aiTeamKitStyle={opponentTeamDef.kitStyle ?? deriveKitStyle(opponentTeamDef.id)}
+          aiTeamSleeveStyle={opponentTeamDef.sleeveStyle ?? deriveSleeveStyle(opponentTeamDef.id)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode}

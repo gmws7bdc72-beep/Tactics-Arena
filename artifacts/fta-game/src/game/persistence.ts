@@ -3,6 +3,7 @@ import { getDefaultSquad } from "./players";
 import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
+import { normalizeKitStyle, normalizeSleeveStyle } from "./visuals";
 
 const TEAM_KEY = "fta_team_clean_6v6_v1";
 const LEAGUE_KEY = "fta_league_clean_6v6_v1";
@@ -44,6 +45,8 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
 
   return {
     ...team,
+    kitStyle: normalizeKitStyle(team.kitStyle),
+    sleeveStyle: normalizeSleeveStyle(team.sleeveStyle),
     formationId: formation.id,
     players: players.slice(0, PLAYERS_PER_TEAM),
     startPositions:
@@ -146,6 +149,8 @@ export function getDefaultTeam(): TeamConfig {
     name: "My Team",
     jerseyColor: "#00b4d8",
     secondaryColor: "#ffffff",
+    kitStyle: "solid",
+    sleeveStyle: "primary",
     crestIcon: "⚡",
     players: getDefaultSquad().slice(0, PLAYERS_PER_TEAM),
     formationId: formation.id,

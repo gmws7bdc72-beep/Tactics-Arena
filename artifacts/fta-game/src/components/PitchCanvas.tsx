@@ -1,6 +1,6 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { MouseEvent } from "react";
-import type { FrameSnapshot, TeamConfig, Vec2, Command } from "../engine/types";
+import type { FrameSnapshot, TeamConfig, Vec2, Command, KitStyle, SleeveStyle } from "../engine/types";
 import { CommandType } from "../engine/types";
 import {
   PITCH_WIDTH,
@@ -18,12 +18,24 @@ import {
   GRID_ROWS,
 } from "../engine/constants";
 import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
+import {
+  drawAnimatedPlayerSprite,
+  getPossessionBallOffset,
+} from "./render/AnimatedPlayerSprite";
+import {
+  deriveKitStyle,
+  deriveSleeveStyle,
+  normalizeKitStyle,
+  normalizeSleeveStyle,
+} from "../game/visuals";
 
 interface Props {
   frame: FrameSnapshot | null;
   playerTeam: TeamConfig;
   aiTeamColor?: string;
   aiTeamSecondaryColor?: string;
+  aiTeamKitStyle?: KitStyle;
+  aiTeamSleeveStyle?: SleeveStyle;
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
   passTargetMode: boolean;
@@ -614,6 +626,8 @@ export default function PitchCanvas({
   playerTeam,
   aiTeamColor = "#e53935",
   aiTeamSecondaryColor = "#ffffff",
+  aiTeamKitStyle,
+  aiTeamSleeveStyle,
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
@@ -624,6 +638,16 @@ export default function PitchCanvas({
   onTileClick,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const facingByPlayerRef = useRef<Map<string, number>>(new Map());
+  const [animationTick, setAnimationTick] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAnimationTick((tick) => (tick + 1) % 100000);
+    }, 40);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   const canvasToPitch = useCallback(
     (cx: number, cy: number): Vec2 => {
@@ -1053,6 +1077,16 @@ export default function PitchCanvas({
       });
     }
 
+    const animationTime = animationTick * 0.04;
+    const playerKitStyle = normalizeKitStyle(playerTeam.kitStyle);
+    const playerSleeveStyle = normalizeSleeveStyle(playerTeam.sleeveStyle);
+    const opponentKitStyle = normalizeKitStyle(
+      aiTeamKitStyle ?? deriveKitStyle(`${aiTeamColor}:${aiTeamSecondaryColor}`),
+    );
+    const opponentSleeveStyle = normalizeSleeveStyle(
+      aiTeamSleeveStyle ?? deriveSleeveStyle(`${aiTeamColor}:${aiTeamSecondaryColor}`),
+    );
+
     const players = [...frame.players].sort(
       (a, b) => view.project(a.position).y - view.project(b.position).y,
     );
@@ -1060,210 +1094,67 @@ export default function PitchCanvas({
     for (const p of players) {
       const pos = view.project(p.position);
       const isPlayerTeam = p.teamId === "player";
-      const isSelected = p.id === selectedPlayerId;
       const isGK = p.role === "goalkeeper";
-      const depth = view.depth(p.position);
-      const scale = 0.78 + depth * 0.33;
-
+      const speed = Math.hypot(p.velocity.x, p.velocity.y);
       const baseColor = isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor;
-      const secColor = isPlayerTeam
+      const secondaryColor = isPlayerTeam
         ? playerTeam.secondaryColor
         : aiTeamSecondaryColor;
-
-      const ringColor = isSelected
-        ? "#00e5ff"
-        : frame.ball.ownerId === p.id
-          ? "#ffd700"
-          : rgba(baseColor, 0.9);
-
+      const kitStyle = isPlayerTeam ? playerKitStyle : opponentKitStyle;
+      const sleeveStyle = isPlayerTeam ? playerSleeveStyle : opponentSleeveStyle;
       const r = view.radius(
         isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
         p.position.y,
       );
 
-      const bodyH = r * (1.9 + scale * 0.25);
-      const bodyW = r * 1.05;
-      const headR = r * 0.42;
-
-      ctx.save();
-      ctx.globalAlpha = 0.32;
-      ctx.fillStyle = "#000000";
-      ctx.beginPath();
-      ctx.ellipse(
-        pos.x + r * 0.14,
-        pos.y + r * 0.82,
-        r * 1.15,
-        r * 0.38,
-        -0.12,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = ringColor;
-      ctx.lineWidth = isSelected ? 4 : 2.4;
-      ctx.shadowColor = ringColor;
-      ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 15 : 4;
-      ctx.beginPath();
-      ctx.ellipse(
-        pos.x,
-        pos.y + r * 0.7,
-        r * 1.18,
-        r * 0.45,
-        -0.08,
-        0,
-        Math.PI * 2,
-      );
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = "#171717";
-      ctx.lineWidth = Math.max(3, r * 0.22);
-      ctx.lineCap = "round";
-
-      ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.22, pos.y + r * 0.45);
-      ctx.lineTo(pos.x - bodyW * 0.48, pos.y + r * 0.95);
-      ctx.moveTo(pos.x + bodyW * 0.22, pos.y + r * 0.45);
-      ctx.lineTo(pos.x + bodyW * 0.42, pos.y + r * 0.98);
-      ctx.stroke();
-
-      ctx.strokeStyle = secColor;
-      ctx.lineWidth = Math.max(2, r * 0.12);
-
-      ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.48, pos.y + r * 0.95);
-      ctx.lineTo(pos.x - bodyW * 0.72, pos.y + r * 1);
-      ctx.moveTo(pos.x + bodyW * 0.42, pos.y + r * 0.98);
-      ctx.lineTo(pos.x + bodyW * 0.66, pos.y + r * 1);
-      ctx.stroke();
-
-      ctx.restore();
-
-      const torsoY = pos.y - bodyH * 0.32;
-      const jerseyGrad = ctx.createLinearGradient(
-        pos.x - bodyW,
-        torsoY,
-        pos.x + bodyW,
-        torsoY + bodyH,
-      );
-
-      jerseyGrad.addColorStop(0, rgba("#ffffff", 0.18));
-      jerseyGrad.addColorStop(0.25, baseColor);
-      jerseyGrad.addColorStop(1, rgba(baseColor, 0.78));
-
-      ctx.save();
-      ctx.fillStyle = jerseyGrad;
-      ctx.strokeStyle = isGK ? "#ffd700" : "rgba(0,0,0,0.55)";
-      ctx.lineWidth = isGK ? 2.4 : 1.4;
-
-      roundedRectPath(
-        ctx,
-        pos.x - bodyW / 2,
-        torsoY,
-        bodyW,
-        bodyH * 0.58,
-        r * 0.2,
-      );
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = baseColor;
-      ctx.lineWidth = Math.max(3, r * 0.2);
-      ctx.lineCap = "round";
-
-      ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(pos.x - bodyW * 0.76, torsoY + bodyH * 0.38);
-      ctx.moveTo(pos.x + bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(pos.x + bodyW * 0.75, torsoY + bodyH * 0.36);
-      ctx.stroke();
-
-      ctx.restore();
-
-      ctx.save();
-      ctx.fillStyle = "#c98b4c";
-      ctx.strokeStyle = "rgba(0,0,0,0.45)";
-      ctx.lineWidth = 1.2;
-
-      ctx.beginPath();
-      ctx.arc(pos.x, torsoY - headR * 0.72, headR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = "#1b1714";
-      ctx.beginPath();
-      ctx.ellipse(
-        pos.x,
-        torsoY - headR * 1.02,
-        headR * 0.85,
-        headR * 0.35,
-        0,
-        Math.PI,
-        Math.PI * 2,
-      );
-      ctx.fill();
-
-      ctx.restore();
-
-      ctx.fillStyle = secColor;
-      ctx.font = `900 ${Math.round(r * 0.55)}px Inter, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(p.jerseyNumber), pos.x, torsoY + bodyH * 0.28);
-
-      const nameW = clamp(r * 3.3, 28, 54);
-      const nameH = clamp(r * 0.7, 8, 13);
-
-      ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.72)";
-      roundedRectPath(
-        ctx,
-        pos.x - nameW / 2,
-        torsoY - headR * 2.25,
-        nameW,
-        nameH,
-        4,
-      );
-      ctx.fill();
-
-      ctx.fillStyle = "#ffffff";
-      ctx.font = `700 ${Math.round(nameH * 0.55)}px Inter, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(
-        p.name.slice(0, 10),
-        pos.x,
-        torsoY - headR * 2.25 + nameH / 2,
-      );
-      ctx.restore();
-
-      if (p.offside) {
-        ctx.save();
-
-        const fw = r * 1.1;
-        const fh = r * 0.62;
-
-        ctx.fillStyle = "#ff1744";
-        ctx.fillRect(pos.x + r * 0.78, torsoY - headR * 2.2, fw, fh);
-
-        ctx.fillStyle = "#fff";
-        ctx.font = `900 ${Math.round(fh * 0.55)}px Inter, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(
-          "OS",
-          pos.x + r * 0.78 + fw / 2,
-          torsoY - headR * 2.2 + fh / 2,
+      let facing = facingByPlayerRef.current.get(p.id);
+      if (speed > 0.55) {
+        const directionPoint = view.project({
+          x: p.position.x + p.velocity.x * 0.05,
+          y: p.position.y + p.velocity.y * 0.05,
+        });
+        const rawAngle = Math.atan2(
+          directionPoint.y - pos.y,
+          directionPoint.x - pos.x,
         );
-
-        ctx.restore();
+        facing = Math.round(rawAngle / (Math.PI / 4)) * (Math.PI / 4);
+        facingByPlayerRef.current.set(p.id, facing);
+      } else if (facing === undefined) {
+        const attackDirection = p.teamId === "player" ? 1 : -1;
+        const directionPoint = view.project({
+          x: p.position.x + attackDirection * 10,
+          y: p.position.y,
+        });
+        const rawAngle = Math.atan2(
+          directionPoint.y - pos.y,
+          directionPoint.x - pos.x,
+        );
+        facing = Math.round(rawAngle / (Math.PI / 4)) * (Math.PI / 4);
+        facingByPlayerRef.current.set(p.id, facing);
       }
+
+      drawAnimatedPlayerSprite({
+        ctx,
+        x: pos.x,
+        y: pos.y,
+        radius: r,
+        id: p.id,
+        name: p.name,
+        jerseyNumber: p.jerseyNumber,
+        role: p.role,
+        state: p.state,
+        facing: facing ?? 0,
+        time: animationTime,
+        speed,
+        primaryColor: baseColor,
+        secondaryColor,
+        kitStyle,
+        sleeveStyle,
+        appearance: p.appearance,
+        selected: p.id === selectedPlayerId,
+        ownsBall: frame.ball.ownerId === p.id,
+        offside: p.offside,
+      });
     }
 
     const visualBall = frame.ball as typeof frame.ball & {
@@ -1271,9 +1162,35 @@ export default function PitchCanvas({
       passStyle?: string;
     };
 
-    const ballGround = view.project(frame.ball.position);
+    let ballGround = view.project(frame.ball.position);
     const bv = frame.ball.velocity;
     const spd = Math.sqrt(bv.x * bv.x + bv.y * bv.y);
+    const owner = frame.ball.ownerId
+      ? frame.players.find((player) => player.id === frame.ball.ownerId)
+      : undefined;
+
+    if (owner) {
+      const ownerGround = view.project(owner.position);
+      const ownerSpeed = Math.hypot(owner.velocity.x, owner.velocity.y);
+      const ownerFacing = facingByPlayerRef.current.get(owner.id) ?? 0;
+      const ownerRadius = view.radius(
+        owner.role === "goalkeeper" ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
+        owner.position.y,
+      );
+      const moving = ownerSpeed > 0.55 || owner.state === "MOVING" || owner.state === "DRIBBLING";
+      const offset = getPossessionBallOffset({
+        radius: ownerRadius,
+        facing: ownerFacing,
+        time: animationTime,
+        moving,
+        dribbling: moving && frame.ball.ownerId === owner.id,
+        seed: owner.id,
+      });
+      ballGround = {
+        x: ownerGround.x + offset.x,
+        y: ownerGround.y + offset.y,
+      };
+    }
     const ballHeight = visualBall.height ?? 0;
     const lift = view.radius(ballHeight * 1.15, frame.ball.position.y);
     const ballPos = {
@@ -1360,11 +1277,14 @@ export default function PitchCanvas({
     playerTeam,
     aiTeamColor,
     aiTeamSecondaryColor,
+    aiTeamKitStyle,
+    aiTeamSleeveStyle,
     pendingCommands,
     selectedPlayerId,
     passTargetMode,
     phase,
     isVertical,
+    animationTick,
     buildTileMap,
   ]);
 

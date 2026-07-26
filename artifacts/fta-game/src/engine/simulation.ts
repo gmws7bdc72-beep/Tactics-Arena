@@ -614,6 +614,7 @@ function snapshotFrame(
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
+      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
       offside: offsidePlayers.has(p.id),
     })),
