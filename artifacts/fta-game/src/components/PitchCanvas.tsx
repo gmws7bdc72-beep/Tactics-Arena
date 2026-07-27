@@ -120,7 +120,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
 
   // Slightly zoomed out from the previous version.
   // Still angled, but not so close that the outside breaks.
-  const CAMERA_ZOOM = isVertical ? 1 : 1.08;
+  const CAMERA_ZOOM = isVertical ? 2 : 1.08;
   const CAMERA_SHIFT_X = 0;
   const CAMERA_SHIFT_Y = isVertical ? 0.1 : 0.0;
 
