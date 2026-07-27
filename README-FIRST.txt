@@ -1,23 +1,19 @@
-FOOTBALL TACTICS ARENA — PLAYER SIZE, NAMEPLATES, AND KICK ANIMATIONS UPDATE
+FOOTBALL TACTICS ARENA — PLAYER VISUAL FIX PATCH
 
-This ZIP is meant to be extracted over the already-installed Visual Overhaul project.
-It overwrites only seven source files.
+This patch is for the already-installed V2 visual overhaul.
 
-From the main Replit project workspace, run:
+Fixes:
+- Taller, more natural player bodies
+- Longer arms
+- Shorter, better-proportioned legs
+- Mobile player-name labels stay around the feet
+- Dribbling animation only plays while the ball owner is actually moving
+- Possessed ball sits down near the boots instead of appearing at chest height
 
-  unzip -o FTA-Player-Scale-Names-Kick-Animations-PATCH.zip
+Install from the main Replit workspace:
+
+  unzip -o FTA-Player-Proportions-Mobile-Names-Dribble-Ball-Fix-PATCH.zip
   cd artifacts/fta-game
   pnpm typecheck && pnpm build
 
-Then test the game and redeploy the Replit app.
-
-Included changes:
-- Player sprites are 12% larger without changing collision or simulation sizes.
-- Player names sit below/around the feet instead of above the head.
-- Ground passes use a short, compact inside-foot motion.
-- Long balls use a smoother, graceful full-body kick.
-- Shots use a faster, more explosive version of the long-ball motion.
-- Players turn toward the pass/shot target during the wind-up.
-- Move-then-pass combo commands now show the passing animation too.
-
-No cache deletion is required.
+Then test and redeploy.

@@ -1193,7 +1193,8 @@ export default function PitchCanvas({
           PLAYER_VISUAL_SCALE,
         owner.position.y,
       );
-      const moving = ownerSpeed > 0.55 || owner.state === "MOVING" || owner.state === "DRIBBLING";
+      // Possession touches only animate while the owner is genuinely moving.
+      const moving = ownerSpeed > 0.55;
       const offset = getPossessionBallOffset({
         radius: ownerRadius,
         facing: ownerFacing,

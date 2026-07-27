@@ -324,7 +324,8 @@ export function getPossessionBallOffset({
 
   return {
     x: forwardX * forwardDistance + sideX * sideways,
-    y: forwardY * forwardDistance + sideY * sideways + radius * 0.46,
+    // Keep the ball on the grass near the boots, independent of ball radius.
+    y: forwardY * forwardDistance + sideY * sideways + radius * 0.78,
   };
 }
 
@@ -355,7 +356,8 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
 
   const appearance = args.appearance ?? createPlayerAppearance(id, role);
   const phaseOffset = (stableHash(id) % 1000) / 1000 * Math.PI * 2;
-  const moving = speed > 0.65 || state === "MOVING" || state === "DRIBBLING";
+  // Movement animation must follow actual velocity. A stationary ball owner stays idle.
+  const moving = speed > 0.65;
   const dribbling = ownsBall && moving;
   const isShooting = state === "SHOOTING";
   const isPassing = state === "PASSING";
@@ -415,10 +417,11 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const sideFacing = clamp(frontX, -1, 1);
   const depthScale = 0.9 + frontness * 0.08;
   const bodyWidth = r * (1.02 - Math.abs(sideFacing) * 0.17);
-  const bodyHeight = r * 1.22 * depthScale;
+  // Taller, more human proportions: a longer torso with shorter legs.
+  const bodyHeight = r * 1.48 * depthScale;
   const headRadius = r * 0.41;
-  const hipY = y + r * 0.37 + idleBreath;
-  const torsoY = y - bodyHeight * 0.38 + idleBreath;
+  const hipY = y + r * 0.4 + idleBreath;
+  const torsoY = y - bodyHeight * 0.44 + idleBreath;
   const torsoCenterX = x + sideFacing * r * 0.08;
   const lean =
     (moving ? r * 0.07 : 0) +
@@ -459,7 +462,7 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const leftFootX = leftHipX + sideX * legForwardA + frontX * legForwardA * 0.42;
   const leftFootY =
     hipY +
-    r * 0.62 +
+    r * 0.48 +
     sideY * legForwardA * 0.34 +
     frontY * legForwardA * 0.2 +
     recoverDrop -
@@ -467,7 +470,7 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const rightFootX = rightHipX + sideX * legForwardB + frontX * legForwardB * 0.42;
   const rightFootY =
     hipY +
-    r * 0.62 +
+    r * 0.48 +
     sideY * legForwardB * 0.34 +
     frontY * legForwardB * 0.2 +
     recoverDrop -
@@ -481,7 +484,7 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   ctx.restore();
 
   const torsoX = torsoCenterX - bodyWidth / 2;
-  const torsoH = bodyHeight * 0.58;
+  const torsoH = bodyHeight * 0.66;
   drawKitPattern(ctx, torsoX, torsoCenterY, bodyWidth, torsoH, r * 0.2, primaryColor, secondaryColor, kitStyle);
 
   ctx.save();
@@ -510,22 +513,22 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
         : 0;
   const leftHandX =
     leftShoulderX -
-    bodyWidth * 0.32 +
+    bodyWidth * 0.42 +
     sideX * armSwing -
     frontX * (contestSpread + actionBalance);
   const leftHandY =
     shoulderY +
-    r * 0.31 +
+    r * 0.44 +
     sideY * armSwing * 0.3 -
     Math.abs(contestSpread + actionBalance) * 0.24;
   const rightHandX =
     rightShoulderX +
-    bodyWidth * 0.32 -
+    bodyWidth * 0.42 -
     sideX * armSwing +
     frontX * (contestSpread + passPoint + actionBalance * 0.58);
   const rightHandY =
     shoulderY +
-    r * 0.3 -
+    r * 0.43 -
     sideY * armSwing * 0.3 -
     (passPoint + actionBalance * 0.42) * 0.28;
 
@@ -567,7 +570,9 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const nameHeight = clamp(r * 0.68, 9, 15);
   const feetBottom = Math.max(leftFootY, rightFootY);
   const desiredNameY = feetBottom + r * 0.16;
-  const canvasHeight = ctx.canvas.clientHeight || ctx.canvas.height;
+  // Use the canvas drawing-coordinate height. clientHeight is CSS pixels and
+  // caused labels to clamp far above mobile players on high-DPI screens.
+  const canvasHeight = ctx.canvas.height;
   const nameY = clamp(
     desiredNameY,
     3,
