@@ -7,7 +7,7 @@ export const TILE_W = PITCH_WIDTH / GRID_COLS;
 export const TILE_H = PITCH_HEIGHT / GRID_ROWS;
 
 export const GOAL_WIDTH = 220;
-export const GOAL_DEPTH = 20;
+export const GOAL_DEPTH = 40;
 
 export const GOAL_LEFT_X = 0;
 export const GOAL_RIGHT_X = PITCH_WIDTH;
@@ -17,7 +17,7 @@ export const GOAL_BOTTOM_Y = GOAL_TOP_Y + GOAL_WIDTH;
 export const PENALTY_AREA_WIDTH = 128;
 export const PENALTY_AREA_HEIGHT = 200;
 
-export const TICKS_PER_TURN = 60;
+export const TICKS_PER_TURN = 65;
 export const DELTA = 0.05;
 export const TURN_DURATION = TICKS_PER_TURN * DELTA;
 
@@ -32,7 +32,7 @@ export const BALL_FRICTION = 0.983;
 export const PASS_SPEED = 160;
 export const SHOT_SPEED = 380;
 
-export const PASS_WIND_UP = 0.20;
+export const PASS_WIND_UP = 0.25;
 // Long balls use a longer, smoother wind-up so the full-body kick reads clearly.
 export const LONG_PASS_WIND_UP = 0.65;
 export const PASS_RECOVERY = 0.2;
