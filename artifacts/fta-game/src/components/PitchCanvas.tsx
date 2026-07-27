@@ -120,8 +120,8 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
 
   // Slightly zoomed out from the previous version.
   // Still angled, but not so close that the outside breaks.
-  const CAMERA_ZOOM = isVertical ? 0.7 : 1.08;
-  const CAMERA_SHIFT_X = 1;
+  const CAMERA_ZOOM = isVertical ? 0.5 : 1.08;
+  const CAMERA_SHIFT_X = 0;
   const CAMERA_SHIFT_Y = isVertical ? 0.1 : 0.0;
 
   // Mobile football angle: mostly top-down, slightly rotated.
