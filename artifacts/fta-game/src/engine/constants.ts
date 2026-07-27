@@ -17,12 +17,12 @@ export const GOAL_BOTTOM_Y = GOAL_TOP_Y + GOAL_WIDTH;
 export const PENALTY_AREA_WIDTH = 128;
 export const PENALTY_AREA_HEIGHT = 200;
 
-export const TICKS_PER_TURN = 60;
+export const TICKS_PER_TURN = 90;
 export const DELTA = 0.05;
 export const TURN_DURATION = TICKS_PER_TURN * DELTA;
 
-export const BALL_RADIUS = 8;
-export const PLAYER_RADIUS = 14;
+export const BALL_RADIUS = 6;
+export const PLAYER_RADIUS = 16;
 
 export const PLAYER_CONTROL_RADIUS = 20;
 export const INTERCEPTION_RADIUS = 24;
