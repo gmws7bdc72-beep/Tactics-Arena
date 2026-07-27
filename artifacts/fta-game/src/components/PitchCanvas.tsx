@@ -125,7 +125,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const CAMERA_SHIFT_Y = isVertical ? 0.1 : 0.0;
 
   // Mobile football angle: mostly top-down, slightly rotated.
-  const skew = isVertical ? 1 : 0.0;
+  const skew = isVertical ? 0 : 0.0;
   const squash = isVertical ? 1 : 0.99;
 
   const base = (p: Vec2): ScreenPoint =>
