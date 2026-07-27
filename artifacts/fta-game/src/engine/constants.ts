@@ -7,7 +7,7 @@ export const TILE_W = PITCH_WIDTH / GRID_COLS;
 export const TILE_H = PITCH_HEIGHT / GRID_ROWS;
 
 export const GOAL_WIDTH = 220;
-export const GOAL_DEPTH = 40;
+export const GOAL_DEPTH = 20;
 
 export const GOAL_LEFT_X = 0;
 export const GOAL_RIGHT_X = PITCH_WIDTH;
