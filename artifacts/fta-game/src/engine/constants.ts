@@ -35,13 +35,13 @@ export const SHOT_SPEED = 380;
 export const PASS_WIND_UP = 0.15;
 // Long balls use a longer, smoother wind-up so the full-body kick reads clearly.
 export const LONG_PASS_WIND_UP = 0.65;
-export const PASS_RECOVERY = 0.1;
+export const PASS_RECOVERY = 0.2;
 export const SHOT_WIND_UP = 0.30;
 export const SHOT_RECOVERY = 0.6;
 
 // GK zone: cols 0-2 for player team GK, last 3 cols for AI GK
 export const GK_COLS_PLAYER_MIN = 0;
-export const GK_COLS_PLAYER_MAX = 2;
+export const GK_COLS_PLAYER_MAX = 10;
 export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
 
@@ -50,7 +50,7 @@ export const MAX_MATCH_TURNS = 40;
 export const PLAYERS_PER_TEAM = 6;
 
 export const AI_SHOT_RANGE = 200;
-export const AI_PASS_SAFE_DISTANCE = 150;
+export const AI_PASS_SAFE_DISTANCE = 120;
 
 // Speed stat → tile range per turn
 // speed 1-4 = 1 tile, 5-8 = 2 tiles, 9-10 = 3 tiles
