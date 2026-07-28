@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import type { TeamConfig, LeagueState } from "../engine/types";
+import type { TransferMarketState } from "../game/transferMarket";
 import {
   loadTeam,
   saveTeam,
@@ -9,6 +10,7 @@ import {
 } from "../game/persistence";
 import { migrateLeague, prepareLeagueForNewSeason } from "../game/league";
 import { ensureTeamDevelopment, prepareTeamForNewSeason } from "../game/training";
+import { awardSeasonPrize, loadTransferMarket, normalizeMarket, saveTransferMarket } from "../game/transferMarket";
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
@@ -19,6 +21,19 @@ export function useGameState() {
     saveLeague(migrated);
     return migrated;
   });
+
+  const [market, setMarketState] = useState<TransferMarketState>(() => {
+    const t = loadTeam();
+    const l = migrateLeague(loadLeague(t.name));
+    const m = loadTransferMarket(t, l);
+    saveTransferMarket(m);
+    return m;
+  });
+
+  const updateMarket = useCallback((nextMarket: TransferMarketState) => {
+    setMarketState(nextMarket);
+    saveTransferMarket(nextMarket);
+  }, []);
 
   const updateTeam = useCallback((nextTeam: TeamConfig) => {
     const normalized = ensureTeamDevelopment(nextTeam);
@@ -64,6 +79,11 @@ export function useGameState() {
       setLeagueState(normalizedLeague);
       saveTeam(normalizedTeam);
       saveLeague(normalizedLeague);
+      setMarketState((previous) => {
+        const next = normalizeMarket(previous, normalizedTeam, normalizedLeague);
+        saveTransferMarket(next);
+        return next;
+      });
     },
     [],
   );
@@ -80,12 +100,16 @@ export function useGameState() {
         nextLeague.season ?? 1,
       );
 
+      const prizeMarket = awardSeasonPrize(market, league);
+      const normalizedMarket = normalizeMarket(prizeMarket, nextTeam, nextLeague);
       setTeamState(nextTeam);
       setLeagueState(nextLeague);
+      setMarketState(normalizedMarket);
       saveTeam(nextTeam);
       saveLeague(nextLeague);
+      saveTransferMarket(normalizedMarket);
     },
-    [league, team],
+    [league, team, market],
   );
 
   const refreshState = useCallback(() => {
@@ -93,8 +117,10 @@ export function useGameState() {
     const raw = loadLeague(nextTeam.name);
     const migrated = migrateLeague(raw);
     saveLeague(migrated);
+    const nextMarket = loadTransferMarket(nextTeam, migrated);
     setTeamState(nextTeam);
     setLeagueState(migrated);
+    setMarketState(nextMarket);
   }, []);
 
   return {
@@ -105,5 +131,7 @@ export function useGameState() {
     updateTeamAndLeague,
     startNewSeason,
     refreshState,
+    market,
+    updateMarket,
   };
 }

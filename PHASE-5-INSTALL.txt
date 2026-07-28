@@ -1,0 +1,26 @@
+PHASE 5 — AI TRANSFER MARKET — VERIFIED INCREMENTAL PATCH
+
+Requires Phases 1–4, including the Phase 4 repair.
+
+From the main Replit workspace:
+
+  unzip -o FTA-Phase-5-AI-Transfer-Market-INCREMENTAL.zip && bash apply-phase5-transfer-market.sh
+
+This patch adds:
+
+- Season 1 scouting lock; transfer money and offers unlock in Season 2
+- Persistent transfer budgets, wage budgets, payroll, prize money, sales and spending
+- Transfer history and transfer news
+- Player transfer-list, remove-listing and untouchable controls in Team Setup
+- Auto, low, market, high and custom asking-price choices
+- Market value, potential and morale on squad-management cards
+- Incoming and outgoing offers with accept, reject, negotiate and withdraw actions
+- Multiple AI clubs bidding for the same player
+- Position-needs-aware, budget-aware and wage-aware AI recruitment
+- AI-to-AI transfers
+- Starting squads of 11–15 players and a hard maximum of 16
+- Protection against selling below six players or selling a club's final goalkeeper
+- Safe cancellation of competing bids after a transfer completes
+- The pre-existing Ball3D TypeScript declaration blocker is suppressed locally
+
+The patch has already passed TypeScript checking, a production build and targeted transfer tests.
