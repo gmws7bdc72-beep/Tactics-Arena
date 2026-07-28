@@ -29,7 +29,7 @@ const STAT_ABBREV: Record<string, string> = {
   defense: "DEF",
   passing: "PAS",
   speed: "SPD",
-  luck: "LCK",
+  movement: "MOV",
 };
 
 export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryColor = "#fff", selected, onClick, compact }: Props) {
@@ -63,7 +63,7 @@ export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryCol
     );
   }
 
-  const statOrder: (keyof typeof card.stats)[] = ["attack", "defense", "passing", "speed", "luck"];
+  const statOrder: (keyof typeof card.stats)[] = ["attack", "defense", "passing", "speed", "movement"];
 
   return (
     <div

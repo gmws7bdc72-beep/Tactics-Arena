@@ -33,6 +33,7 @@ import {
 import { ABILITIES, STAT_LABELS } from "../game/players";
 import { getFormationById } from "../game/formations";
 import { PLAYER_TEAM_ID_CONST } from "../game/persistence";
+import { calculatePlayerOverall } from "../game/training";
 
 interface Props {
   playerTeam: TeamConfig;
@@ -135,67 +136,7 @@ function average(values: number[]): number {
 }
 
 function overall(player: PlayerCard): number {
-  const s = player.stats;
-
-  switch (player.role) {
-    case "goalkeeper":
-      return Math.round(
-        average([
-          statValue(s, "defense") * 1.5,
-          statValue(s, "marking") * 1.3,
-          statValue(s, "aerial") * 1.25,
-          statValue(s, "longPassing"),
-          statValue(s, "strength"),
-          statValue(s, "vision") * 0.75,
-        ]) / 1.13,
-      );
-    case "defender":
-      return Math.round(
-        average([
-          statValue(s, "defense") * 1.35,
-          statValue(s, "tackling") * 1.35,
-          statValue(s, "marking") * 1.25,
-          statValue(s, "strength"),
-          statValue(s, "aerial"),
-          statValue(s, "passing") * 0.8,
-          statValue(s, "speed") * 0.8,
-        ]) / 1.08,
-      );
-    case "midfielder":
-      return Math.round(
-        average([
-          statValue(s, "passing") * 1.3,
-          statValue(s, "vision") * 1.3,
-          statValue(s, "dribbling"),
-          statValue(s, "stamina"),
-          statValue(s, "longPassing"),
-          statValue(s, "defense") * 0.7,
-          statValue(s, "attack") * 0.8,
-        ]) / 1.02,
-      );
-    case "forward":
-      return Math.round(
-        average([
-          statValue(s, "attack") * 1.25,
-          statValue(s, "shooting") * 1.15,
-          statValue(s, "dribbling") * 1.2,
-          statValue(s, "speed"),
-          statValue(s, "passing") * 0.8,
-          statValue(s, "vision") * 0.75,
-        ]) / 1.03,
-      );
-    case "striker":
-      return Math.round(
-        average([
-          statValue(s, "attack") * 1.35,
-          statValue(s, "shooting") * 1.4,
-          statValue(s, "speed"),
-          statValue(s, "dribbling"),
-          statValue(s, "aerial") * 0.9,
-          statValue(s, "strength") * 0.8,
-        ]) / 1.08,
-      );
-  }
+  return Math.round(calculatePlayerOverall(player));
 }
 
 function playerValueMillions(player: PlayerCard): number {
@@ -547,11 +488,11 @@ export default function TeamProfiles({
         jerseyColor: team.jerseyColor,
         secondaryColor: team.secondaryColor,
         formationId: team.formationId,
-        players: team.players,
+        players: league.aiSquads?.[team.id] ?? team.players,
         tactic: team.tactic,
       })),
     ],
-    [playerTeam],
+    [playerTeam, league.aiSquads],
   );
 
   const standings = useMemo(() => getLeagueStandings(league.teams), [league.teams]);

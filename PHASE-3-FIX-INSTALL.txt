@@ -1,0 +1,31 @@
+FOOTBALL TACTICS ARENA — PHASE 3 TRAINING TAB REPAIR
+=====================================================
+
+This is an INCREMENTAL repair. It does not bundle Phases 1 or 2.
+It restores the Phase 3 training integration and makes the Training tab
+always visible in a fixed three-column row:
+
+Lineup | Formation | ⭐ Training
+
+RECOMMENDED INSTALL
+-------------------
+You may run this from either:
+- the main Replit workspace, OR
+- artifacts/fta-game
+
+1. Unzip the file.
+2. Run:
+
+   bash apply-phase3-training-fix.sh
+
+3. Then run the command printed by the installer, or:
+
+   cd artifacts/fta-game
+   pnpm typecheck && pnpm build
+
+If you are already inside artifacts/fta-game, use:
+
+   pnpm typecheck && pnpm build
+
+The repair also bumps the offline cache version so an older installed/PWA build
+does not keep serving the pre-training interface.

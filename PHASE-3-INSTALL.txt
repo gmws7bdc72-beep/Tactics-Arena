@@ -1,0 +1,51 @@
+FOOTBALL TACTICS ARENA — PHASE 3 CUMULATIVE PATCH
+==================================================
+
+This ZIP includes Phases 1, 2, and 3:
+
+PHASE 1
+- Five-tab bottom menu with the blue-highlighted centre Play tab.
+
+PHASE 2
+- Full Team / Club Profiles page.
+
+PHASE 3
+- Training tab inside Team Setup.
+- Persistent player potential, morale, progress, age, development history,
+  season growth, total growth, and individual focus.
+- Team workload: Light, Balanced, or Intense.
+- Individual focuses: Balanced, Passing, Shooting, Long Balls, Defending,
+  Goalkeeping, and Movement.
+- Movement replaces Luck throughout the player database and match engine.
+- Existing saved players using Luck are migrated automatically to Movement.
+- Player training is processed after every regular-season or playoff match week.
+- AI clubs train every match week and strategically choose focuses based on
+  player role, squad weaknesses, club tactic, and current attributes.
+- AI development is saved inside league data and affects the players used in
+  matches and shown in Club Profiles.
+- Player and AI development carries into new seasons. Ages increase and only
+  the season-growth counters reset.
+
+INSTALL
+-------
+1. Place this ZIP in the main Replit workspace — the folder that contains the
+   "artifacts" directory.
+
+2. Run:
+
+   unzip -o FTA-Phase-3-Training-System-CUMULATIVE.zip
+   cd artifacts/fta-game
+   pnpm typecheck && pnpm build
+
+3. Start the game normally.
+
+You do not need to delete localStorage or restart your league. The patch
+migrates old saved player stats and creates missing development data.
+
+IMPORTANT
+---------
+- Training gains are earned after match weeks, not by repeatedly opening the
+  Training tab.
+- A full stat point is awarded when the player's progress meter reaches 100%.
+- Players close to their potential improve more slowly.
+- Intense training increases progress but applies a small morale cost.
