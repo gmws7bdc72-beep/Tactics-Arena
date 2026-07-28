@@ -9,10 +9,8 @@ import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
 import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS, PLAYERS_PER_TEAM } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
-import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
 import { loadMatch, saveMatch } from "../game/persistence";
-import { createPlayerAppearance, deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 
 interface Props {
   team: TeamConfig;
@@ -42,7 +40,6 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     name: card.name,
     jerseyNumber: card.jerseyNumber,
     role: card.role,
-    appearance: card.appearance ?? createPlayerAppearance(card.id, card.role),
   };
 }
 
@@ -57,21 +54,9 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
-      stateTimer: p.stateTimer,
-      actionPassStyle:
-        p.command?.type === CommandType.PASS
-          ? (p.command.passStyle ?? "ground")
-          : undefined,
-      actionTarget:
-        p.command?.type === CommandType.PASS && p.command.targetPosition
-          ? { ...p.command.targetPosition }
-          : p.command?.type === CommandType.SHOOT
-            ? { x: p.teamId === "player" ? PITCH_WIDTH : 0, y: PITCH_HEIGHT / 2 }
-            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
@@ -800,18 +785,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         )}
         <PitchCanvas
           frame={liveFrame}
-          playerTeam={twoPlayer && p1TeamDef ? {
-            ...team,
-            jerseyColor: p1TeamDef.jerseyColor,
-            secondaryColor: p1TeamDef.secondaryColor,
-            kitStyle: p1TeamDef.kitStyle ?? deriveKitStyle(p1TeamDef.id),
-            sleeveStyle: p1TeamDef.sleeveStyle ?? deriveSleeveStyle(p1TeamDef.id),
-            crestIcon: p1TeamDef.crestIcon,
-          } : team}
+          playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
           aiTeamColor={effectiveAiColor}
           aiTeamSecondaryColor={effectiveAiSecondaryColor}
-          aiTeamKitStyle={opponentTeamDef.kitStyle ?? deriveKitStyle(opponentTeamDef.id)}
-          aiTeamSleeveStyle={opponentTeamDef.sleeveStyle ?? deriveSleeveStyle(opponentTeamDef.id)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode}
@@ -855,10 +831,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        {/* Commentary overlay — bottom of pitch */}
-        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
-          <EventLog events={allEvents} />
-        </div>
       </div>
 
       {/* Controls bottom bar */}
