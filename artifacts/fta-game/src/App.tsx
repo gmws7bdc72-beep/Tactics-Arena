@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type {
   TeamConfig,
   GameEvent,
@@ -17,6 +18,7 @@ import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
 import TransferMarket from "./pages/TransferMarket";
 import { processTransferWeek } from "./game/transferMarket";
+import { formatMoney } from "./game/transferDatabase";
 import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
@@ -136,6 +138,17 @@ export default function App() {
   );
   const [profileTeamId, setProfileTeamId] =
     useState<string>(PLAYER_TEAM_ID_CONST);
+  const knownIncomingOfferIds = useRef(
+    new Set(
+      market.offers
+        .filter(
+          (offer) =>
+            offer.toClubId === PLAYER_TEAM_ID_CONST &&
+            (offer.status === "pending" || offer.status === "countered"),
+        )
+        .map((offer) => offer.id),
+    ),
+  );
 
   useEffect(() => {
     const onHash = () => {
@@ -152,6 +165,41 @@ export default function App() {
 
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  useEffect(() => {
+    const activeIncoming = market.offers.filter(
+      (offer) =>
+        offer.toClubId === PLAYER_TEAM_ID_CONST &&
+        (offer.status === "pending" || offer.status === "countered"),
+    );
+    const newOffers = activeIncoming.filter(
+      (offer) => !knownIncomingOfferIds.current.has(offer.id),
+    );
+
+    activeIncoming.forEach((offer) =>
+      knownIncomingOfferIds.current.add(offer.id),
+    );
+
+    if (newOffers.length === 0) return;
+
+    const latest = newOffers[0];
+    toast(
+      newOffers.length === 1
+        ? "📩 New transfer offer"
+        : `📩 ${newOffers.length} new transfer offers`,
+      {
+        description:
+          newOffers.length === 1
+            ? `${latest.fromClubName} offered ${formatMoney(
+                latest.counterAmount ?? latest.amount,
+              )} for ${latest.playerName}. Check Market → Offers.`
+            : `Latest: ${latest.fromClubName} offered ${formatMoney(
+                latest.counterAmount ?? latest.amount,
+              )} for ${latest.playerName}.`,
+        duration: 2200,
+      },
+    );
+  }, [market.offers]);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
@@ -455,6 +503,7 @@ export default function App() {
         <TeamProfiles
           playerTeam={team}
           league={league}
+          market={market}
           initialTeamId={profileTeamId}
           onBack={() => goToMenuTab("home")}
         />

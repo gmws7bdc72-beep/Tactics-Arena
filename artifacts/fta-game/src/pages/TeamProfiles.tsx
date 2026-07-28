@@ -6,8 +6,10 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
+  History,
   Goal,
   HandCoins,
+  ArrowRightLeft,
   Medal,
   Shield,
   Sparkles,
@@ -34,15 +36,17 @@ import { ABILITIES, STAT_LABELS } from "../game/players";
 import { getFormationById } from "../game/formations";
 import { PLAYER_TEAM_ID_CONST } from "../game/persistence";
 import { calculatePlayerOverall } from "../game/training";
+import type { TransferMarketState } from "../game/transferMarket";
 
 interface Props {
   playerTeam: TeamConfig;
   league: LeagueState;
+  market?: TransferMarketState;
   initialTeamId?: string;
   onBack?: () => void;
 }
 
-type ViewTab = "overview" | "squad" | "tactics";
+type ViewTab = "overview" | "squad" | "tactics" | "history";
 
 type ProfileTeam = {
   id: string;
@@ -54,17 +58,6 @@ type ProfileTeam = {
   players: PlayerCard[];
   tactic: TeamTactic;
   isPlayer?: boolean;
-};
-
-type FinanceRecord = {
-  budget?: number;
-  wageBill?: number;
-  clubValue?: number;
-};
-
-type FutureLeagueState = LeagueState & {
-  season?: number;
-  clubFinances?: Record<string, FinanceRecord>;
 };
 
 const PLAYER_TACTIC: TeamTactic = {
@@ -158,7 +151,10 @@ function playerWeeklyWage(player: PlayerCard): number {
   return Math.round((value * 3_400 + overall(player) * 2_600) / 1_000) * 1_000;
 }
 
-function normalizeMillions(value: number | undefined, fallback: number): number {
+function normalizeMillions(
+  value: number | undefined,
+  fallback: number,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.abs(value) >= 100_000 ? value / 1_000_000 : value;
 }
@@ -324,11 +320,32 @@ function recentForm(league: LeagueState): Array<"W" | "D" | "L"> {
 function roleStatKeys(role: PlayerCard["role"]): Array<keyof PlayerStats> {
   switch (role) {
     case "goalkeeper":
-      return ["defense", "marking", "aerial", "longPassing", "passing", "strength"];
+      return [
+        "defense",
+        "marking",
+        "aerial",
+        "longPassing",
+        "passing",
+        "strength",
+      ];
     case "defender":
-      return ["defense", "tackling", "marking", "strength", "aerial", "passing"];
+      return [
+        "defense",
+        "tackling",
+        "marking",
+        "strength",
+        "aerial",
+        "passing",
+      ];
     case "midfielder":
-      return ["passing", "vision", "dribbling", "stamina", "longPassing", "defense"];
+      return [
+        "passing",
+        "vision",
+        "dribbling",
+        "stamina",
+        "longPassing",
+        "defense",
+      ];
     case "forward":
       return ["attack", "shooting", "speed", "dribbling", "passing", "vision"];
     case "striker":
@@ -434,7 +451,9 @@ function LeaderCard({
           {title}
         </span>
       </div>
-      <div className="truncate text-sm font-black text-white">{player.name}</div>
+      <div className="truncate text-sm font-black text-white">
+        {player.name}
+      </div>
       <div className="mt-1 text-[10px] text-slate-500">
         {total} {totalLabel}
       </div>
@@ -449,13 +468,17 @@ function StatTile({
   statKey: keyof PlayerStats;
   player: PlayerCard;
 }) {
-  const label = STAT_LABELS.find((item) => item.key === statKey)?.label ?? statKey;
+  const label =
+    STAT_LABELS.find((item) => item.key === statKey)?.label ?? statKey;
   const value = statValue(player.stats, statKey);
 
   return (
     <div className="rounded-lg border border-white/5 bg-black/20 px-1.5 py-2 text-center">
       <div className="text-[9px] font-bold text-slate-500">{label}</div>
-      <div className="mt-0.5 text-sm font-black" style={{ color: toneForRating(value) }}>
+      <div
+        className="mt-0.5 text-sm font-black"
+        style={{ color: toneForRating(value) }}
+      >
         {value}
       </div>
     </div>
@@ -465,6 +488,7 @@ function StatTile({
 export default function TeamProfiles({
   playerTeam,
   league,
+  market,
   initialTeamId,
   onBack,
 }: Props) {
@@ -495,7 +519,10 @@ export default function TeamProfiles({
     [playerTeam, league.aiSquads],
   );
 
-  const standings = useMemo(() => getLeagueStandings(league.teams), [league.teams]);
+  const standings = useMemo(
+    () => getLeagueStandings(league.teams),
+    [league.teams],
+  );
   const [selectedId, setSelectedId] = useState(
     initialTeamId ?? PLAYER_TEAM_ID_CONST,
   );
@@ -521,7 +548,8 @@ export default function TeamProfiles({
   const goalDifference = entry.goalsFor - entry.goalsAgainst;
   const formation = getFormationById(selected.formationId);
   const sortedPlayers = [...selected.players].sort(
-    (a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || overall(b) - overall(a),
+    (a, b) =>
+      ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || overall(b) - overall(a),
   );
   const clubValueFallback = selected.players.reduce(
     (sum, player) => sum + playerValueMillions(player),
@@ -531,19 +559,39 @@ export default function TeamProfiles({
     (sum, player) => sum + playerWeeklyWage(player),
     0,
   );
-  const futureLeague = league as FutureLeagueState;
-  const financeOverride = futureLeague.clubFinances?.[selected.id];
-  const clubValue = normalizeMillions(financeOverride?.clubValue, clubValueFallback);
-  const budget = normalizeMillions(financeOverride?.budget, 0);
+  const liveFinance = market?.finances[selected.id];
+  const clubValue = clubValueFallback;
+  const budget = normalizeMillions(liveFinance?.budget, 0);
   const wageBill =
-    typeof financeOverride?.wageBill === "number" && Number.isFinite(financeOverride.wageBill)
-      ? financeOverride.wageBill
+    typeof liveFinance?.payroll === "number" &&
+    Number.isFinite(liveFinance.payroll)
+      ? liveFinance.payroll
       : wageFallback;
-  const seasonNumber = Math.max(1, Math.round(futureLeague.season ?? 1));
+  const seasonNumber = Math.max(1, Math.round(league.season ?? 1));
+  const clubHistory = market?.clubHistory[selected.id] ?? [];
+  const clubTransfers =
+    market?.transactions.filter(
+      (transaction) =>
+        transaction.buyerId === selected.id ||
+        transaction.sellerId === selected.id,
+    ) ?? [];
+  const titles = clubHistory.filter(
+    (historyEntry) => historyEntry.outcome === "Champion",
+  ).length;
+  const historicSpent = clubHistory.reduce(
+    (sum, historyEntry) => sum + historyEntry.transferSpent,
+    0,
+  );
+  const historicReceived = clubHistory.reduce(
+    (sum, historyEntry) => sum + historyEntry.transferReceived,
+    0,
+  );
+  const historicBalance = historicReceived - historicSpent;
   const scorer = pickWeightedLeader(selected.players, scorerWeight);
   const creator = pickWeightedLeader(selected.players, creatorWeight);
   const goalkeeper =
-    selected.players.find((player) => player.role === "goalkeeper") ?? selected.players[0];
+    selected.players.find((player) => player.role === "goalkeeper") ??
+    selected.players[0];
   const cleanSheets = getCleanSheets(selected.id, entry, league);
   const strengths = strengthScores(selected.players);
   const form = selected.isPlayer ? recentForm(league) : [];
@@ -582,7 +630,8 @@ export default function TeamProfiles({
       <div className="-mx-4 mb-4 overflow-x-auto px-4 pb-1">
         <div className="flex min-w-max gap-2">
           {teams.map((team) => {
-            const teamRank = standings.findIndex((entryItem) => entryItem.id === team.id) + 1;
+            const teamRank =
+              standings.findIndex((entryItem) => entryItem.id === team.id) + 1;
             const active = team.id === selected.id;
 
             return (
@@ -592,7 +641,9 @@ export default function TeamProfiles({
                 onClick={() => setSelectedId(team.id)}
                 className="min-w-[116px] rounded-2xl p-3 text-left transition active:scale-[0.98]"
                 style={{
-                  background: active ? `${team.jerseyColor}20` : "rgba(255,255,255,0.035)",
+                  background: active
+                    ? `${team.jerseyColor}20`
+                    : "rgba(255,255,255,0.035)",
                   border: `1px solid ${active ? `${team.jerseyColor}aa` : "rgba(255,255,255,0.07)"}`,
                   boxShadow: active ? `0 0 22px ${team.jerseyColor}16` : "none",
                 }}
@@ -602,7 +653,9 @@ export default function TeamProfiles({
                   <span
                     className="rounded-full px-2 py-0.5 text-[9px] font-black"
                     style={{
-                      background: active ? `${team.jerseyColor}28` : "rgba(255,255,255,0.05)",
+                      background: active
+                        ? `${team.jerseyColor}28`
+                        : "rgba(255,255,255,0.05)",
                       color: active ? team.jerseyColor : "#64748b",
                     }}
                   >
@@ -613,7 +666,9 @@ export default function TeamProfiles({
                   {team.name}
                 </div>
                 <div className="mt-0.5 truncate text-[9px] text-slate-500">
-                  {team.isPlayer ? "Your club" : `Tier ${getTeamEntry(league, team.id).tier}`}
+                  {team.isPlayer
+                    ? "Your club"
+                    : `Tier ${getTeamEntry(league, team.id).tier}`}
                 </div>
               </button>
             );
@@ -648,14 +703,18 @@ export default function TeamProfiles({
               {selected.isPlayer && (
                 <span
                   className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide"
-                  style={{ background: `${selected.jerseyColor}2b`, color: selected.jerseyColor }}
+                  style={{
+                    background: `${selected.jerseyColor}2b`,
+                    color: selected.jerseyColor,
+                  }}
                 >
                   Your club
                 </span>
               )}
             </div>
             <div className="mt-1 text-xs text-slate-400">
-              Season {seasonNumber} · {formation.name} · {selected.players.length} players
+              Season {seasonNumber} · {formation.name} ·{" "}
+              {selected.players.length} players
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full border border-white/8 bg-black/20 px-2.5 py-1 text-[10px] font-bold text-slate-300">
@@ -673,20 +732,26 @@ export default function TeamProfiles({
             <div className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">
               Position
             </div>
-            <div className="mt-1 text-3xl font-black" style={{ color: selected.jerseyColor }}>
+            <div
+              className="mt-1 text-3xl font-black"
+              style={{ color: selected.jerseyColor }}
+            >
               {rank}
             </div>
-            <div className="text-[9px] text-slate-500">of {standings.length}</div>
+            <div className="text-[9px] text-slate-500">
+              of {standings.length}
+            </div>
           </div>
         </div>
       </section>
 
-      <div className="mb-4 grid grid-cols-3 rounded-2xl border border-white/8 bg-white/[0.035] p-1">
+      <div className="mb-4 grid grid-cols-4 rounded-2xl border border-white/8 bg-white/[0.035] p-1">
         {(
           [
             ["overview", "Overview"],
             ["squad", "Squad"],
             ["tactics", "Tactics"],
+            ["history", "History"],
           ] as Array<[ViewTab, string]>
         ).map(([id, label]) => (
           <button
@@ -695,9 +760,13 @@ export default function TeamProfiles({
             onClick={() => setView(id)}
             className="rounded-xl px-2 py-2.5 text-xs font-black transition active:scale-[0.98]"
             style={{
-              background: view === id ? `${selected.jerseyColor}25` : "transparent",
+              background:
+                view === id ? `${selected.jerseyColor}25` : "transparent",
               color: view === id ? selected.jerseyColor : "#64748b",
-              boxShadow: view === id ? `inset 0 0 0 1px ${selected.jerseyColor}45` : "none",
+              boxShadow:
+                view === id
+                  ? `inset 0 0 0 1px ${selected.jerseyColor}45`
+                  : "none",
             }}
           >
             {label}
@@ -712,7 +781,11 @@ export default function TeamProfiles({
               icon={<Trophy size={16} />}
               label="League"
               value={`#${rank}`}
-              note={rank <= 4 ? "Inside playoff places" : `${playoffDistance} place${playoffDistance === 1 ? "" : "s"} from top four`}
+              note={
+                rank <= 4
+                  ? "Inside playoff places"
+                  : `${playoffDistance} place${playoffDistance === 1 ? "" : "s"} from top four`
+              }
               accent="#fbbf24"
             />
             <MetricCard
@@ -726,7 +799,11 @@ export default function TeamProfiles({
               icon={<WalletCards size={16} />}
               label="Budget"
               value={formatMillions(budget)}
-              note={seasonNumber <= 1 ? "Locked until season prize money" : "Available transfer funds"}
+              note={
+                seasonNumber <= 1
+                  ? "Locked until season prize money"
+                  : "Available transfer funds"
+              }
               accent="#4ade80"
             />
             <MetricCard
@@ -742,7 +819,9 @@ export default function TeamProfiles({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Season Snapshot</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Current league record</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Current league record
+                </p>
               </div>
               <BarChart3 size={18} style={{ color: selected.jerseyColor }} />
             </div>
@@ -753,8 +832,14 @@ export default function TeamProfiles({
                 ["Drawn", entry.drawn, "#fbbf24"],
                 ["Lost", entry.lost, "#fb7185"],
               ].map(([label, value, color]) => (
-                <div key={String(label)} className="rounded-xl border border-white/5 bg-black/20 p-3 text-center">
-                  <div className="text-2xl font-black" style={{ color: String(color) }}>
+                <div
+                  key={String(label)}
+                  className="rounded-xl border border-white/5 bg-black/20 p-3 text-center"
+                >
+                  <div
+                    className="text-2xl font-black"
+                    style={{ color: String(color) }}
+                  >
                     {value}
                   </div>
                   <div className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">
@@ -768,18 +853,28 @@ export default function TeamProfiles({
               {[
                 ["Goals For", entry.goalsFor],
                 ["Goals Against", entry.goalsAgainst],
-                ["Goal Difference", `${goalDifference >= 0 ? "+" : ""}${goalDifference}`],
+                [
+                  "Goal Difference",
+                  `${goalDifference >= 0 ? "+" : ""}${goalDifference}`,
+                ],
               ].map(([label, value]) => (
-                <div key={String(label)} className="rounded-xl bg-white/[0.025] px-2 py-2.5 text-center">
+                <div
+                  key={String(label)}
+                  className="rounded-xl bg-white/[0.025] px-2 py-2.5 text-center"
+                >
                   <div className="text-sm font-black text-white">{value}</div>
-                  <div className="mt-0.5 text-[8px] uppercase tracking-wide text-slate-600">{label}</div>
+                  <div className="mt-0.5 text-[8px] uppercase tracking-wide text-slate-600">
+                    {label}
+                  </div>
                 </div>
               ))}
             </div>
 
             {form.length > 0 && (
               <div className="mt-4 flex items-center justify-between rounded-xl border border-white/5 bg-black/20 px-3 py-2.5">
-                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Recent form</span>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  Recent form
+                </span>
                 <div className="flex gap-1.5">
                   {form.map((result, index) => (
                     <span
@@ -792,7 +887,12 @@ export default function TeamProfiles({
                             : result === "D"
                               ? "rgba(251,191,36,0.16)"
                               : "rgba(251,113,133,0.16)",
-                        color: result === "W" ? "#4ade80" : result === "D" ? "#fbbf24" : "#fb7185",
+                        color:
+                          result === "W"
+                            ? "#4ade80"
+                            : result === "D"
+                              ? "#fbbf24"
+                              : "#fb7185",
                       }}
                     >
                       {result}
@@ -807,7 +907,9 @@ export default function TeamProfiles({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Club Finances</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Prepared for the transfer system</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Prepared for the transfer system
+                </p>
               </div>
               <Banknote size={18} className="text-emerald-400" />
             </div>
@@ -817,25 +919,32 @@ export default function TeamProfiles({
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
                   <HandCoins size={15} /> Weekly wage bill
                 </div>
-                <span className="text-sm font-black text-white">{formatWeeklyWage(wageBill)}</span>
+                <span className="text-sm font-black text-white">
+                  {formatWeeklyWage(wageBill)}
+                </span>
               </div>
               <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 px-3 py-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
                   <CircleDollarSign size={15} /> Squad market value
                 </div>
-                <span className="text-sm font-black text-white">{formatMillions(clubValue)}</span>
+                <span className="text-sm font-black text-white">
+                  {formatMillions(clubValue)}
+                </span>
               </div>
               <div className="flex items-center justify-between rounded-xl border border-white/5 bg-black/20 px-3 py-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
                   <Trophy size={15} /> Current projected prize
                 </div>
-                <span className="text-sm font-black text-amber-300">{formatMillions(projectedPrize(rank))}</span>
+                <span className="text-sm font-black text-amber-300">
+                  {formatMillions(projectedPrize(rank))}
+                </span>
               </div>
             </div>
 
             {seasonNumber <= 1 && (
               <div className="mt-3 rounded-xl border border-sky-400/15 bg-sky-400/[0.05] px-3 py-2.5 text-[10px] leading-4 text-slate-400">
-                Transfer budgets remain at $0 during the first season. The projected prize is released only after the season is completed.
+                Transfer budgets remain at $0 during the first season. The
+                projected prize is released only after the season is completed.
               </div>
             )}
           </section>
@@ -844,7 +953,9 @@ export default function TeamProfiles({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Season Leaders</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Club leaders based on results and player roles</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Club leaders based on results and player roles
+                </p>
               </div>
               <Sparkles size={18} style={{ color: selected.jerseyColor }} />
             </div>
@@ -881,7 +992,9 @@ export default function TeamProfiles({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Team Strength</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Average squad quality by phase</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Average squad quality by phase
+                </p>
               </div>
               <Users size={18} style={{ color: selected.jerseyColor }} />
             </div>
@@ -905,8 +1018,13 @@ export default function TeamProfiles({
                 </p>
               </div>
               <div className="text-right">
-                <div className="text-[9px] font-black uppercase tracking-wide text-slate-500">Average OVR</div>
-                <div className="text-xl font-black" style={{ color: selected.jerseyColor }}>
+                <div className="text-[9px] font-black uppercase tracking-wide text-slate-500">
+                  Average OVR
+                </div>
+                <div
+                  className="text-xl font-black"
+                  style={{ color: selected.jerseyColor }}
+                >
                   {average(selected.players.map(overall)).toFixed(1)}
                 </div>
               </div>
@@ -915,7 +1033,10 @@ export default function TeamProfiles({
               {(Object.keys(roleCounts) as Array<PlayerCard["role"]>)
                 .filter((role) => roleCounts[role] > 0)
                 .map((role) => (
-                  <span key={role} className="rounded-full border border-white/6 bg-black/20 px-2.5 py-1 text-[9px] font-bold text-slate-400">
+                  <span
+                    key={role}
+                    className="rounded-full border border-white/6 bg-black/20 px-2.5 py-1 text-[9px] font-bold text-slate-400"
+                  >
                     {ROLE_SHORT[role]} {roleCounts[role]}
                   </span>
                 ))}
@@ -927,6 +1048,7 @@ export default function TeamProfiles({
             const ability = ABILITIES[player.ability];
             const keyStats = roleStatKeys(player.role);
             const value = playerValueMillions(player);
+            const career = market?.playerCareers[player.id] ?? [];
 
             return (
               <article
@@ -935,7 +1057,9 @@ export default function TeamProfiles({
               >
                 <button
                   type="button"
-                  onClick={() => setExpandedPlayerId(expanded ? null : player.id)}
+                  onClick={() =>
+                    setExpandedPlayerId(expanded ? null : player.id)
+                  }
                   className="w-full p-3.5 text-left active:bg-white/[0.025]"
                 >
                   <div className="flex items-center gap-3">
@@ -944,14 +1068,19 @@ export default function TeamProfiles({
                       style={{
                         background: selected.jerseyColor,
                         color: selected.secondaryColor,
-                        outline: player.role === "goalkeeper" ? "2px solid #fbbf24" : "2px solid rgba(255,255,255,0.08)",
+                        outline:
+                          player.role === "goalkeeper"
+                            ? "2px solid #fbbf24"
+                            : "2px solid rgba(255,255,255,0.08)",
                       }}
                     >
                       {player.jerseyNumber}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <h4 className="truncate text-sm font-black text-white">{player.name}</h4>
+                        <h4 className="truncate text-sm font-black text-white">
+                          {player.name}
+                        </h4>
                         <span className="rounded-full bg-white/5 px-2 py-0.5 text-[8px] font-black text-slate-500">
                           {ROLE_SHORT[player.role]}
                         </span>
@@ -963,17 +1092,32 @@ export default function TeamProfiles({
                       </div>
                     </div>
                     <div className="text-center">
-                      <div className="text-[8px] font-black uppercase tracking-wide text-slate-600">OVR</div>
-                      <div className="text-2xl font-black" style={{ color: toneForRating(overall(player)) }}>
+                      <div className="text-[8px] font-black uppercase tracking-wide text-slate-600">
+                        OVR
+                      </div>
+                      <div
+                        className="text-2xl font-black"
+                        style={{ color: toneForRating(overall(player)) }}
+                      >
                         {overall(player)}
                       </div>
                     </div>
-                    <div className="text-slate-500">{expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}</div>
+                    <div className="text-slate-500">
+                      {expanded ? (
+                        <ChevronUp size={17} />
+                      ) : (
+                        <ChevronDown size={17} />
+                      )}
+                    </div>
                   </div>
 
                   <div className="mt-3 grid grid-cols-6 gap-1.5">
                     {keyStats.map((statKey) => (
-                      <StatTile key={statKey} statKey={statKey} player={player} />
+                      <StatTile
+                        key={statKey}
+                        statKey={statKey}
+                        player={player}
+                      />
                     ))}
                   </div>
                 </button>
@@ -981,10 +1125,15 @@ export default function TeamProfiles({
                 {expanded && (
                   <div className="border-t border-white/6 bg-black/15 px-3.5 pb-3.5 pt-3">
                     <div className="mb-3 rounded-xl border border-white/5 bg-black/20 p-3">
-                      <div className="text-[10px] font-black uppercase tracking-wide" style={{ color: selected.jerseyColor }}>
+                      <div
+                        className="text-[10px] font-black uppercase tracking-wide"
+                        style={{ color: selected.jerseyColor }}
+                      >
                         {ability.name}
                       </div>
-                      <p className="mt-1 text-[10px] leading-4 text-slate-400">{ability.description}</p>
+                      <p className="mt-1 text-[10px] leading-4 text-slate-400">
+                        {ability.description}
+                      </p>
                     </div>
                     <div className="grid grid-cols-7 gap-1.5">
                       {STAT_LABELS.map(({ key }) => (
@@ -992,8 +1141,67 @@ export default function TeamProfiles({
                       ))}
                     </div>
                     <div className="mt-3 flex items-center justify-between rounded-xl border border-white/5 bg-black/20 px-3 py-2.5">
-                      <span className="text-[10px] font-bold text-slate-500">Estimated weekly wage</span>
-                      <span className="text-xs font-black text-white">{formatWeeklyWage(playerWeeklyWage(player))}</span>
+                      <span className="text-[10px] font-bold text-slate-500">
+                        Estimated weekly wage
+                      </span>
+                      <span className="text-xs font-black text-white">
+                        {formatWeeklyWage(playerWeeklyWage(player))}
+                      </span>
+                    </div>
+                    <div className="mt-3 rounded-xl border border-white/5 bg-black/20 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                          <History size={13} />
+                          Career history
+                        </div>
+                        <span className="text-[9px] text-slate-600">
+                          {career.length} record{career.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      {career.length === 0 ? (
+                        <div className="rounded-lg bg-white/[0.025] px-3 py-2 text-[10px] text-slate-500">
+                          Current club: {selected.name}. Season and transfer
+                          milestones will be recorded from Phase 6 onward.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {career.slice(0, 6).map((careerEntry) => (
+                            <div
+                              key={careerEntry.id}
+                              className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.025] px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-[10px] font-black text-slate-300">
+                                  Season {careerEntry.season} ·{" "}
+                                  {careerEntry.type === "transfer"
+                                    ? `${careerEntry.fromClubName} → ${careerEntry.toClubName}`
+                                    : careerEntry.clubName}
+                                </div>
+                                <div className="mt-0.5 text-[8px] uppercase text-slate-600">
+                                  {careerEntry.type}
+                                </div>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <div className="text-[10px] font-black text-white">
+                                  {careerEntry.type === "transfer"
+                                    ? formatMillions(
+                                        (careerEntry.fee ?? 0) / 1_000_000,
+                                      )
+                                    : `OVR ${careerEntry.overall ?? overall(player)}`}
+                                </div>
+                                {careerEntry.marketValue !== undefined && (
+                                  <div className="text-[8px] text-slate-600">
+                                    Value{" "}
+                                    {formatMillions(
+                                      careerEntry.marketValue / 1_000_000,
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1008,36 +1216,61 @@ export default function TeamProfiles({
           <section className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
-                <div className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">Identity</div>
-                <h3 className="mt-1 text-lg font-black" style={{ color: selected.jerseyColor }}>
+                <div className="text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">
+                  Identity
+                </div>
+                <h3
+                  className="mt-1 text-lg font-black"
+                  style={{ color: selected.jerseyColor }}
+                >
                   {selected.tactic.name}
                 </h3>
               </div>
               <div className="rounded-xl border border-white/6 bg-black/20 px-3 py-2 text-center">
-                <div className="text-[8px] font-black uppercase tracking-wide text-slate-600">Formation</div>
-                <div className="mt-0.5 text-sm font-black text-white">{formation.name}</div>
+                <div className="text-[8px] font-black uppercase tracking-wide text-slate-600">
+                  Formation
+                </div>
+                <div className="mt-0.5 text-sm font-black text-white">
+                  {formation.name}
+                </div>
               </div>
             </div>
-            <p className="text-xs leading-5 text-slate-400">{selected.tactic.description}</p>
+            <p className="text-xs leading-5 text-slate-400">
+              {selected.tactic.description}
+            </p>
           </section>
 
           <section className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">In Possession</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">How the club advances the ball</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  How the club advances the ball
+                </p>
               </div>
               <Target size={18} style={{ color: selected.jerseyColor }} />
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-4">
               {tacticBar("Tempo", selected.tactic.tempo, selected.jerseyColor)}
               {tacticBar("Risk", selected.tactic.risk, "#fbbf24")}
-              {tacticBar("Long balls", selected.tactic.longBallFrequency, "#c084fc")}
-              {tacticBar("Rest defense", selected.tactic.restDefenseDepth, "#4ade80")}
+              {tacticBar(
+                "Long balls",
+                selected.tactic.longBallFrequency,
+                "#c084fc",
+              )}
+              {tacticBar(
+                "Rest defense",
+                selected.tactic.restDefenseDepth,
+                "#4ade80",
+              )}
             </div>
             <div className="mt-4 rounded-xl border border-white/5 bg-black/20 px-3 py-3">
-              <div className="text-[9px] font-black uppercase tracking-wide text-slate-500">Progression</div>
-              <div className="mt-1 text-sm font-black capitalize text-white">{selected.tactic.progression}</div>
+              <div className="text-[9px] font-black uppercase tracking-wide text-slate-500">
+                Progression
+              </div>
+              <div className="mt-1 text-sm font-black capitalize text-white">
+                {selected.tactic.progression}
+              </div>
             </div>
           </section>
 
@@ -1045,14 +1278,20 @@ export default function TeamProfiles({
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Out of Possession</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">Defensive behavior and pressing</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Defensive behavior and pressing
+                </p>
               </div>
               <Shield size={18} className="text-slate-300" />
             </div>
 
             <div className="rounded-xl border border-white/5 bg-black/20 p-3">
-              <div className="text-xs font-black" style={{ color: selected.jerseyColor }}>
-                {selected.tactic.outOfPossessionName ?? "Balanced Defensive Shape"}
+              <div
+                className="text-xs font-black"
+                style={{ color: selected.jerseyColor }}
+              >
+                {selected.tactic.outOfPossessionName ??
+                  "Balanced Defensive Shape"}
               </div>
               <p className="mt-1 text-[10px] leading-4 text-slate-400">
                 {selected.tactic.outOfPossessionDescription ??
@@ -1061,8 +1300,16 @@ export default function TeamProfiles({
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
-              {tacticBar("Press intensity", selected.tactic.pressIntensity, "#fb7185")}
-              {tacticBar("Defensive line", selected.tactic.defensiveLine, "#38bdf8")}
+              {tacticBar(
+                "Press intensity",
+                selected.tactic.pressIntensity,
+                "#fb7185",
+              )}
+              {tacticBar(
+                "Defensive line",
+                selected.tactic.defensiveLine,
+                "#38bdf8",
+              )}
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -1096,7 +1343,9 @@ export default function TeamProfiles({
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-black">Squad Fit</h3>
-                <p className="mt-0.5 text-[10px] text-slate-500">How the roster supports this tactic</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  How the roster supports this tactic
+                </p>
               </div>
               <Users size={18} style={{ color: selected.jerseyColor }} />
             </div>
@@ -1106,14 +1355,211 @@ export default function TeamProfiles({
                 ["Midfield", strengths.midfield, "#38bdf8"],
                 ["Defense", strengths.defense, "#4ade80"],
               ].map(([label, score, color]) => (
-                <div key={String(label)} className="rounded-xl border border-white/5 bg-black/20 p-3 text-center">
-                  <div className="text-xl font-black" style={{ color: String(color) }}>
+                <div
+                  key={String(label)}
+                  className="rounded-xl border border-white/5 bg-black/20 p-3 text-center"
+                >
+                  <div
+                    className="text-xl font-black"
+                    style={{ color: String(color) }}
+                  >
                     {Number(score).toFixed(1)}
                   </div>
-                  <div className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
+                  <div className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                    {label}
+                  </div>
                 </div>
               ))}
             </div>
+          </section>
+        </div>
+      )}
+
+      {view === "history" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            <MetricCard
+              icon={<History size={16} />}
+              label="Seasons"
+              value={`${clubHistory.length}`}
+              note="Archived reports"
+              accent="#38bdf8"
+            />
+            <MetricCard
+              icon={<Trophy size={16} />}
+              label="Titles"
+              value={`${titles}`}
+              note="Championships"
+              accent="#fbbf24"
+            />
+            <MetricCard
+              icon={<ArrowRightLeft size={16} />}
+              label="Balance"
+              value={`${historicBalance >= 0 ? "+" : "-"}${formatMillions(
+                Math.abs(historicBalance) / 1_000_000,
+              )}`}
+              note="Transfer trading"
+              accent={historicBalance >= 0 ? "#4ade80" : "#fb7185"}
+            />
+          </div>
+
+          <section className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black">Season Archive</h3>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Final records, prizes and transfer activity
+                </p>
+              </div>
+              <History size={18} style={{ color: selected.jerseyColor }} />
+            </div>
+
+            {clubHistory.length === 0 ? (
+              <div className="rounded-xl border border-white/5 bg-black/20 px-4 py-5 text-center">
+                <div className="text-xl">📚</div>
+                <div className="mt-2 text-xs font-black text-slate-300">
+                  No completed season yet
+                </div>
+                <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                  This archive is created when the season ends and the next
+                  season begins.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {clubHistory.map((historyEntry) => {
+                  const net =
+                    historyEntry.transferSpent - historyEntry.transferReceived;
+
+                  return (
+                    <div
+                      key={`${historyEntry.clubId}-${historyEntry.season}`}
+                      className="rounded-xl border border-white/5 bg-black/20 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div
+                            className="text-[9px] font-black uppercase tracking-wider"
+                            style={{
+                              color:
+                                historyEntry.outcome === "Champion"
+                                  ? "#fbbf24"
+                                  : selected.jerseyColor,
+                            }}
+                          >
+                            Season {historyEntry.season} ·{" "}
+                            {historyEntry.outcome}
+                          </div>
+                          <div className="mt-1 text-lg font-black text-white">
+                            #{historyEntry.finalPosition}
+                          </div>
+                          <div className="text-[9px] text-slate-500">
+                            {historyEntry.points} pts · {historyEntry.won}W{" "}
+                            {historyEntry.drawn}D {historyEntry.lost}L · GD{" "}
+                            {historyEntry.goalDifference >= 0 ? "+" : ""}
+                            {historyEntry.goalDifference}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[8px] uppercase text-slate-600">
+                            Prize money
+                          </div>
+                          <div className="mt-1 text-sm font-black text-amber-300">
+                            {formatMillions(
+                              historyEntry.prizeMoney / 1_000_000,
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-4 gap-1.5 text-center">
+                        {[
+                          ["In", historyEntry.transfersIn],
+                          ["Out", historyEntry.transfersOut],
+                          [
+                            "Net",
+                            `${net < 0 ? "+" : "-"}${formatMillions(
+                              Math.abs(net) / 1_000_000,
+                            )}`,
+                          ],
+                          [
+                            "Budget",
+                            formatMillions(
+                              historyEntry.endingBudget / 1_000_000,
+                            ),
+                          ],
+                        ].map(([label, value]) => (
+                          <div
+                            key={String(label)}
+                            className="rounded-lg bg-white/[0.025] px-1 py-2"
+                          >
+                            <div className="text-[8px] uppercase text-slate-600">
+                              {label}
+                            </div>
+                            <div className="mt-1 truncate text-[9px] font-black text-slate-300">
+                              {value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-white/8 bg-white/[0.035] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black">Transfer Timeline</h3>
+                <p className="mt-0.5 text-[10px] text-slate-500">
+                  Every arrival and departure
+                </p>
+              </div>
+              <ArrowRightLeft
+                size={18}
+                style={{ color: selected.jerseyColor }}
+              />
+            </div>
+
+            {clubTransfers.length === 0 ? (
+              <div className="rounded-xl border border-white/5 bg-black/20 px-3 py-4 text-center text-[10px] text-slate-500">
+                No completed transfers involving this club.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-white/5">
+                {clubTransfers.slice(0, 20).map((transaction) => {
+                  const arrival = transaction.buyerId === selected.id;
+
+                  return (
+                    <div
+                      key={transaction.id}
+                      className="flex items-center justify-between gap-3 border-b border-white/5 bg-black/20 px-3 py-2.5 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-[10px] font-black text-slate-200">
+                          {arrival ? "↘" : "↗"} {transaction.playerName}
+                        </div>
+                        <div className="truncate text-[8px] text-slate-600">
+                          {arrival
+                            ? `From ${transaction.sellerName}`
+                            : `To ${transaction.buyerName}`}{" "}
+                          · S{transaction.season} W{transaction.week}
+                        </div>
+                      </div>
+                      <div
+                        className="shrink-0 text-[10px] font-black"
+                        style={{ color: arrival ? "#fb7185" : "#4ade80" }}
+                      >
+                        {arrival ? "-" : "+"}
+                        {formatMillions(transaction.amount / 1_000_000)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
       )}

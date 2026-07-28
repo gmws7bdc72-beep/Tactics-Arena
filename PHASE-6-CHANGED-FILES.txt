@@ -1,0 +1,6 @@
+artifacts/fta-game/src/App.tsx
+artifacts/fta-game/src/main.tsx
+artifacts/fta-game/src/game/transferMarket.ts
+artifacts/fta-game/src/hooks/useGameState.ts
+artifacts/fta-game/src/pages/TeamProfiles.tsx
+artifacts/fta-game/src/pages/TransferMarket.tsx

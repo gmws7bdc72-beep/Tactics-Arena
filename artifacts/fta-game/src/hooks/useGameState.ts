@@ -9,8 +9,16 @@ import {
   PLAYER_TEAM_ID_CONST,
 } from "../game/persistence";
 import { migrateLeague, prepareLeagueForNewSeason } from "../game/league";
-import { ensureTeamDevelopment, prepareTeamForNewSeason } from "../game/training";
-import { awardSeasonPrize, loadTransferMarket, normalizeMarket, saveTransferMarket } from "../game/transferMarket";
+import {
+  ensureTeamDevelopment,
+  prepareTeamForNewSeason,
+} from "../game/training";
+import {
+  awardSeasonPrize,
+  loadTransferMarket,
+  normalizeMarket,
+  saveTransferMarket,
+} from "../game/transferMarket";
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
@@ -80,7 +88,11 @@ export function useGameState() {
       saveTeam(normalizedTeam);
       saveLeague(normalizedLeague);
       setMarketState((previous) => {
-        const next = normalizeMarket(previous, normalizedTeam, normalizedLeague);
+        const next = normalizeMarket(
+          previous,
+          normalizedTeam,
+          normalizedLeague,
+        );
         saveTransferMarket(next);
         return next;
       });
@@ -100,8 +112,12 @@ export function useGameState() {
         nextLeague.season ?? 1,
       );
 
-      const prizeMarket = awardSeasonPrize(market, league);
-      const normalizedMarket = normalizeMarket(prizeMarket, nextTeam, nextLeague);
+      const prizeMarket = awardSeasonPrize(market, league, team);
+      const normalizedMarket = normalizeMarket(
+        prizeMarket,
+        nextTeam,
+        nextLeague,
+      );
       setTeamState(nextTeam);
       setLeagueState(nextLeague);
       setMarketState(normalizedMarket);
