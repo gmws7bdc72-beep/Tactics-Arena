@@ -1,0 +1,8 @@
+artifacts/fta-game/src/App.tsx
+artifacts/fta-game/src/components/three/Ball3D.tsx
+artifacts/fta-game/src/engine/types.ts
+artifacts/fta-game/src/game/players.ts
+artifacts/fta-game/src/game/transferMarket.ts
+artifacts/fta-game/src/hooks/useGameState.ts
+artifacts/fta-game/src/pages/TeamSetup.tsx
+artifacts/fta-game/src/pages/TransferMarket.tsx

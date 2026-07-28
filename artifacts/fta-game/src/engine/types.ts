@@ -164,6 +164,7 @@ export interface PlayerCard {
   weeklyWage?: number;
   marketStatus?: "available" | "listed" | "not_for_sale" | "untouchable";
   clubId?: string;
+  askingPrice?: number;
   development?: PlayerDevelopment;
 }
 

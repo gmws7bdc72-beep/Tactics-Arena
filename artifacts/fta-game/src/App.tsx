@@ -16,6 +16,7 @@ import OnlineMatch from "./pages/OnlineMatch";
 import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
 import TransferMarket from "./pages/TransferMarket";
+import { processTransferWeek } from "./game/transferMarket";
 import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
@@ -116,6 +117,8 @@ export default function App() {
     updateTeamAndLeague,
     startNewSeason,
     refreshState,
+    market,
+    updateMarket,
   } = useGameState();
 
   const initialHash = hashToScreen(window.location.hash);
@@ -125,14 +128,14 @@ export default function App() {
     initialHash.tab ?? "lineup",
   );
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [playoffContext, setPlayoffContext] =
-    useState<PlayoffContext | null>(null);
+  const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(
+    null,
+  );
   const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(
     null,
   );
-  const [profileTeamId, setProfileTeamId] = useState<string>(
-    PLAYER_TEAM_ID_CONST,
-  );
+  const [profileTeamId, setProfileTeamId] =
+    useState<string>(PLAYER_TEAM_ID_CONST);
 
   useEffect(() => {
     const onHash = () => {
@@ -188,7 +191,13 @@ export default function App() {
               : "draw",
       });
 
-      updateTeamAndLeague(trainedTeam, newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       setMatchResult({
         playerScore: result.playerScore,
@@ -206,6 +215,8 @@ export default function App() {
       currentScheduledMatch,
       currentOpponentDef,
       updateTeamAndLeague,
+      market,
+      updateMarket,
     ],
   );
 
@@ -242,7 +253,13 @@ export default function App() {
               : "draw",
       });
 
-      updateTeamAndLeague(trainedTeam, newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       const oppName =
         getAITeamDefForLeague(newLeague, playoffContext.opponentId)?.name ??
@@ -260,7 +277,7 @@ export default function App() {
 
       setScreen("post-match");
     },
-    [league, team, playoffContext, updateTeamAndLeague],
+    [league, team, playoffContext, updateTeamAndLeague, market, updateMarket],
   );
 
   const handleStartMatch = useCallback(() => {
@@ -303,7 +320,7 @@ export default function App() {
           ? po.sf1
           : po.stage === "sf2"
             ? po.sf2
-            : po.final ?? po.sf2;
+            : (po.final ?? po.sf2);
 
       const resultLeague = autoSimPlayoffStage(current, seed);
       const newLeague = advanceAITrainingWeek(resultLeague);
@@ -313,7 +330,13 @@ export default function App() {
         result: "idle",
       });
 
-      updateTeamAndLeague(trainedTeam, newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       setMatchResult({
         playerScore: 0,
@@ -351,6 +374,8 @@ export default function App() {
     currentOpponentDef,
     updateLeague,
     updateTeamAndLeague,
+    market,
+    updateMarket,
   ]);
 
   const handleForfeit = useCallback(() => {
@@ -407,7 +432,13 @@ export default function App() {
     return <Pitch3DPreview />;
   }
 
-  const menuScreens: MenuTab[] = ["team-profiles", "team-setup", "home", "transfer-market", "customize"];
+  const menuScreens: MenuTab[] = [
+    "team-profiles",
+    "team-setup",
+    "home",
+    "transfer-market",
+    "customize",
+  ];
   const isMenuScreen = menuScreens.includes(screen as MenuTab);
 
   const goToMenuTab = (tab: MenuTab) => {
@@ -452,7 +483,18 @@ export default function App() {
         />
       );
     } else if (screen === "transfer-market") {
-      content = <TransferMarket team={team} league={league} />;
+      content = (
+        <TransferMarket
+          team={team}
+          league={league}
+          market={market}
+          onChange={(nextMarket, nextTeam, nextLeague) => {
+            updateMarket(nextMarket);
+            if (nextTeam && nextLeague)
+              updateTeamAndLeague(nextTeam, nextLeague);
+          }}
+        />
+      );
     } else {
       content = (
         <Home
@@ -471,7 +513,10 @@ export default function App() {
     }
 
     return (
-      <div className="mx-auto min-h-screen max-w-md pb-20" style={{ background: "#0a0e1a" }}>
+      <div
+        className="mx-auto min-h-screen max-w-md pb-20"
+        style={{ background: "#0a0e1a" }}
+      >
         {content}
         <BottomMenuNav active={screen as MenuTab} onChange={goToMenuTab} />
       </div>
