@@ -362,7 +362,14 @@ export default function App() {
     let content;
 
     if (screen === "team-profiles") {
-      content = <TeamProfiles playerTeam={team} onBack={() => goToMenuTab("home")} />;
+      content = (
+        <TeamProfiles
+          playerTeam={team}
+          league={league}
+          initialTeamId={profileTeamId}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
     } else if (screen === "team-setup") {
       content = (
         <TeamSetup
