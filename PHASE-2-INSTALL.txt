@@ -1,0 +1,37 @@
+FOOTBALL TACTICS ARENA — PHASE 2: CLUB / TEAM PROFILES
+======================================================
+
+This is a cumulative Phase 1 + Phase 2 patch.
+It re-installs the working five-tab bottom menu and adds the completed Club Profiles page.
+
+INSTALL FROM THE MAIN REPLIT WORKSPACE FOLDER
+---------------------------------------------
+1. Upload this ZIP to the main workspace.
+2. Run:
+
+   unzip -o FTA-Phase-2-Team-Club-Profiles-CUMULATIVE.zip
+   cd artifacts/fta-game
+   pnpm typecheck && pnpm build
+
+PHASE 2 FEATURES
+----------------
+- Browse your club and every AI club from one horizontal team selector.
+- Team links from the league table now open the correct selected club.
+- Overview / Squad / Tactics sub-tabs.
+- Crest, formation, tactic identity, current position, points and season record.
+- Wins, draws, losses, goals for, goals against, goal difference and recent form.
+- Season-one $0 transfer budget rule displayed correctly.
+- Estimated weekly wage bill, squad market value and projected league prize money.
+- Projected prize money follows $50M for first, decreasing $5M per place to $5M for tenth.
+- Top scorer, top assister and clean-sheet leader cards.
+- Role-weighted OVR ratings and transfer-value estimates.
+- Expandable player cards with role-specific key stats, all attributes, ability details and wages.
+- Team attack, midfield and defense strength summaries.
+- Full tactical identity, in-possession settings, defensive behavior and squad fit.
+- The squad screen already supports larger rosters for the later 16-player transfer phase.
+
+IMPORTANT CURRENT LIMIT
+-----------------------
+The current match engine saves club goal totals but not the identity of each scorer or assister.
+For Phase 2, leader totals are deterministic estimates based on the club's recorded goals and each player's role/stats.
+The later season-stat tracking phase can replace these with exact event-level player totals without redesigning this page.
