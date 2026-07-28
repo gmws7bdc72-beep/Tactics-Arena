@@ -16,7 +16,6 @@ import {
   PASS_SPEED,
   SHOT_SPEED,
   PASS_WIND_UP,
-  LONG_PASS_WIND_UP,
   PASS_RECOVERY,
   SHOT_WIND_UP,
   SHOT_RECOVERY,
@@ -612,24 +611,9 @@ function snapshotFrame(
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
-      stateTimer: p.stateTimer,
-      actionPassStyle:
-        p.command?.type === CommandType.PASS
-          ? (p.command.passStyle ?? "ground")
-          : undefined,
-      actionTarget:
-        p.command?.type === CommandType.PASS && p.command.targetPosition
-          ? { ...p.command.targetPosition }
-          : p.command?.type === CommandType.SHOOT
-            ? {
-                x: p.teamId === "player" ? PITCH_WIDTH : 0,
-                y: PITCH_HEIGHT / 2,
-              }
-            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
       offside: offsidePlayers.has(p.id),
     })),
@@ -804,8 +788,7 @@ function updatePlayerMovement(
     if (cmd.type === CommandType.PASS) {
       if (hasBall) {
         player.state = PlayerState.PASSING;
-        player.stateTimer =
-          cmd.passStyle === "long" ? LONG_PASS_WIND_UP : PASS_WIND_UP;
+        player.stateTimer = PASS_WIND_UP;
         player.commandExecuted = true;
         player.velocity = { x: 0, y: 0 };
       } else {
@@ -857,12 +840,18 @@ function updatePlayerMovement(
         }
 
         player.commandExecuted = true;
-        player.velocity = { x: 0, y: 0 };
-        player.state = PlayerState.PASSING;
-        player.stateTimer =
-          player.command?.passStyle === "long"
-            ? LONG_PASS_WIND_UP
-            : PASS_WIND_UP;
+
+        passTracker.type = player.command?.passStyle === "long" ? "long_pass" : "pass";
+        passTracker.teamId = player.teamId;
+        passTracker.playerId = player.id;
+        passTracker.name = player.name;
+        passTracker.offsideIds = getOffsidePlayers(players);
+        passTracker.offsideIds.delete(player.id);
+
+        executePass(player, ball, rng);
+
+        player.state = PlayerState.RECOVERING;
+        player.recoveryTimer = PASS_RECOVERY;
       } else {
         player.command = followUp;
         player.commandExecuted = false;
@@ -1113,7 +1102,7 @@ function detectAndResolveEvents(
         } else {
           score += (player.stats.defense / 10) * 0.2;
         }
-        score += rng() * (player.stats.luck / 10) * 0.2;
+        score += rng() * (player.stats.movement / 10) * 0.2;
         if (player.ability === "iron_tackle") score += 0.15;
         if (player.ability === "goalkeeper") score += 0.35;
         candidates.push({ player, score });

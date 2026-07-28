@@ -19,7 +19,8 @@ import TransferMarket from "./pages/TransferMarket";
 import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
-  getAITeamDef,
+  getAITeamDefForLeague,
+  advanceAITrainingWeek,
   applyMatchResult,
   initPlayoff,
   applyPlayoffResult,
@@ -28,6 +29,7 @@ import {
 } from "./game/league";
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
+import { advanceTeamTraining } from "./game/training";
 
 type Screen =
   | "home"
@@ -70,7 +72,7 @@ interface PlayoffContext {
 
 function hashToScreen(hash: string): {
   screen: Screen;
-  tab?: "lineup" | "formation";
+  tab?: "lineup" | "formation" | "training";
 } {
   const h = hash.replace(/^#\/?/, "");
 
@@ -80,6 +82,10 @@ function hashToScreen(hash: string): {
 
   if (h === "team-setup/formation") {
     return { screen: "team-setup", tab: "formation" };
+  }
+
+  if (h === "team-setup/training") {
+    return { screen: "team-setup", tab: "training" };
   }
 
   if (h === "team-setup") {
@@ -107,6 +113,7 @@ export default function App() {
     updateTeam,
     league,
     updateLeague,
+    updateTeamAndLeague,
     startNewSeason,
     refreshState,
   } = useGameState();
@@ -114,7 +121,7 @@ export default function App() {
   const initialHash = hashToScreen(window.location.hash);
 
   const [screen, setScreen] = useState<Screen>(initialHash.screen);
-  const [setupTab, setSetupTab] = useState<"lineup" | "formation">(
+  const [setupTab, setSetupTab] = useState<"lineup" | "formation" | "training">(
     initialHash.tab ?? "lineup",
   );
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
@@ -147,7 +154,7 @@ export default function App() {
   const currentMatchIndex = league.currentMatchIndex;
   const currentScheduledMatch = league.schedule[currentMatchIndex] ?? null;
   const currentOpponentDef = currentScheduledMatch
-    ? getAITeamDef(currentScheduledMatch.opponentId)
+    ? getAITeamDefForLeague(league, currentScheduledMatch.opponentId)
     : null;
 
   const handleMatchEnd = useCallback(
@@ -156,7 +163,7 @@ export default function App() {
 
       const seed = Date.now() % 99999;
 
-      const newLeague = applyMatchResult(
+      const resultLeague = applyMatchResult(
         league,
         PLAYER_TEAM_ID_CONST,
         currentScheduledMatch.opponentId,
@@ -164,8 +171,24 @@ export default function App() {
         result.aiScore,
         seed,
       );
+      const newLeague = advanceAITrainingWeek(resultLeague, {
+        playerOpponentId: currentScheduledMatch.opponentId,
+        playerGoals: result.playerScore,
+        opponentGoals: result.aiScore,
+        includeLastMatchdayResults: true,
+      });
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result:
+          result.playerScore > result.aiScore
+            ? "win"
+            : result.playerScore < result.aiScore
+              ? "loss"
+              : "draw",
+      });
 
-      updateLeague(newLeague);
+      updateTeamAndLeague(trainedTeam, newLeague);
 
       setMatchResult({
         playerScore: result.playerScore,
@@ -177,7 +200,13 @@ export default function App() {
 
       setScreen("post-match");
     },
-    [league, currentScheduledMatch, currentOpponentDef, updateLeague],
+    [
+      league,
+      team,
+      currentScheduledMatch,
+      currentOpponentDef,
+      updateTeamAndLeague,
+    ],
   );
 
   const handlePlayoffMatchEnd = useCallback(
@@ -190,18 +219,34 @@ export default function App() {
       const homeGoals = isHome ? result.playerScore : result.aiScore;
       const awayGoals = isHome ? result.aiScore : result.playerScore;
 
-      const newLeague = applyPlayoffResult(
+      const resultLeague = applyPlayoffResult(
         league,
         stage,
         homeGoals,
         awayGoals,
         seed,
       );
+      const newLeague = advanceAITrainingWeek(resultLeague, {
+        playerOpponentId: playoffContext.opponentId,
+        playerGoals: result.playerScore,
+        opponentGoals: result.aiScore,
+      });
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result:
+          result.playerScore > result.aiScore
+            ? "win"
+            : result.playerScore < result.aiScore
+              ? "loss"
+              : "draw",
+      });
 
-      updateLeague(newLeague);
+      updateTeamAndLeague(trainedTeam, newLeague);
 
       const oppName =
-        getAITeamDef(playoffContext.opponentId)?.name ?? "Opponent";
+        getAITeamDefForLeague(newLeague, playoffContext.opponentId)?.name ??
+        "Opponent";
 
       setPlayoffContext(null);
 
@@ -215,7 +260,7 @@ export default function App() {
 
       setScreen("post-match");
     },
-    [league, playoffContext, updateLeague],
+    [league, team, playoffContext, updateTeamAndLeague],
   );
 
   const handleStartMatch = useCallback(() => {
@@ -260,9 +305,15 @@ export default function App() {
             ? po.sf2
             : po.final ?? po.sf2;
 
-      const newLeague = autoSimPlayoffStage(current, seed);
+      const resultLeague = autoSimPlayoffStage(current, seed);
+      const newLeague = advanceAITrainingWeek(resultLeague);
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result: "idle",
+      });
 
-      updateLeague(newLeague);
+      updateTeamAndLeague(trainedTeam, newLeague);
 
       setMatchResult({
         playerScore: 0,
@@ -293,7 +344,14 @@ export default function App() {
 
       setScreen("post-match");
     }
-  }, [isLeagueComplete, league, currentOpponentDef, updateLeague]);
+  }, [
+    isLeagueComplete,
+    league,
+    team,
+    currentOpponentDef,
+    updateLeague,
+    updateTeamAndLeague,
+  ]);
 
   const handleForfeit = useCallback(() => {
     if (!currentScheduledMatch || !currentOpponentDef) {
@@ -374,7 +432,7 @@ export default function App() {
       content = (
         <TeamSetup
           team={team}
-          onSave={(t) => {
+          onSave={(t: TeamConfig) => {
             updateTeam(t);
             goToMenuTab("home");
           }}
@@ -386,7 +444,7 @@ export default function App() {
       content = (
         <Customize
           team={team}
-          onSave={(t) => {
+          onSave={(t: TeamConfig) => {
             updateTeam(t);
             goToMenuTab("home");
           }}
@@ -444,7 +502,7 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <OnlineLobby
           team={team}
-          onGameReady={(config) => {
+          onGameReady={(config: OnlineGameConfig) => {
             setOnlineConfig(config);
             setScreen("online-match");
           }}
@@ -478,7 +536,7 @@ export default function App() {
     const isPlayoff = !!playoffContext;
 
     const opponentDef = isPlayoff
-      ? getAITeamDef(playoffContext!.opponentId)
+      ? getAITeamDefForLeague(league, playoffContext!.opponentId)
       : currentOpponentDef;
 
     const isHomeForMatch = isPlayoff

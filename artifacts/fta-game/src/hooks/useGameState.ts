@@ -1,8 +1,14 @@
 import { useState, useCallback } from "react";
 import type { TeamConfig, LeagueState } from "../engine/types";
-import { loadTeam, saveTeam, loadLeague, saveLeague, resetLeague, getDefaultTeam } from "../game/persistence";
-import { PLAYER_TEAM_ID_CONST } from "../game/persistence";
-import { migrateLeague } from "../game/league";
+import {
+  loadTeam,
+  saveTeam,
+  loadLeague,
+  saveLeague,
+  PLAYER_TEAM_ID_CONST,
+} from "../game/persistence";
+import { migrateLeague, prepareLeagueForNewSeason } from "../game/league";
+import { ensureTeamDevelopment, prepareTeamForNewSeason } from "../game/training";
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
@@ -10,19 +16,22 @@ export function useGameState() {
     const t = loadTeam();
     const raw = loadLeague(t.name);
     const migrated = migrateLeague(raw);
-    if (migrated !== raw) saveLeague(migrated);
+    saveLeague(migrated);
     return migrated;
   });
 
-  const updateTeam = useCallback((t: TeamConfig) => {
-    setTeamState(t);
-    saveTeam(t);
-    // Sync updated team name into the league standings entry
-    setLeagueState(prev => {
+  const updateTeam = useCallback((nextTeam: TeamConfig) => {
+    const normalized = ensureTeamDevelopment(nextTeam);
+    setTeamState(normalized);
+    saveTeam(normalized);
+
+    setLeagueState((previous) => {
       const updated = {
-        ...prev,
-        teams: prev.teams.map(entry =>
-          entry.id === PLAYER_TEAM_ID_CONST ? { ...entry, name: t.name } : entry
+        ...previous,
+        teams: previous.teams.map((entry) =>
+          entry.id === PLAYER_TEAM_ID_CONST
+            ? { ...entry, name: normalized.name }
+            : entry,
         ),
       };
       saveLeague(updated);
@@ -30,27 +39,71 @@ export function useGameState() {
     });
   }, []);
 
-  const updateLeague = useCallback((l: LeagueState) => {
-    setLeagueState(l);
-    saveLeague(l);
+  const updateLeague = useCallback((nextLeague: LeagueState) => {
+    const migrated = migrateLeague(nextLeague);
+    setLeagueState(migrated);
+    saveLeague(migrated);
   }, []);
 
-  const startNewSeason = useCallback((teamName: string) => {
-    const freshTeam = { ...getDefaultTeam(), name: teamName };
-    saveTeam(freshTeam);
-    setTeamState(freshTeam);
-    const l = resetLeague(teamName);
-    setLeagueState(l);
-  }, []);
+  const updateTeamAndLeague = useCallback(
+    (nextTeam: TeamConfig, nextLeague: LeagueState) => {
+      const normalizedTeam = ensureTeamDevelopment(
+        nextTeam,
+        nextLeague.season ?? 1,
+      );
+      const normalizedLeague = migrateLeague({
+        ...nextLeague,
+        teams: nextLeague.teams.map((entry) =>
+          entry.id === PLAYER_TEAM_ID_CONST
+            ? { ...entry, name: normalizedTeam.name }
+            : entry,
+        ),
+      });
+
+      setTeamState(normalizedTeam);
+      setLeagueState(normalizedLeague);
+      saveTeam(normalizedTeam);
+      saveLeague(normalizedLeague);
+    },
+    [],
+  );
+
+  const startNewSeason = useCallback(
+    (teamName: string) => {
+      const nextLeague = prepareLeagueForNewSeason(
+        league,
+        PLAYER_TEAM_ID_CONST,
+        teamName,
+      );
+      const nextTeam = prepareTeamForNewSeason(
+        { ...team, name: teamName },
+        nextLeague.season ?? 1,
+      );
+
+      setTeamState(nextTeam);
+      setLeagueState(nextLeague);
+      saveTeam(nextTeam);
+      saveLeague(nextLeague);
+    },
+    [league, team],
+  );
 
   const refreshState = useCallback(() => {
-    const t = loadTeam();
-    const raw = loadLeague(t.name);
+    const nextTeam = loadTeam();
+    const raw = loadLeague(nextTeam.name);
     const migrated = migrateLeague(raw);
-    if (migrated !== raw) saveLeague(migrated);
-    setTeamState(t);
+    saveLeague(migrated);
+    setTeamState(nextTeam);
     setLeagueState(migrated);
   }, []);
 
-  return { team, updateTeam, league, updateLeague, startNewSeason, refreshState };
+  return {
+    team,
+    updateTeam,
+    league,
+    updateLeague,
+    updateTeamAndLeague,
+    startNewSeason,
+    refreshState,
+  };
 }

@@ -1,15 +1,3 @@
-export type PlayerRole = "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
-
-export type KitStyle = "solid" | "vertical-stripes" | "horizontal-stripes" | "diagonal-sash";
-export type SleeveStyle = "primary" | "secondary" | "split";
-
-export interface PlayerAppearance {
-  skinTone: string;
-  hairColor: string;
-  hairStyle: "short" | "fade" | "curly" | "mohawk" | "bald" | "dreadlocks";
-  facialHair: "none" | "stubble" | "goatee" | "full";
-}
-
 export interface Vec2 {
   x: number;
   y: number;
@@ -55,7 +43,7 @@ export interface PlayerStats {
   defense: number;
   passing: number;
   speed: number;
-  luck: number;
+  movement: number;
   shooting: number;
   dribbling: number;
   tackling: number;
@@ -65,6 +53,39 @@ export interface PlayerStats {
   vision: number;
   longPassing: number;
   aerial: number;
+}
+
+
+export type TrainingFocus =
+  | "balanced"
+  | "passing"
+  | "shooting"
+  | "longPassing"
+  | "defending"
+  | "goalkeeping"
+  | "movement";
+
+export interface DevelopmentHistoryEntry {
+  season: number;
+  week: number;
+  focus: TrainingFocus;
+  progressGain: number;
+  statGains: Partial<Record<keyof PlayerStats, number>>;
+  overallBefore: number;
+  overallAfter: number;
+  moraleAfter: number;
+}
+
+export interface PlayerDevelopment {
+  focus: TrainingFocus;
+  potential: number;
+  morale: number;
+  progress: number;
+  totalGrowth: number;
+  seasonGrowth: number;
+  lastWeekGrowth: number;
+  lastTrainedWeek: number;
+  history: DevelopmentHistoryEntry[];
 }
 
 export type TeamTacticId =
@@ -120,11 +141,12 @@ export interface Ability {
 export interface PlayerCard {
   id: string;
   name: string;
-  role: PlayerRole;
-  appearance?: PlayerAppearance;
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
   stats: PlayerStats;
   ability: AbilityId;
   jerseyNumber: number;
+  age?: number;
+  development?: PlayerDevelopment;
 }
 
 export interface SimPlayer {
@@ -144,8 +166,7 @@ export interface SimPlayer {
   recoveryTimer: number;
   name: string;
   jerseyNumber: number;
-  role: PlayerRole;
-  appearance?: PlayerAppearance;
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
 }
 
 export interface SimBall {
@@ -192,16 +213,9 @@ export interface FrameSnapshot {
     position: Vec2;
     velocity: Vec2;
     state: PlayerState;
-    /** Remaining wind-up time, used only to synchronize presentation animations. */
-    stateTimer?: number;
-    /** The kind of pass currently being prepared. */
-    actionPassStyle?: PassStyle;
-    /** Screen-facing target for a pass or shot wind-up. */
-    actionTarget?: Vec2;
     name: string;
     jerseyNumber: number;
-    role: PlayerRole;
-    appearance?: PlayerAppearance;
+    role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
     tileRange: number;
     offside?: boolean;
   }[];
@@ -227,12 +241,11 @@ export interface TeamConfig {
   name: string;
   jerseyColor: string;
   secondaryColor: string;
-  kitStyle?: KitStyle;
-  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   players: PlayerCard[];
   formationId: string;
   startPositions: Vec2[];
+  trainingIntensity?: "light" | "balanced" | "intense";
 }
 
 export interface LeagueTeamEntry {
@@ -293,6 +306,9 @@ export interface LeagueState {
   aiSchedule?: [string, string][];
   aiMatchIndex?: number;
   lastMatchdayResults?: MatchdayResult[];
+  season?: number;
+  trainingWeek?: number;
+  aiSquads?: Record<string, PlayerCard[]>;
 }
 
 export interface SavedMatchState {

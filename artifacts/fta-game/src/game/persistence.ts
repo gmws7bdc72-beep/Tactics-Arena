@@ -3,7 +3,7 @@ import { getDefaultSquad } from "./players";
 import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
-import { normalizeKitStyle, normalizeSleeveStyle } from "./visuals";
+import { ensurePlayerDevelopment, ensureTeamDevelopment } from "./training";
 
 const TEAM_KEY = "fta_team_clean_6v6_v1";
 const LEAGUE_KEY = "fta_league_clean_6v6_v1";
@@ -43,17 +43,18 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
     players.push(defaults[players.length % defaults.length]);
   }
 
-  return {
+  return ensureTeamDevelopment({
     ...team,
-    kitStyle: normalizeKitStyle(team.kitStyle),
-    sleeveStyle: normalizeSleeveStyle(team.sleeveStyle),
     formationId: formation.id,
-    players: players.slice(0, PLAYERS_PER_TEAM),
+    players: players
+      .slice(0, PLAYERS_PER_TEAM)
+      .map((player) => ensurePlayerDevelopment(player)),
     startPositions:
       team.startPositions && team.startPositions.length >= PLAYERS_PER_TEAM
         ? team.startPositions.slice(0, PLAYERS_PER_TEAM)
         : formation.positions.map((p) => ({ ...p })),
-  };
+    trainingIntensity: team.trainingIntensity ?? "balanced",
+  });
 }
 
 export function loadTeam(): TeamConfig {
@@ -145,17 +146,16 @@ export function getDefaultTeam(): TeamConfig {
   const formation =
     FORMATIONS.find((f) => f.id === "2-1-2") ?? FORMATIONS[0];
 
-  return {
+  return ensureTeamDevelopment({
     name: "My Team",
     jerseyColor: "#00b4d8",
     secondaryColor: "#ffffff",
-    kitStyle: "solid",
-    sleeveStyle: "primary",
     crestIcon: "⚡",
     players: getDefaultSquad().slice(0, PLAYERS_PER_TEAM),
     formationId: formation.id,
     startPositions: formation.positions.map((p) => ({ ...p })),
-  };
+    trainingIntensity: "balanced",
+  });
 }
 
 export const JERSEY_COLORS = [

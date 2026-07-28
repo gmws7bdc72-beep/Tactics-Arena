@@ -9,12 +9,15 @@ import type {
   ScheduledMatch,
   TeamTactic,
   TeamTacticId,
-  KitStyle,
-  SleeveStyle,
 } from "../engine/types";
 import { TILE_H, TILE_W } from "../engine/constants";
 import { getAIFormationById } from "./formations";
-import { deriveKitStyle, deriveSleeveStyle } from "./visuals";
+import {
+  advanceSquadTraining,
+  ensurePlayerDevelopment,
+  prepareSquadForNewSeason,
+  type MatchTrainingResult,
+} from "./training";
 
 export interface AITeamDef {
   id: string;
@@ -24,8 +27,6 @@ export interface AITeamDef {
   players: PlayerCard[];
   jerseyColor: string;
   secondaryColor: string;
-  kitStyle?: KitStyle;
-  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   tacticId: TeamTacticId;
   tactic: TeamTactic;
@@ -255,7 +256,7 @@ function stats(base: PlayerStats, patch: Partial<PlayerStats> = {}): PlayerStats
     defense: base.defense,
     passing: base.passing,
     speed: base.speed,
-    luck: base.luck,
+    movement: base.movement,
     shooting: base.shooting,
     dribbling: base.dribbling,
     tackling: base.tackling,
@@ -274,7 +275,7 @@ const GK: PlayerStats = {
   defense: 8,
   passing: 6,
   speed: 5,
-  luck: 6,
+  movement: 6,
   shooting: 2,
   dribbling: 4,
   tackling: 5,
@@ -291,7 +292,7 @@ const DEF: PlayerStats = {
   defense: 8,
   passing: 6,
   speed: 6,
-  luck: 5,
+  movement: 5,
   shooting: 4,
   dribbling: 5,
   tackling: 8,
@@ -308,7 +309,7 @@ const MID: PlayerStats = {
   defense: 6,
   passing: 8,
   speed: 7,
-  luck: 6,
+  movement: 6,
   shooting: 6,
   dribbling: 7,
   tackling: 6,
@@ -325,7 +326,7 @@ const FWD: PlayerStats = {
   defense: 4,
   passing: 6,
   speed: 8,
-  luck: 6,
+  movement: 6,
   shooting: 8,
   dribbling: 8,
   tackling: 4,
@@ -342,7 +343,7 @@ const ST: PlayerStats = {
   defense: 3,
   passing: 5,
   speed: 8,
-  luck: 6,
+  movement: 6,
   shooting: 9,
   dribbling: 7,
   tackling: 3,
@@ -392,8 +393,6 @@ function mkTeam(
     tactic: TEAM_TACTICS[tacticId],
     jerseyColor,
     secondaryColor,
-    kitStyle: deriveKitStyle(id),
-    sleeveStyle: deriveSleeveStyle(id),
     crestIcon,
     players,
   };
@@ -524,12 +523,12 @@ export const AI_TEAMS: AITeamDef[] = [
     "2-0-3",
     "direct_play",
     [
-      player("rf_gk", "Pax Reed", "goalkeeper", 1, stats(GK, { luck: 8, longPassing: 8 }), "goalkeeper"),
-      player("rf_d1", "Owen Root", "defender", 5, stats(DEF, { luck: 7, longPassing: 8 }), "iron_tackle"),
+      player("rf_gk", "Pax Reed", "goalkeeper", 1, stats(GK, { movement: 8, longPassing: 8 }), "goalkeeper"),
+      player("rf_d1", "Owen Root", "defender", 5, stats(DEF, { movement: 7, longPassing: 8 }), "iron_tackle"),
       player("rf_d2", "Jude Acres", "defender", 8, stats(DEF, { attack: 6, strength: 8, speed: 7 }), "powerhouse"),
       player("rf_f1", "Theo Grove", "forward", 6, stats(FWD, { passing: 8, vision: 8 }), "bullet_pass"),
-      player("rf_f2", "Finn Rush", "forward", 9, stats(FWD, { speed: 9, luck: 8 }), "ghost_run"),
-      player("rf_s1", "Cole Field", "striker", 10, stats(ST, { luck: 8, shooting: 9, aerial: 8 }), "eagle_eye"),
+      player("rf_f2", "Finn Rush", "forward", 9, stats(FWD, { speed: 9, movement: 8 }), "ghost_run"),
+      player("rf_s1", "Cole Field", "striker", 10, stats(ST, { movement: 8, shooting: 9, aerial: 8 }), "eagle_eye"),
     ],
   ),
 
@@ -543,12 +542,12 @@ export const AI_TEAMS: AITeamDef[] = [
     "1-0-4",
     "quick_counterattack",
     [
-      player("ud_gk", "Remy Scraps", "goalkeeper", 1, stats(GK, { luck: 9 }), "goalkeeper"),
-      player("ud_d1", "Gus Chain", "defender", 4, stats(DEF, { luck: 8, strength: 8 }), "iron_tackle"),
-      player("ud_f1", "Zeke Dash", "forward", 7, stats(FWD, { speed: 10, dribbling: 9, luck: 8 }), "ghost_run"),
-      player("ud_f2", "Taz Lucky", "forward", 11, stats(FWD, { speed: 10, luck: 10 }), "ghost_run"),
-      player("ud_f3", "Nash Bite", "forward", 6, stats(FWD, { strength: 8, luck: 9 }), "powerhouse"),
-      player("ud_s1", "Bo Chance", "striker", 9, stats(ST, { luck: 10, shooting: 8 }), "eagle_eye"),
+      player("ud_gk", "Remy Scraps", "goalkeeper", 1, stats(GK, { movement: 9 }), "goalkeeper"),
+      player("ud_d1", "Gus Chain", "defender", 4, stats(DEF, { movement: 8, strength: 8 }), "iron_tackle"),
+      player("ud_f1", "Zeke Dash", "forward", 7, stats(FWD, { speed: 10, dribbling: 9, movement: 8 }), "ghost_run"),
+      player("ud_f2", "Taz Lucky", "forward", 11, stats(FWD, { speed: 10, movement: 10 }), "ghost_run"),
+      player("ud_f3", "Nash Bite", "forward", 6, stats(FWD, { strength: 8, movement: 9 }), "powerhouse"),
+      player("ud_s1", "Bo Chance", "striker", 9, stats(ST, { movement: 10, shooting: 8 }), "eagle_eye"),
     ],
   ),
 
@@ -621,6 +620,32 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
   return rounds;
 }
 
+export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> {
+  return Object.fromEntries(
+    AI_TEAMS.map((team) => [
+      team.id,
+      team.players.map((player) => ensurePlayerDevelopment(player, season)),
+    ]),
+  );
+}
+
+function normalizeAISquads(
+  state: LeagueState,
+  season: number,
+): Record<string, PlayerCard[]> {
+  const existing = state.aiSquads ?? {};
+
+  return Object.fromEntries(
+    AI_TEAMS.map((team) => {
+      const source = existing[team.id]?.length ? existing[team.id] : team.players;
+      return [
+        team.id,
+        source.map((player) => ensurePlayerDevelopment(player, season)),
+      ];
+    }),
+  );
+}
+
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
   const seed = Date.now() % 999999;
 
@@ -678,6 +703,9 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     currentMatchIndex: 0,
     aiSchedule: aiMatchdays.flat(),
     aiMatchIndex: 0,
+    season: 1,
+    trainingWeek: 0,
+    aiSquads: createInitialAISquads(1),
   };
 }
 
@@ -787,19 +815,24 @@ export function applyMatchResult(
 }
 
 export function migrateLeague(state: LeagueState): LeagueState {
-  if (state.aiSchedule && state.aiSchedule.length === 36) {
-    return state;
-  }
-
-  const aiMatchdays = buildRoundRobinMatchdays(
-    AI_TEAMS.map((team) => team.id),
-    state.currentMatchIndex + 999,
-  );
+  const season = Math.max(1, Math.round(state.season ?? 1));
+  const hasValidSchedule = state.aiSchedule && state.aiSchedule.length === 36;
+  const aiMatchdays = hasValidSchedule
+    ? null
+    : buildRoundRobinMatchdays(
+        AI_TEAMS.map((team) => team.id),
+        state.currentMatchIndex + 999,
+      );
 
   return {
     ...state,
-    aiSchedule: aiMatchdays.flat(),
-    aiMatchIndex: Math.min(state.currentMatchIndex * 4, 36),
+    season,
+    trainingWeek: Math.max(0, Math.round(state.trainingWeek ?? state.currentMatchIndex)),
+    aiSchedule: hasValidSchedule ? state.aiSchedule : aiMatchdays!.flat(),
+    aiMatchIndex: hasValidSchedule
+      ? state.aiMatchIndex ?? Math.min(state.currentMatchIndex * 4, 36)
+      : Math.min(state.currentMatchIndex * 4, 36),
+    aiSquads: normalizeAISquads(state, season),
   };
 }
 
@@ -825,6 +858,105 @@ export function getTeamPoints(team: LeagueTeamEntry): number {
 
 export function getAITeamDef(id: string): AITeamDef | undefined {
   return AI_TEAMS.find((team) => team.id === id);
+}
+
+export function getAITeamDefForLeague(
+  state: LeagueState,
+  id: string,
+): AITeamDef | undefined {
+  const base = getAITeamDef(id);
+  if (!base) return undefined;
+
+  const players = state.aiSquads?.[id];
+  return players?.length ? { ...base, players } : base;
+}
+
+export interface AITrainingWeekOptions {
+  playerOpponentId?: string;
+  playerGoals?: number;
+  opponentGoals?: number;
+  includeLastMatchdayResults?: boolean;
+}
+
+function resultFromScore(goalsFor: number, goalsAgainst: number): MatchTrainingResult {
+  if (goalsFor > goalsAgainst) return "win";
+  if (goalsFor < goalsAgainst) return "loss";
+  return "draw";
+}
+
+export function advanceAITrainingWeek(
+  rawState: LeagueState,
+  options: AITrainingWeekOptions = {},
+): LeagueState {
+  const state = migrateLeague(rawState);
+  const season = state.season ?? 1;
+  const week = (state.trainingWeek ?? 0) + 1;
+  const squads = normalizeAISquads(state, season);
+
+  const aiSquads = Object.fromEntries(
+    AI_TEAMS.map((team) => {
+      let result: MatchTrainingResult = "idle";
+
+      if (team.id === options.playerOpponentId) {
+        result = resultFromScore(
+          options.opponentGoals ?? 0,
+          options.playerGoals ?? 0,
+        );
+      } else if (options.includeLastMatchdayResults) {
+        const match = state.lastMatchdayResults?.find(
+          (item) => item.homeId === team.id || item.awayId === team.id,
+        );
+
+        if (match) {
+          result = match.homeId === team.id
+            ? resultFromScore(match.homeGoals, match.awayGoals)
+            : resultFromScore(match.awayGoals, match.homeGoals);
+        }
+      }
+
+      const intensity = team.tier === 1 ? "intense" : "balanced";
+      const trained = advanceSquadTraining(
+        squads[team.id] ?? team.players,
+        { season, week, result, intensity },
+        team.tacticId,
+        true,
+      );
+
+      return [team.id, trained];
+    }),
+  );
+
+  return {
+    ...state,
+    trainingWeek: week,
+    aiSquads,
+  };
+}
+
+export function prepareLeagueForNewSeason(
+  previous: LeagueState,
+  playerTeamId: string,
+  playerTeamName: string,
+): LeagueState {
+  const migrated = migrateLeague(previous);
+  const nextSeason = (migrated.season ?? 1) + 1;
+  const fresh = createLeague(playerTeamId, playerTeamName);
+  const previousSquads = normalizeAISquads(migrated, migrated.season ?? 1);
+
+  return {
+    ...fresh,
+    season: nextSeason,
+    trainingWeek: 0,
+    aiSquads: Object.fromEntries(
+      AI_TEAMS.map((team) => [
+        team.id,
+        prepareSquadForNewSeason(
+          previousSquads[team.id] ?? team.players,
+          nextSeason,
+        ),
+      ]),
+    ),
+  };
 }
 
 export function getAIFormationPositions(

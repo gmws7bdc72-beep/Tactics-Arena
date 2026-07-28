@@ -1,0 +1,2 @@
+Phase 3 training repair applied.
+The Team Setup page must show: Lineup | Formation | ⭐ Training.
