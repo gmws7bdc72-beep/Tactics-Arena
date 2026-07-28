@@ -901,7 +901,7 @@ export default function TeamProfiles({
               <div>
                 <h3 className="text-sm font-black">First-Team Squad</h3>
                 <p className="mt-0.5 text-[10px] text-slate-500">
-                  {selected.players.length} players · maximum will become 16 in the transfer phase
+                  {selected.players.length} players · 16-player senior squad
                 </p>
               </div>
               <div className="text-right">

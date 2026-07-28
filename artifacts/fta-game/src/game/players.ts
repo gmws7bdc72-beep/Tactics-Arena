@@ -1,4 +1,5 @@
 import type { PlayerCard, Ability, AbilityId, PlayerStats } from "../engine/types";
+import { expandSquad } from "./transferDatabase";
 
 export const ABILITIES: Record<AbilityId, Ability> = {
   bullet_pass:  { id: "bullet_pass",  name: "Bullet Pass",  description: "Passes travel 50% faster and long-pass accuracy penalty halved" },
@@ -62,7 +63,7 @@ export const ALL_PLAYERS: PlayerCard[] = [
 ];
 
 export function getDefaultSquad(): PlayerCard[] {
-  return [
+  const starters = [
     ALL_PLAYERS.find(p => p.id === "gk_neuer")!,
     ALL_PLAYERS.find(p => p.id === "p4")!,
     ALL_PLAYERS.find(p => p.id === "p7")!,
@@ -70,6 +71,8 @@ export function getDefaultSquad(): PlayerCard[] {
     ALL_PLAYERS.find(p => p.id === "p5")!,
     ALL_PLAYERS.find(p => p.id === "p1")!,
   ];
+  const reserves = ALL_PLAYERS.filter((player) => !starters.some((starter) => starter.id === player.id));
+  return expandSquad([...starters, ...reserves], "player_team", 2, 1);
 }
 
 export function getGoalkeepers(): PlayerCard[] {

@@ -1,5 +1,6 @@
 import type { TeamConfig, LeagueState, SavedMatchState } from "../engine/types";
 import { getDefaultSquad } from "./players";
+import { expandSquad, MAX_SQUAD_SIZE, MIN_SQUAD_SIZE } from "./transferDatabase";
 import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
@@ -29,26 +30,15 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
     FORMATIONS[0];
 
   const defaults = getDefaultSquad();
-  const players = [...(team.players ?? [])];
-
-  for (const fallback of defaults) {
-    if (players.length >= PLAYERS_PER_TEAM) break;
-
-    if (!players.some((p) => p.id === fallback.id)) {
-      players.push(fallback);
-    }
-  }
-
-  while (players.length < PLAYERS_PER_TEAM) {
-    players.push(defaults[players.length % defaults.length]);
-  }
+  const existing = [...(team.players ?? [])];
+  const players = existing.length <= PLAYERS_PER_TEAM
+    ? expandSquad([...existing, ...defaults], PLAYER_TEAM_ID, 2, 1)
+    : existing.slice(0, MAX_SQUAD_SIZE);
 
   return ensureTeamDevelopment({
     ...team,
     formationId: formation.id,
-    players: players
-      .slice(0, PLAYERS_PER_TEAM)
-      .map((player) => ensurePlayerDevelopment(player)),
+    players: players.map((player) => ensurePlayerDevelopment(player)),
     startPositions:
       team.startPositions && team.startPositions.length >= PLAYERS_PER_TEAM
         ? team.startPositions.slice(0, PLAYERS_PER_TEAM)
@@ -66,7 +56,7 @@ export function loadTeam(): TeamConfig {
 
       if (
         t.players &&
-        t.players.length >= PLAYERS_PER_TEAM &&
+        t.players.length >= MIN_SQUAD_SIZE &&
         hasValidStats(t)
       ) {
         const normalized = normalizeTeamForCurrentRules(t);
@@ -151,7 +141,7 @@ export function getDefaultTeam(): TeamConfig {
     jerseyColor: "#00b4d8",
     secondaryColor: "#ffffff",
     crestIcon: "⚡",
-    players: getDefaultSquad().slice(0, PLAYERS_PER_TEAM),
+    players: getDefaultSquad(),
     formationId: formation.id,
     startPositions: formation.positions.map((p) => ({ ...p })),
     trainingIntensity: "balanced",

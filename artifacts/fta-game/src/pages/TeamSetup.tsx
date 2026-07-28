@@ -5,7 +5,6 @@ import type {
   TeamConfig,
   TrainingFocus,
 } from "../engine/types";
-import { ALL_PLAYERS } from "../game/players";
 import { FORMATIONS } from "../game/formations";
 import {
   calculatePlayerOverall,
@@ -124,7 +123,9 @@ export default function TeamSetup({
   const swapPlayer = (slotIndex: number, newCard: PlayerCardType) => {
     setCurrentTeam((previous) => {
       const players = [...previous.players];
-      players[slotIndex] = ensurePlayerDevelopment(newCard);
+      const candidateIndex = players.findIndex((player) => player.id === newCard.id);
+      if (candidateIndex < 0 || candidateIndex === slotIndex) return previous;
+      [players[slotIndex], players[candidateIndex]] = [players[candidateIndex], players[slotIndex]];
       return { ...previous, players };
     });
     setActiveSlot(null);
@@ -151,17 +152,12 @@ export default function TeamSetup({
   };
 
   const getAvailableForSlot = (slotIndex: number) => {
-    const pool =
-      slotIndex === 0
-        ? ALL_PLAYERS.filter((player) => player.role === "goalkeeper")
-        : ALL_PLAYERS.filter((player) => player.role !== "goalkeeper");
-
-    return pool.filter(
-      (player) =>
-        !currentTeam.players.some(
-          (current, index) => current.id === player.id && index !== slotIndex,
-        ),
-    );
+    return currentTeam.players.filter((player, index) => {
+      if (index === slotIndex) return false;
+      return slotIndex === 0
+        ? player.role === "goalkeeper"
+        : player.role !== "goalkeeper";
+    });
   };
 
   const availableForSlot =
