@@ -1,0 +1,2 @@
+Phase 6 management polish applied.
+Includes quick offer notifications, transfer/finance polish, club and player histories, and season reports.

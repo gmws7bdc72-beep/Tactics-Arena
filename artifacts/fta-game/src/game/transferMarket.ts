@@ -25,6 +25,7 @@ export interface TransferOffer {
   toClubId: string;
   toClubName: string;
   amount: number;
+  createdSeason?: number;
   createdWeek: number;
   status: OfferStatus;
   counterAmount?: number;
@@ -55,14 +56,105 @@ export interface TransferTransaction {
   week: number;
 }
 
+export type TransferNewsKind =
+  | "offer"
+  | "negotiation"
+  | "transfer"
+  | "finance"
+  | "system";
+
+export interface TransferNewsItem {
+  id: string;
+  kind: TransferNewsKind;
+  headline: string;
+  season: number;
+  week: number;
+  playerId?: string;
+  clubIds?: string[];
+  amount?: number;
+}
+
+export interface PlayerCareerEntry {
+  id: string;
+  type: "season" | "transfer";
+  season: number;
+  week: number;
+  clubId: string;
+  clubName: string;
+  overall?: number;
+  marketValue?: number;
+  fromClubId?: string;
+  fromClubName?: string;
+  toClubId?: string;
+  toClubName?: string;
+  fee?: number;
+}
+
+export type ClubSeasonOutcome =
+  | "Champion"
+  | "Runner-up"
+  | "Playoff semifinal"
+  | "League season";
+
+export interface ClubSeasonHistoryEntry {
+  season: number;
+  clubId: string;
+  clubName: string;
+  finalPosition: number;
+  points: number;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  outcome: ClubSeasonOutcome;
+  prizeMoney: number;
+  transfersIn: number;
+  transfersOut: number;
+  transferSpent: number;
+  transferReceived: number;
+  endingBudget: number;
+  payroll: number;
+  squadValue: number;
+}
+
+export interface SeasonStandout {
+  playerId: string;
+  playerName: string;
+  clubId: string;
+  clubName: string;
+  overall: number;
+  seasonGrowth: number;
+}
+
+export interface SeasonReport {
+  id: string;
+  season: number;
+  championId: string;
+  championName: string;
+  playerFinish: number;
+  transfersCompleted: number;
+  totalTransferValue: number;
+  biggestTransfer?: TransferTransaction;
+  standout?: SeasonStandout;
+  clubs: ClubSeasonHistoryEntry[];
+}
+
 export interface TransferMarketState {
-  version: 2;
+  version: 3;
   season: number;
   week: number;
   finances: Record<string, ClubFinance>;
   offers: TransferOffer[];
   transactions: TransferTransaction[];
+  /** Kept for compatibility with Phase 5 saves and older UI. */
   news: string[];
+  newsFeed: TransferNewsItem[];
+  clubHistory: Record<string, ClubSeasonHistoryEntry[]>;
+  playerCareers: Record<string, PlayerCareerEntry[]>;
+  seasonReports: SeasonReport[];
 }
 
 export interface TransferActionResult {
@@ -81,8 +173,12 @@ const KEY = "fta_transfer_market_v1";
 const PLAYER_ID = "player_team";
 const MIN_MATCH_SQUAD_SIZE = 6;
 const ACTIVE_OFFER_STATUSES: OfferStatus[] = ["pending", "countered"];
-const MAX_NEWS_ITEMS = 50;
+const MAX_NEWS_ITEMS = 80;
 const MAX_TRANSACTIONS = 100;
+const MAX_CAREER_ITEMS = 40;
+const MAX_CLUB_HISTORY_ITEMS = 20;
+
+let newsSequence = 0;
 
 const prizeByPlace = [50, 40, 35, 30, 25, 25, 20, 20, 15, 15].map(
   (value) => value * 1_000_000,
@@ -95,13 +191,72 @@ function payroll(players: PlayerCard[]): number {
   return players.reduce((sum, player) => sum + (player.weeklyWage ?? 0), 0);
 }
 
+interface NewsDetails {
+  kind?: TransferNewsKind;
+  playerId?: string;
+  clubIds?: string[];
+  amount?: number;
+}
+
+function inferNewsKind(message: string): TransferNewsKind {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("prize money") ||
+    normalized.includes("budget") ||
+    normalized.includes("wage")
+  ) {
+    return "finance";
+  }
+
+  if (
+    normalized.includes("counter") ||
+    normalized.includes("negotiat") ||
+    normalized.includes("walked away")
+  ) {
+    return "negotiation";
+  }
+
+  if (
+    normalized.includes("transferred") ||
+    normalized.includes("registered") ||
+    normalized.includes("completed")
+  ) {
+    return "transfer";
+  }
+
+  if (
+    normalized.includes("bid") ||
+    normalized.includes("offer") ||
+    normalized.includes("rejected") ||
+    normalized.includes("withdrawn")
+  ) {
+    return "offer";
+  }
+
+  return "system";
+}
+
 function addNews(
   state: TransferMarketState,
   message: string,
+  details: NewsDetails = {},
 ): TransferMarketState {
+  const item: TransferNewsItem = {
+    id: `news_${state.season}_${state.week}_${Date.now()}_${newsSequence++}`,
+    kind: details.kind ?? inferNewsKind(message),
+    headline: message,
+    season: state.season,
+    week: state.week,
+    playerId: details.playerId,
+    clubIds: details.clubIds,
+    amount: details.amount,
+  };
+
   return {
     ...state,
     news: [message, ...state.news].slice(0, MAX_NEWS_ITEMS),
+    newsFeed: [item, ...(state.newsFeed ?? [])].slice(0, MAX_NEWS_ITEMS),
   };
 }
 
@@ -223,15 +378,25 @@ export function createTransferMarket(
     };
   });
 
-  return {
-    version: 2,
+  const state: TransferMarketState = {
+    version: 3,
     season: league.season ?? 1,
     week: league.trainingWeek ?? 0,
     finances,
     offers: [],
     transactions: [],
-    news: ["Transfer department created. Season 1 is scouting-only."],
+    news: [],
+    newsFeed: [],
+    clubHistory: {},
+    playerCareers: {},
+    seasonReports: [],
   };
+
+  return addNews(
+    state,
+    "Transfer department created. Season 1 is scouting-only.",
+    { kind: "system" },
+  );
 }
 
 export function loadTransferMarket(
@@ -283,18 +448,89 @@ export function normalizeMarket(
   const offers = (state.offers ?? []).map((offer) => ({
     ...offer,
     amount: Math.max(0, Math.round(offer.amount ?? 0)),
+    createdSeason: Math.max(
+      1,
+      Math.round(offer.createdSeason ?? state.season ?? league.season ?? 1),
+    ),
     createdWeek: Math.max(0, Math.round(offer.createdWeek ?? 0)),
     status: validOfferStatus(offer.status) ? offer.status : "pending",
   }));
 
+  const season = league.season ?? state.season ?? 1;
+  const week = league.trainingWeek ?? state.week ?? 0;
+  const legacyNews = Array.isArray(state.news) ? state.news : [];
+  const newsFeed =
+    Array.isArray(state.newsFeed) && state.newsFeed.length > 0
+      ? state.newsFeed
+          .filter((item) => item && typeof item.headline === "string")
+          .slice(0, MAX_NEWS_ITEMS)
+          .map((item, index) => ({
+            ...item,
+            id: item.id || `migrated_news_${season}_${week}_${index}`,
+            kind: item.kind ?? inferNewsKind(item.headline),
+            season: Math.max(1, Math.round(item.season ?? season)),
+            week: Math.max(0, Math.round(item.week ?? week)),
+          }))
+      : legacyNews.slice(0, MAX_NEWS_ITEMS).map((headline, index) => ({
+          id: `legacy_news_${season}_${week}_${index}`,
+          kind: inferNewsKind(headline),
+          headline,
+          season,
+          week,
+        }));
+
+  const playerCareers: Record<string, PlayerCareerEntry[]> = Object.fromEntries(
+    Object.entries(state.playerCareers ?? {}).map(([playerId, entries]) => [
+      playerId,
+      Array.isArray(entries) ? entries.slice(0, MAX_CAREER_ITEMS) : [],
+    ]),
+  );
+
+  for (const transaction of state.transactions ?? []) {
+    const existing = playerCareers[transaction.playerId] ?? [];
+    const careerId = `career_${transaction.id}`;
+
+    if (existing.some((entry) => entry.id === careerId)) continue;
+
+    const migratedCareer: PlayerCareerEntry = {
+      id: careerId,
+      type: "transfer",
+      season: transaction.season,
+      week: transaction.week,
+      clubId: transaction.buyerId,
+      clubName: transaction.buyerName,
+      fromClubId: transaction.sellerId,
+      fromClubName: transaction.sellerName,
+      toClubId: transaction.buyerId,
+      toClubName: transaction.buyerName,
+      fee: transaction.amount,
+    };
+
+    playerCareers[transaction.playerId] = [migratedCareer, ...existing].slice(
+      0,
+      MAX_CAREER_ITEMS,
+    );
+  }
+
   return {
-    version: 2,
-    season: league.season ?? state.season ?? 1,
-    week: league.trainingWeek ?? state.week ?? 0,
+    version: 3,
+    season,
+    week,
     finances,
     offers,
     transactions: state.transactions ?? [],
-    news: state.news ?? [],
+    news: legacyNews,
+    newsFeed,
+    clubHistory: Object.fromEntries(
+      Object.entries(state.clubHistory ?? {}).map(([clubId, entries]) => [
+        clubId,
+        Array.isArray(entries) ? entries.slice(0, MAX_CLUB_HISTORY_ITEMS) : [],
+      ]),
+    ),
+    playerCareers,
+    seasonReports: Array.isArray(state.seasonReports)
+      ? state.seasonReports.slice(0, MAX_CLUB_HISTORY_ITEMS)
+      : [],
   };
 }
 
@@ -393,6 +629,7 @@ export function placeUserOffer(
     toClubId: sellerId,
     toClubName: sellerName,
     amount,
+    createdSeason: league.season ?? state.season,
     createdWeek: week,
     lastUpdatedWeek: week,
     status: "pending",
@@ -406,6 +643,12 @@ export function placeUserOffer(
   return addNews(
     state,
     `${team.name} bid $${Math.round(amount / 1_000_000)}M for ${player.name}.`,
+    {
+      kind: "offer",
+      playerId: player.id,
+      clubIds: [PLAYER_ID, sellerId],
+      amount,
+    },
   );
 }
 
@@ -618,6 +861,27 @@ function completeTransfer(
       0,
       MAX_TRANSACTIONS,
     ),
+    playerCareers: {
+      ...state.playerCareers,
+      [offer.playerId]: [
+        {
+          id: `career_${transaction.id}`,
+          type: "transfer" as const,
+          season: transaction.season,
+          week: transaction.week,
+          clubId: offer.fromClubId,
+          clubName: offer.fromClubName,
+          overall: getPlayerOverall(moved.player),
+          marketValue: moved.player.marketValue,
+          fromClubId: offer.toClubId,
+          fromClubName: offer.toClubName,
+          toClubId: offer.fromClubId,
+          toClubName: offer.fromClubName,
+          fee: amount,
+        },
+        ...(state.playerCareers[offer.playerId] ?? []),
+      ].slice(0, MAX_CAREER_ITEMS),
+    },
   };
 
   return {
@@ -626,6 +890,12 @@ function completeTransfer(
       `${offer.playerName} transferred from ${offer.toClubName} to ${
         offer.fromClubName
       } for $${Math.round(amount / 1_000_000)}M.`,
+      {
+        kind: "transfer",
+        playerId: offer.playerId,
+        clubIds: [offer.toClubId, offer.fromClubId],
+        amount,
+      },
     ),
     team: moved.team,
     league: moved.league,
@@ -695,7 +965,12 @@ export function respondToOffer(
     };
 
     return {
-      state: addNews(next, `${team.name} countered for ${offer.playerName}.`),
+      state: addNews(next, `${team.name} countered for ${offer.playerName}.`, {
+        kind: "negotiation",
+        playerId: offer.playerId,
+        clubIds: [offer.fromClubId, offer.toClubId],
+        amount: counterAmount,
+      }),
       team,
       league,
     };
@@ -933,6 +1208,7 @@ function createAIOffer(
     toClubId: seller.id,
     toClubName: seller.name,
     amount: Math.round(amount),
+    createdSeason: league.season ?? state.season,
     createdWeek: week,
     lastUpdatedWeek: week,
     status: "pending",
@@ -1018,7 +1294,15 @@ function generateAIMarketActivity(
     if (target.seller.id === PLAYER_ID) {
       nextState = addNews(
         nextState,
-        `${buyer.name} bid for ${target.player.name}.`,
+        `${buyer.name} bid ${Math.round(amount / 1_000_000)}M for ${
+          target.player.name
+        }.`,
+        {
+          kind: "offer",
+          playerId: target.player.id,
+          clubIds: [buyer.id, PLAYER_ID],
+          amount,
+        },
       );
       continue;
     }
@@ -1089,35 +1373,210 @@ export function processTransferWeek(
   };
 }
 
+function seasonEndSquad(
+  team: TeamConfig | undefined,
+  league: LeagueState,
+  clubId: string,
+): PlayerCard[] {
+  if (clubId === PLAYER_ID) return team?.players ?? [];
+  return league.aiSquads?.[clubId] ?? aiBaseSquad(clubId);
+}
+
+function clubSeasonOutcome(
+  league: LeagueState,
+  clubId: string,
+): ClubSeasonOutcome {
+  const playoff = league.playoff;
+
+  if (playoff?.champion === clubId) return "Champion";
+
+  if (playoff?.final) {
+    const finalist =
+      playoff.final.homeId === clubId || playoff.final.awayId === clubId;
+    if (finalist) return "Runner-up";
+  }
+
+  if (playoff?.top4?.includes(clubId)) return "Playoff semifinal";
+
+  return "League season";
+}
+
 export function awardSeasonPrize(
   state: TransferMarketState,
   league: LeagueState,
+  team?: TeamConfig,
 ): TransferMarketState {
+  const season = Math.max(1, Math.round(league.season ?? state.season));
+
+  if ((state.seasonReports ?? []).some((report) => report.season === season)) {
+    return state;
+  }
+
   const sorted = [...league.teams].sort(
     (a, b) =>
       b.won * 3 + b.drawn - (a.won * 3 + a.drawn) ||
       b.goalsFor - b.goalsAgainst - (a.goalsFor - a.goalsAgainst),
   );
   const finances = { ...state.finances };
+  const clubHistory: Record<string, ClubSeasonHistoryEntry[]> =
+    Object.fromEntries(
+      Object.entries(state.clubHistory ?? {}).map(([clubId, entries]) => [
+        clubId,
+        [...entries],
+      ]),
+    );
+  const playerCareers: Record<string, PlayerCareerEntry[]> = Object.fromEntries(
+    Object.entries(state.playerCareers ?? {}).map(([playerId, entries]) => [
+      playerId,
+      [...entries],
+    ]),
+  );
+  const seasonTransactions = state.transactions.filter(
+    (transaction) => transaction.season === season,
+  );
+  const historyEntries: ClubSeasonHistoryEntry[] = [];
+  const standoutCandidates: SeasonStandout[] = [];
 
   sorted.forEach((entry, index) => {
     const finance = finances[entry.id];
-    if (!finance) return;
-
     const prize = prizeByPlace[index] ?? 5_000_000;
-    finances[entry.id] = {
-      ...finance,
-      budget: finance.budget + prize,
-      prizeMoney: finance.prizeMoney + prize,
+    const nextFinance: ClubFinance = {
+      clubId: entry.id,
+      budget: (finance?.budget ?? 0) + prize,
+      wageBudget: finance?.wageBudget ?? 0,
+      payroll: finance?.payroll ?? 0,
+      sales: finance?.sales ?? 0,
+      purchases: finance?.purchases ?? 0,
+      prizeMoney: (finance?.prizeMoney ?? 0) + prize,
     };
+    finances[entry.id] = nextFinance;
+
+    const squad = seasonEndSquad(team, league, entry.id);
+    const arrivals = seasonTransactions.filter(
+      (transaction) => transaction.buyerId === entry.id,
+    );
+    const departures = seasonTransactions.filter(
+      (transaction) => transaction.sellerId === entry.id,
+    );
+    const historyEntry: ClubSeasonHistoryEntry = {
+      season,
+      clubId: entry.id,
+      clubName: entry.name,
+      finalPosition: index + 1,
+      points: entry.won * 3 + entry.drawn,
+      played: entry.played,
+      won: entry.won,
+      drawn: entry.drawn,
+      lost: entry.lost,
+      goalsFor: entry.goalsFor,
+      goalsAgainst: entry.goalsAgainst,
+      goalDifference: entry.goalsFor - entry.goalsAgainst,
+      outcome: clubSeasonOutcome(league, entry.id),
+      prizeMoney: prize,
+      transfersIn: arrivals.length,
+      transfersOut: departures.length,
+      transferSpent: arrivals.reduce(
+        (sum, transaction) => sum + transaction.amount,
+        0,
+      ),
+      transferReceived: departures.reduce(
+        (sum, transaction) => sum + transaction.amount,
+        0,
+      ),
+      endingBudget: nextFinance.budget,
+      payroll: nextFinance.payroll,
+      squadValue: squad.reduce(
+        (sum, player) => sum + (player.marketValue ?? 0),
+        0,
+      ),
+    };
+
+    historyEntries.push(historyEntry);
+    clubHistory[entry.id] = [
+      historyEntry,
+      ...(clubHistory[entry.id] ?? []).filter((item) => item.season !== season),
+    ].slice(0, MAX_CLUB_HISTORY_ITEMS);
+
+    squad.forEach((player) => {
+      const existing = playerCareers[player.id] ?? [];
+      const careerId = `career_season_${season}_${entry.id}_${player.id}`;
+      const careerEntry: PlayerCareerEntry = {
+        id: careerId,
+        type: "season",
+        season,
+        week: league.trainingWeek ?? league.schedule.length,
+        clubId: entry.id,
+        clubName: entry.name,
+        overall: getPlayerOverall(player),
+        marketValue: player.marketValue,
+      };
+
+      if (!existing.some((item) => item.id === careerId)) {
+        playerCareers[player.id] = [careerEntry, ...existing].slice(
+          0,
+          MAX_CAREER_ITEMS,
+        );
+      }
+
+      standoutCandidates.push({
+        playerId: player.id,
+        playerName: player.name,
+        clubId: entry.id,
+        clubName: entry.name,
+        overall: getPlayerOverall(player),
+        seasonGrowth: player.development?.seasonGrowth ?? 0,
+      });
+    });
   });
 
-  return {
-    ...state,
-    finances,
-    news: [
-      "Season prize money has been added to every club budget.",
-      ...state.news,
-    ].slice(0, MAX_NEWS_ITEMS),
+  const championId = league.playoff?.champion ?? sorted[0]?.id ?? PLAYER_ID;
+  const championName =
+    league.playoff?.championName ??
+    sorted.find((entry) => entry.id === championId)?.name ??
+    championId;
+  const playerFinish =
+    sorted.findIndex((entry) => entry.id === PLAYER_ID) + 1 || sorted.length;
+  const biggestTransfer = [...seasonTransactions].sort(
+    (a, b) => b.amount - a.amount,
+  )[0];
+  const standout = [...standoutCandidates].sort(
+    (a, b) =>
+      b.seasonGrowth - a.seasonGrowth ||
+      b.overall - a.overall ||
+      a.playerName.localeCompare(b.playerName),
+  )[0];
+  const report: SeasonReport = {
+    id: `season_report_${season}`,
+    season,
+    championId,
+    championName,
+    playerFinish,
+    transfersCompleted: seasonTransactions.length,
+    totalTransferValue: seasonTransactions.reduce(
+      (sum, transaction) => sum + transaction.amount,
+      0,
+    ),
+    biggestTransfer,
+    standout,
+    clubs: historyEntries,
   };
+  const archived: TransferMarketState = {
+    ...state,
+    version: 3,
+    season,
+    week: league.trainingWeek ?? state.week,
+    finances,
+    clubHistory,
+    playerCareers,
+    seasonReports: [
+      report,
+      ...(state.seasonReports ?? []).filter((item) => item.season !== season),
+    ].slice(0, MAX_CLUB_HISTORY_ITEMS),
+  };
+
+  return addNews(
+    archived,
+    `Season ${season} report published. ${championName} are champions and prize money has been added to every club budget.`,
+    { kind: "finance", clubIds: [championId] },
+  );
 }

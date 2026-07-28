@@ -1,0 +1,30 @@
+PHASE 6 — MANAGEMENT POLISH — VERIFIED INCREMENTAL PATCH
+
+Requires the verified Phase 5 AI Transfer Market patch.
+
+From the main Replit workspace:
+
+  unzip -o FTA-Phase-6-Management-Polish-INCREMENTAL.zip && bash apply-phase6-management-polish.sh
+
+This patch adds:
+
+- A compact incoming-offer popup that dismisses itself after 2.2 seconds
+- Incoming offers remain available under Market → Offers after the popup closes
+- Active bids separated from a persistent completed/rejected/withdrawn offer archive
+- A structured transfer-news feed with offer, negotiation, transfer, finance and system filters
+- Live season spending, sales, net-spend, payroll and wage-space summaries
+- Player career timelines with transfer and end-of-season milestones
+- A fourth History tab in every Club Profile
+- Archived club season records, honours, prize money and transfer timelines
+- Full end-of-season reports with champion, standings, club finances, biggest transfer and development standout
+- Automatic migration of existing Phase 5 saves to the Phase 6 data format
+- Duplicate-prize/report protection if season rollover is triggered more than once
+
+This is incremental. It does not replace the project, alter match gameplay, change deployment or touch Vite configuration.
+
+The patch passed:
+
+- The original Phase 5 transfer regression suite
+- Phase 6 save-migration, career-history and season-report tests
+- TypeScript checking
+- A production build
