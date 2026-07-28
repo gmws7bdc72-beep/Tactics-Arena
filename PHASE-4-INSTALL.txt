@@ -1,0 +1,20 @@
+PHASE 4 — INCREMENTAL PATCH
+
+Requires Phases 1–3 to already be installed.
+
+From the Replit project root:
+
+  unzip -o FTA-Phase-4-Transfer-Database-INCREMENTAL.zip
+  bash apply-phase4-transfer-database.sh
+  cd artifacts/fta-game
+  pnpm typecheck && pnpm build
+
+Adds:
+- 16-player squads for every club
+- Real starters/reserves swapping in Team Setup
+- Persistent player ages, potential, values, wages, and market status
+- Searchable transfer database for every club
+- Role and availability filters
+- Season-one scouting lock; offers remain Phase 5
+
+This ZIP contains only files changed for Phase 4.

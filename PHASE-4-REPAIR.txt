@@ -1,0 +1,2 @@
+Repairs Phase 4 TypeScript regressions caused by overwriting visual/gameplay type definitions.
+Also changes initial squad sizes from a fixed 16 to deterministic 11–15, while retaining a maximum of 16.

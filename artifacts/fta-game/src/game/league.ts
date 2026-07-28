@@ -18,6 +18,7 @@ import {
   prepareSquadForNewSeason,
   type MatchTrainingResult,
 } from "./training";
+import { expandSquad } from "./transferDatabase";
 
 export interface AITeamDef {
   id: string;
@@ -624,7 +625,7 @@ export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> 
   return Object.fromEntries(
     AI_TEAMS.map((team) => [
       team.id,
-      team.players.map((player) => ensurePlayerDevelopment(player, season)),
+      expandSquad(team.players, team.id, team.tier, season).map((player) => ensurePlayerDevelopment(player, season)),
     ]),
   );
 }
@@ -640,7 +641,7 @@ function normalizeAISquads(
       const source = existing[team.id]?.length ? existing[team.id] : team.players;
       return [
         team.id,
-        source.map((player) => ensurePlayerDevelopment(player, season)),
+        expandSquad(source, team.id, team.tier, season).map((player) => ensurePlayerDevelopment(player, season)),
       ];
     }),
   );
