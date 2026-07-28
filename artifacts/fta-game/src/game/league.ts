@@ -12,13 +12,6 @@ import type {
 } from "../engine/types";
 import { TILE_H, TILE_W } from "../engine/constants";
 import { getAIFormationById } from "./formations";
-import {
-  advanceSquadTraining,
-  ensurePlayerDevelopment,
-  prepareSquadForNewSeason,
-  type MatchTrainingResult,
-} from "./training";
-import { expandSquad } from "./transferDatabase";
 
 export interface AITeamDef {
   id: string;
@@ -621,32 +614,6 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
   return rounds;
 }
 
-export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> {
-  return Object.fromEntries(
-    AI_TEAMS.map((team) => [
-      team.id,
-      expandSquad(team.players, team.id, team.tier, season).map((player) => ensurePlayerDevelopment(player, season)),
-    ]),
-  );
-}
-
-function normalizeAISquads(
-  state: LeagueState,
-  season: number,
-): Record<string, PlayerCard[]> {
-  const existing = state.aiSquads ?? {};
-
-  return Object.fromEntries(
-    AI_TEAMS.map((team) => {
-      const source = existing[team.id]?.length ? existing[team.id] : team.players;
-      return [
-        team.id,
-        expandSquad(source, team.id, team.tier, season).map((player) => ensurePlayerDevelopment(player, season)),
-      ];
-    }),
-  );
-}
-
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
   const seed = Date.now() % 999999;
 
@@ -704,9 +671,6 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     currentMatchIndex: 0,
     aiSchedule: aiMatchdays.flat(),
     aiMatchIndex: 0,
-    season: 1,
-    trainingWeek: 0,
-    aiSquads: createInitialAISquads(1),
   };
 }
 
@@ -816,24 +780,19 @@ export function applyMatchResult(
 }
 
 export function migrateLeague(state: LeagueState): LeagueState {
-  const season = Math.max(1, Math.round(state.season ?? 1));
-  const hasValidSchedule = state.aiSchedule && state.aiSchedule.length === 36;
-  const aiMatchdays = hasValidSchedule
-    ? null
-    : buildRoundRobinMatchdays(
-        AI_TEAMS.map((team) => team.id),
-        state.currentMatchIndex + 999,
-      );
+  if (state.aiSchedule && state.aiSchedule.length === 36) {
+    return state;
+  }
+
+  const aiMatchdays = buildRoundRobinMatchdays(
+    AI_TEAMS.map((team) => team.id),
+    state.currentMatchIndex + 999,
+  );
 
   return {
     ...state,
-    season,
-    trainingWeek: Math.max(0, Math.round(state.trainingWeek ?? state.currentMatchIndex)),
-    aiSchedule: hasValidSchedule ? state.aiSchedule : aiMatchdays!.flat(),
-    aiMatchIndex: hasValidSchedule
-      ? state.aiMatchIndex ?? Math.min(state.currentMatchIndex * 4, 36)
-      : Math.min(state.currentMatchIndex * 4, 36),
-    aiSquads: normalizeAISquads(state, season),
+    aiSchedule: aiMatchdays.flat(),
+    aiMatchIndex: Math.min(state.currentMatchIndex * 4, 36),
   };
 }
 
@@ -859,105 +818,6 @@ export function getTeamPoints(team: LeagueTeamEntry): number {
 
 export function getAITeamDef(id: string): AITeamDef | undefined {
   return AI_TEAMS.find((team) => team.id === id);
-}
-
-export function getAITeamDefForLeague(
-  state: LeagueState,
-  id: string,
-): AITeamDef | undefined {
-  const base = getAITeamDef(id);
-  if (!base) return undefined;
-
-  const players = state.aiSquads?.[id];
-  return players?.length ? { ...base, players } : base;
-}
-
-export interface AITrainingWeekOptions {
-  playerOpponentId?: string;
-  playerGoals?: number;
-  opponentGoals?: number;
-  includeLastMatchdayResults?: boolean;
-}
-
-function resultFromScore(goalsFor: number, goalsAgainst: number): MatchTrainingResult {
-  if (goalsFor > goalsAgainst) return "win";
-  if (goalsFor < goalsAgainst) return "loss";
-  return "draw";
-}
-
-export function advanceAITrainingWeek(
-  rawState: LeagueState,
-  options: AITrainingWeekOptions = {},
-): LeagueState {
-  const state = migrateLeague(rawState);
-  const season = state.season ?? 1;
-  const week = (state.trainingWeek ?? 0) + 1;
-  const squads = normalizeAISquads(state, season);
-
-  const aiSquads = Object.fromEntries(
-    AI_TEAMS.map((team) => {
-      let result: MatchTrainingResult = "idle";
-
-      if (team.id === options.playerOpponentId) {
-        result = resultFromScore(
-          options.opponentGoals ?? 0,
-          options.playerGoals ?? 0,
-        );
-      } else if (options.includeLastMatchdayResults) {
-        const match = state.lastMatchdayResults?.find(
-          (item) => item.homeId === team.id || item.awayId === team.id,
-        );
-
-        if (match) {
-          result = match.homeId === team.id
-            ? resultFromScore(match.homeGoals, match.awayGoals)
-            : resultFromScore(match.awayGoals, match.homeGoals);
-        }
-      }
-
-      const intensity = team.tier === 1 ? "intense" : "balanced";
-      const trained = advanceSquadTraining(
-        squads[team.id] ?? team.players,
-        { season, week, result, intensity },
-        team.tacticId,
-        true,
-      );
-
-      return [team.id, trained];
-    }),
-  );
-
-  return {
-    ...state,
-    trainingWeek: week,
-    aiSquads,
-  };
-}
-
-export function prepareLeagueForNewSeason(
-  previous: LeagueState,
-  playerTeamId: string,
-  playerTeamName: string,
-): LeagueState {
-  const migrated = migrateLeague(previous);
-  const nextSeason = (migrated.season ?? 1) + 1;
-  const fresh = createLeague(playerTeamId, playerTeamName);
-  const previousSquads = normalizeAISquads(migrated, migrated.season ?? 1);
-
-  return {
-    ...fresh,
-    season: nextSeason,
-    trainingWeek: 0,
-    aiSquads: Object.fromEntries(
-      AI_TEAMS.map((team) => [
-        team.id,
-        prepareSquadForNewSeason(
-          previousSquads[team.id] ?? team.players,
-          nextSeason,
-        ),
-      ]),
-    ),
-  };
 }
 
 export function getAIFormationPositions(

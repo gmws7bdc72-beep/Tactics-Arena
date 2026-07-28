@@ -202,12 +202,7 @@ export function getCommentary(event: GameEvent): string {
   const list = bank[teamId] ?? bank.player;
   if (!list || list.length === 0) return event.message;
 
-  const idx =
-    (_counter++ +
-      event.tick * 7 +
-      (event.playerId?.charCodeAt(0) ?? 0)) %
-    list.length;
-
+  const idx = (_counter++ + event.tick * 7 + (event.playerId?.charCodeAt(0) ?? 0)) % list.length;
   const template = list[idx];
 
   // Fill in template placeholders from the event message field

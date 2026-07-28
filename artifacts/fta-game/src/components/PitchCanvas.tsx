@@ -18,7 +18,6 @@ import {
   GRID_ROWS,
 } from "../engine/constants";
 import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
-import { sampleChainedCurve } from "../engine/curve";
 
 interface Props {
   frame: FrameSnapshot | null;
@@ -29,19 +28,16 @@ interface Props {
   selectedPlayerId: string | null;
   passTargetMode: boolean;
   passOriginPos?: Vec2;
-  curveDraft?: {
-    origin: Vec2;
-    controls: Vec2[];
-    target: Vec2;
-    limit: number;
-  };
-  curveControlMode?: boolean;
   phase: "planning" | "simulating" | "finished";
   isVertical?: boolean;
+  topDown?: boolean;
+  minimalPitch?: boolean;
+  curveMode?: boolean;
+  curveDraftPoints?: Vec2[];
+  curvePointLimit?: number;
   activePlanningTeam?: "player" | "ai";
   onPlayerClick: (playerId: string, pos: Vec2) => void;
   onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
-  onCurvePointClick?: (pos: Vec2) => void;
 }
 
 type TileState =
@@ -110,18 +106,23 @@ function roundedRectPath(
   ctx.closePath();
 }
 
-function createView(W: number, H: number, isVertical: boolean): View2_5D {
+function createView(
+  W: number,
+  H: number,
+  isVertical: boolean,
+  topDown = false,
+): View2_5D {
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
 
   // Slightly zoomed out from the previous version.
   // Still angled, but not so close that the outside breaks.
-  const CAMERA_ZOOM = isVertical ? 1.12 : 1.08;
+  const CAMERA_ZOOM = topDown ? 0.96 : isVertical ? 1.12 : 1.08;
   const CAMERA_SHIFT_X = 0;
-  const CAMERA_SHIFT_Y = isVertical ? 0.015 : 0.015;
+  const CAMERA_SHIFT_Y = topDown ? 0 : 0.015;
 
   // Mobile football angle: mostly top-down, slightly rotated.
-  const skew = isVertical ? 0.16 : 0.13;
-  const squash = isVertical ? 0.9 : 0.88;
+  const skew = topDown ? 0 : isVertical ? 0.16 : 0.13;
+  const squash = topDown ? 1 : isVertical ? 0.9 : 0.88;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
@@ -155,9 +156,9 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const minY = Math.min(...corners.map((p) => p.y));
   const maxY = Math.max(...corners.map((p) => p.y));
 
-  const padX = W * 0.012;
-  const padTop = H * 0.012;
-  const padBottom = H * 0.012;
+  const padX = topDown ? 0 : W * 0.012;
+  const padTop = topDown ? 0 : H * 0.012;
+  const padBottom = topDown ? 0 : H * 0.012;
 
   const fitScale = Math.min(
     (W - padX * 2) / (maxX - minX),
@@ -210,7 +211,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   };
 
   const radius = (r: number, pitchY = PITCH_HEIGHT / 2) => {
-    const fakeDepth = isVertical ? 0.5 : clamp(pitchY / PITCH_HEIGHT, 0, 1);
+    const fakeDepth = topDown || isVertical ? 0.5 : clamp(pitchY / PITCH_HEIGHT, 0, 1);
 
     return r * scale * (0.95 + fakeDepth * 0.16);
   };
@@ -626,14 +627,16 @@ export default function PitchCanvas({
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
-  curveDraft,
-  curveControlMode = false,
   phase,
   isVertical = false,
+  topDown = false,
+  minimalPitch = false,
+  curveMode = false,
+  curveDraftPoints = [],
+  curvePointLimit = 0,
   activePlanningTeam,
   onPlayerClick,
   onTileClick,
-  onCurvePointClick,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -650,19 +653,19 @@ export default function PitchCanvas({
       const sx = ((cx - rect.left) / rect.width) * canvas.width;
       const sy = ((cy - rect.top) / rect.height) * canvas.height;
 
-      return createView(canvas.width, canvas.height, isVertical).unproject({
+      return createView(canvas.width, canvas.height, isVertical, topDown).unproject({
         x: sx,
         y: sy,
       });
     },
-    [isVertical],
+    [isVertical, topDown],
   );
 
   const buildTileMap = useCallback((): Map<string, TileState> => {
     const map = new Map<string, TileState>();
 
     if (!frame || !selectedPlayerId) return map;
-    if (passTargetMode) return map;
+    if (passTargetMode || curveMode) return map;
 
     const selPlayer = frame.players.find((p) => p.id === selectedPlayerId);
 
@@ -704,7 +707,7 @@ export default function PitchCanvas({
     }
 
     return map;
-  }, [frame, selectedPlayerId, passTargetMode]);
+  }, [frame, selectedPlayerId, passTargetMode, curveMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -717,7 +720,7 @@ export default function PitchCanvas({
 
     const W = canvas.width;
     const H = canvas.height;
-    const view = createView(W, H, isVertical);
+    const view = createView(W, H, isVertical, topDown);
 
     ctx.clearRect(0, 0, W, H);
 
@@ -728,14 +731,21 @@ export default function PitchCanvas({
       view.project({ x: 0, y: PITCH_HEIGHT }),
     ];
 
-    drawStadiumBackdrop(ctx, W, H, pitchCorners);
+    if (minimalPitch) {
+      ctx.fillStyle = "#355a29";
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      drawStadiumBackdrop(ctx, W, H, pitchCorners);
+    }
 
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.85)";
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetY = 14;
-    drawPoly(ctx, pitchCorners, "#243d2b", "rgba(255,255,255,0.15)", 2);
-    ctx.restore();
+    if (!minimalPitch) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.85)";
+      ctx.shadowBlur = 24;
+      ctx.shadowOffsetY = 14;
+      drawPoly(ctx, pitchCorners, "#243d2b", "rgba(255,255,255,0.15)", 2);
+      ctx.restore();
+    }
 
     const pitchGrad = ctx.createLinearGradient(
       0,
@@ -964,26 +974,105 @@ export default function PitchCanvas({
       }
     }
 
+    const drawRoute = (
+      fromPitch: Vec2,
+      route: Vec2[],
+      color: string,
+      dashed = true,
+    ) => {
+      if (route.length === 0) return;
+
+      const points = [view.project(fromPitch), ...route.map(view.project)];
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 3.2;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      if (dashed) ctx.setLineDash([8, 6]);
+
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        const current = points[i];
+        const next = points[i + 1];
+        if (next) {
+          const mid = {
+            x: (current.x + next.x) / 2,
+            y: (current.y + next.y) / 2,
+          };
+          ctx.quadraticCurveTo(current.x, current.y, mid.x, mid.y);
+        } else {
+          ctx.lineTo(current.x, current.y);
+        }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const end = points[points.length - 1];
+      const prev = points[Math.max(0, points.length - 2)];
+      const angle = Math.atan2(end.y - prev.y, end.x - prev.x);
+      ctx.beginPath();
+      ctx.moveTo(end.x, end.y);
+      ctx.lineTo(end.x - Math.cos(angle - 0.5) * 13, end.y - Math.sin(angle - 0.5) * 13);
+      ctx.lineTo(end.x - Math.cos(angle + 0.5) * 13, end.y - Math.sin(angle + 0.5) * 13);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+
+    if (phase === "planning" && curveMode && selPlayer && curveDraftPoints.length > 0) {
+      drawRoute(selPlayer.position, curveDraftPoints, "#00e5ff", false);
+
+      curveDraftPoints.forEach((point, index) => {
+        const screen = view.project(point);
+        ctx.save();
+        ctx.fillStyle = "#061018";
+        ctx.strokeStyle = "#00e5ff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "800 9px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(index + 1), screen.x, screen.y + 0.5);
+        ctx.restore();
+      });
+
+      if (curvePointLimit > 0) {
+        ctx.save();
+        ctx.fillStyle = "rgba(2,6,23,0.76)";
+        roundedRectPath(ctx, 8, 8, 54, 22, 8);
+        ctx.fill();
+        ctx.fillStyle = "#67e8f9";
+        ctx.font = "800 10px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${curveDraftPoints.length}/${curvePointLimit}`, 35, 19);
+        ctx.restore();
+      }
+    }
+
     if (phase === "planning") {
       pendingCommands.forEach((cmd, playerId) => {
         const pf = frame.players.find((p) => p.id === playerId);
 
         if (!pf) return;
 
+        const from = view.project(pf.position);
+
         const drawArrow = (
-          fromPitch: Vec2,
+          fromPos: ScreenPoint,
           toPitch: Vec2,
           color: string,
           dashed = true,
           arc = false,
-          controls: Vec2[] = [],
         ) => {
-          const fromPos = view.project(fromPitch);
           const to = view.project(toPitch);
-          const curvedPath =
-            controls.length >= 2
-              ? sampleChainedCurve(fromPitch, controls, toPitch).map(view.project)
-              : [];
 
           ctx.save();
           ctx.globalAlpha = 0.82;
@@ -998,10 +1087,7 @@ export default function PitchCanvas({
 
           ctx.beginPath();
 
-          if (curvedPath.length > 0) {
-            ctx.moveTo(fromPos.x, fromPos.y);
-            for (const point of curvedPath) ctx.lineTo(point.x, point.y);
-          } else if (arc) {
+          if (arc) {
             const mid = {
               x: (fromPos.x + to.x) / 2,
               y:
@@ -1020,11 +1106,7 @@ export default function PitchCanvas({
           ctx.stroke();
           ctx.setLineDash([]);
 
-          const arrowFrom =
-            curvedPath.length > 1
-              ? curvedPath[curvedPath.length - 2]
-              : fromPos;
-          const ang = Math.atan2(to.y - arrowFrom.y, to.x - arrowFrom.x);
+          const ang = Math.atan2(to.y - fromPos.y, to.x - fromPos.x);
 
           ctx.beginPath();
           ctx.moveTo(to.x, to.y);
@@ -1043,95 +1125,54 @@ export default function PitchCanvas({
         };
 
         if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
-          drawArrow(
-            pf.position,
-            cmd.targetPosition,
-            "#00e676",
-            true,
-            false,
-            cmd.curvePoints,
-          );
+          if (cmd.curvePoints?.length) {
+            drawRoute(pf.position, cmd.curvePoints, "#00e676", true);
+          } else {
+            drawArrow(from, cmd.targetPosition, "#00e676", true, false);
+          }
 
           if (
             cmd.followUp?.type === CommandType.PASS &&
             cmd.followUp.targetPosition
           ) {
-            drawArrow(
-              cmd.targetPosition,
-              cmd.followUp.targetPosition,
-              "#ff1744",
-              true,
-              true,
-              cmd.followUp.curvePoints,
-            );
+            const to = view.project(cmd.targetPosition);
+            drawArrow(to, cmd.followUp.targetPosition, "#ff1744", true, true);
           }
         } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
-          drawArrow(
-            pf.position,
-            cmd.targetPosition,
-            "#ffeb3b",
-            true,
-            true,
-            cmd.curvePoints,
-          );
+          if (cmd.curvePoints?.length) {
+            drawRoute(
+              pf.position,
+              cmd.curvePoints,
+              cmd.passStyle === "long" ? "#38bdf8" : "#ffeb3b",
+              true,
+            );
+          } else {
+            drawArrow(from, cmd.targetPosition, "#ffeb3b", true, true);
+          }
 
           if (
             cmd.followUp?.type === CommandType.MOVE &&
             cmd.followUp.targetPosition
           ) {
-            drawArrow(
-              pf.position,
-              cmd.followUp.targetPosition,
-              "#ff9800",
-              true,
-              false,
-              cmd.followUp.curvePoints,
-            );
+            drawArrow(from, cmd.followUp.targetPosition, "#ff9800", true, false);
           }
         } else if (cmd.type === CommandType.SHOOT) {
-          drawArrow(
-            pf.position,
-            {
-              x: pf.teamId === "player" ? PITCH_WIDTH : 0,
-              y: PITCH_HEIGHT / 2,
-            },
-            "#ff6b35",
-            true,
-            true,
-            cmd.curvePoints,
-          );
+          if (cmd.curvePoints?.length) {
+            drawRoute(pf.position, cmd.curvePoints, "#ff6b35", true);
+          } else {
+            drawArrow(
+              from,
+              {
+                x: pf.teamId === "player" ? PITCH_WIDTH : 0,
+                y: PITCH_HEIGHT / 2,
+              },
+              "#ff6b35",
+              true,
+              true,
+            );
+          }
         }
       });
-
-      if (curveDraft) {
-        const points =
-          curveDraft.controls.length >= 2
-            ? [curveDraft.origin, ...sampleChainedCurve(
-                curveDraft.origin,
-                curveDraft.controls,
-                curveDraft.target,
-              )]
-            : [curveDraft.origin, ...curveDraft.controls, curveDraft.target];
-        drawProjectedPath(ctx, view, points, "#22d3ee", 4);
-
-        curveDraft.controls.forEach((control, index) => {
-          const point = view.project(control);
-          ctx.save();
-          ctx.fillStyle = "#07111f";
-          ctx.strokeStyle = "#67e8f9";
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-          ctx.fillStyle = "#fff";
-          ctx.font = "800 10px Inter, sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(String(index + 1), point.x, point.y);
-          ctx.restore();
-        });
-      }
     }
 
     const players = [...frame.players].sort(
@@ -1444,9 +1485,13 @@ export default function PitchCanvas({
     pendingCommands,
     selectedPlayerId,
     passTargetMode,
-    curveDraft,
     phase,
     isVertical,
+    topDown,
+    minimalPitch,
+    curveMode,
+    curveDraftPoints,
+    curvePointLimit,
     buildTileMap,
   ]);
 
@@ -1456,11 +1501,6 @@ export default function PitchCanvas({
 
       const pos = canvasToPitch(e.clientX, e.clientY);
       const selectableTeam = activePlanningTeam ?? "player";
-
-      if (curveControlMode && selectedPlayerId && onCurvePointClick) {
-        onCurvePointClick(pos);
-        return;
-      }
 
       if (frame) {
         for (const p of frame.players) {
@@ -1490,7 +1530,7 @@ export default function PitchCanvas({
 
       if (clickedCol === selTile.col && clickedRow === selTile.row) return;
 
-      if (!passTargetMode) {
+      if (!passTargetMode && !curveMode) {
         const isGK = selPlayer.role === "goalkeeper";
         const range = selPlayer.tileRange;
         const reachable = getReachableTiles(
@@ -1530,8 +1570,7 @@ export default function PitchCanvas({
       onPlayerClick,
       onTileClick,
       passTargetMode,
-      curveControlMode,
-      onCurvePointClick,
+      curveMode,
       activePlanningTeam,
     ],
   );
@@ -1541,7 +1580,7 @@ export default function PitchCanvas({
       ref={canvasRef}
       width={isVertical ? PITCH_HEIGHT : PITCH_WIDTH}
       height={isVertical ? PITCH_WIDTH : PITCH_HEIGHT}
-      className="w-full h-full cursor-pointer rounded-lg"
+      className={`w-full h-full cursor-pointer ${minimalPitch ? "" : "rounded-lg"}`}
       style={{
         imageRendering: "auto",
         background: "#255c33",

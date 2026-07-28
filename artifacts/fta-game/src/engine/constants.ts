@@ -21,27 +21,25 @@ export const TICKS_PER_TURN = 60;
 export const DELTA = 0.05;
 export const TURN_DURATION = TICKS_PER_TURN * DELTA;
 
-export const BALL_RADIUS = 6;
-export const PLAYER_RADIUS = 16;
+export const BALL_RADIUS = 8;
+export const PLAYER_RADIUS = 14;
 
 export const PLAYER_CONTROL_RADIUS = 20;
 export const INTERCEPTION_RADIUS = 24;
 export const CONTEST_RADIUS = 26;
 
 export const BALL_FRICTION = 0.983;
-export const PASS_SPEED = 150;
-export const SHOT_SPEED = 340;
+export const PASS_SPEED = 160;
+export const SHOT_SPEED = 380;
 
 export const PASS_WIND_UP = 0.25;
-// Long balls use a longer, smoother wind-up so the full-body kick reads clearly.
-export const LONG_PASS_WIND_UP = 0.65;
-export const PASS_RECOVERY = 0.2;
-export const SHOT_WIND_UP = 0.30;
+export const PASS_RECOVERY = 0.4;
+export const SHOT_WIND_UP = 0.35;
 export const SHOT_RECOVERY = 0.6;
 
 // GK zone: cols 0-2 for player team GK, last 3 cols for AI GK
 export const GK_COLS_PLAYER_MIN = 0;
-export const GK_COLS_PLAYER_MAX = 10;
+export const GK_COLS_PLAYER_MAX = 2;
 export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
 
@@ -56,6 +54,16 @@ export const AI_PASS_SAFE_DISTANCE = 120;
 // speed 1-4 = 1 tile, 5-8 = 2 tiles, 9-10 = 3 tiles
 export function speedToTiles(speed: number): number {
   return Math.min(3, Math.ceil(Math.max(1, Math.min(10, speed)) / 4));
+}
+
+// Movement stat → maximum number of chained curve control points.
+// 1–4 = 2, 5–6 = 3, 7–8 = 4, 9–10 = 5.
+export function movementToCurvePoints(movement: number): number {
+  const value = Math.max(1, Math.min(10, movement));
+  if (value <= 4) return 2;
+  if (value <= 6) return 3;
+  if (value <= 8) return 4;
+  return 5;
 }
 
 // Compute linear pixel speed so player covers their tile range in ~75% of turn duration
