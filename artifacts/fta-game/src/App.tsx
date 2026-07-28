@@ -1,5 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
+import { useState, useCallback, useEffect } from "react";
 import type {
   TeamConfig,
   GameEvent,
@@ -16,14 +15,9 @@ import OnlineLobby from "./pages/OnlineLobby";
 import OnlineMatch from "./pages/OnlineMatch";
 import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
-import TransferMarket from "./pages/TransferMarket";
-import { processTransferWeek } from "./game/transferMarket";
-import { formatMoney } from "./game/transferDatabase";
-import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
-  getAITeamDefForLeague,
-  advanceAITrainingWeek,
+  getAITeamDef,
   applyMatchResult,
   initPlayoff,
   applyPlayoffResult,
@@ -32,14 +26,12 @@ import {
 } from "./game/league";
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
-import { advanceTeamTraining } from "./game/training";
 
 type Screen =
   | "home"
   | "team-setup"
   | "customize"
   | "team-profiles"
-  | "transfer-market"
   | "match"
   | "post-match"
   | "two-player-match"
@@ -75,7 +67,7 @@ interface PlayoffContext {
 
 function hashToScreen(hash: string): {
   screen: Screen;
-  tab?: "lineup" | "formation" | "training";
+  tab?: "lineup" | "formation";
 } {
   const h = hash.replace(/^#\/?/, "");
 
@@ -85,10 +77,6 @@ function hashToScreen(hash: string): {
 
   if (h === "team-setup/formation") {
     return { screen: "team-setup", tab: "formation" };
-  }
-
-  if (h === "team-setup/training") {
-    return { screen: "team-setup", tab: "training" };
   }
 
   if (h === "team-setup") {
@@ -103,10 +91,6 @@ function hashToScreen(hash: string): {
     return { screen: "customize" };
   }
 
-  if (h === "transfer-market") {
-    return { screen: "transfer-market" };
-  }
-
   return { screen: "home" };
 }
 
@@ -116,38 +100,24 @@ export default function App() {
     updateTeam,
     league,
     updateLeague,
-    updateTeamAndLeague,
     startNewSeason,
     refreshState,
-    market,
-    updateMarket,
   } = useGameState();
 
   const initialHash = hashToScreen(window.location.hash);
 
   const [screen, setScreen] = useState<Screen>(initialHash.screen);
-  const [setupTab, setSetupTab] = useState<"lineup" | "formation" | "training">(
+  const [setupTab, setSetupTab] = useState<"lineup" | "formation">(
     initialHash.tab ?? "lineup",
   );
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(
-    null,
-  );
+  const [playoffContext, setPlayoffContext] =
+    useState<PlayoffContext | null>(null);
   const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(
     null,
   );
-  const [profileTeamId, setProfileTeamId] =
-    useState<string>(PLAYER_TEAM_ID_CONST);
-  const knownIncomingOfferIds = useRef(
-    new Set(
-      market.offers
-        .filter(
-          (offer) =>
-            offer.toClubId === PLAYER_TEAM_ID_CONST &&
-            (offer.status === "pending" || offer.status === "countered"),
-        )
-        .map((offer) => offer.id),
-    ),
+  const [profileTeamId, setProfileTeamId] = useState<string>(
+    PLAYER_TEAM_ID_CONST,
   );
 
   useEffect(() => {
@@ -166,46 +136,11 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  useEffect(() => {
-    const activeIncoming = market.offers.filter(
-      (offer) =>
-        offer.toClubId === PLAYER_TEAM_ID_CONST &&
-        (offer.status === "pending" || offer.status === "countered"),
-    );
-    const newOffers = activeIncoming.filter(
-      (offer) => !knownIncomingOfferIds.current.has(offer.id),
-    );
-
-    activeIncoming.forEach((offer) =>
-      knownIncomingOfferIds.current.add(offer.id),
-    );
-
-    if (newOffers.length === 0) return;
-
-    const latest = newOffers[0];
-    toast(
-      newOffers.length === 1
-        ? "📩 New transfer offer"
-        : `📩 ${newOffers.length} new transfer offers`,
-      {
-        description:
-          newOffers.length === 1
-            ? `${latest.fromClubName} offered ${formatMoney(
-                latest.counterAmount ?? latest.amount,
-              )} for ${latest.playerName}. Check Market → Offers.`
-            : `Latest: ${latest.fromClubName} offered ${formatMoney(
-                latest.counterAmount ?? latest.amount,
-              )} for ${latest.playerName}.`,
-        duration: 2200,
-      },
-    );
-  }, [market.offers]);
-
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
   const currentScheduledMatch = league.schedule[currentMatchIndex] ?? null;
   const currentOpponentDef = currentScheduledMatch
-    ? getAITeamDefForLeague(league, currentScheduledMatch.opponentId)
+    ? getAITeamDef(currentScheduledMatch.opponentId)
     : null;
 
   const handleMatchEnd = useCallback(
@@ -214,7 +149,7 @@ export default function App() {
 
       const seed = Date.now() % 99999;
 
-      const resultLeague = applyMatchResult(
+      const newLeague = applyMatchResult(
         league,
         PLAYER_TEAM_ID_CONST,
         currentScheduledMatch.opponentId,
@@ -222,30 +157,8 @@ export default function App() {
         result.aiScore,
         seed,
       );
-      const newLeague = advanceAITrainingWeek(resultLeague, {
-        playerOpponentId: currentScheduledMatch.opponentId,
-        playerGoals: result.playerScore,
-        opponentGoals: result.aiScore,
-        includeLastMatchdayResults: true,
-      });
-      const trainedTeam = advanceTeamTraining(team, {
-        season: newLeague.season ?? 1,
-        week: newLeague.trainingWeek ?? 1,
-        result:
-          result.playerScore > result.aiScore
-            ? "win"
-            : result.playerScore < result.aiScore
-              ? "loss"
-              : "draw",
-      });
 
-      const transferResult = processTransferWeek(
-        market,
-        trainedTeam,
-        newLeague,
-      );
-      updateTeamAndLeague(transferResult.team, transferResult.league);
-      updateMarket(transferResult.state);
+      updateLeague(newLeague);
 
       setMatchResult({
         playerScore: result.playerScore,
@@ -257,15 +170,7 @@ export default function App() {
 
       setScreen("post-match");
     },
-    [
-      league,
-      team,
-      currentScheduledMatch,
-      currentOpponentDef,
-      updateTeamAndLeague,
-      market,
-      updateMarket,
-    ],
+    [league, currentScheduledMatch, currentOpponentDef, updateLeague],
   );
 
   const handlePlayoffMatchEnd = useCallback(
@@ -278,40 +183,18 @@ export default function App() {
       const homeGoals = isHome ? result.playerScore : result.aiScore;
       const awayGoals = isHome ? result.aiScore : result.playerScore;
 
-      const resultLeague = applyPlayoffResult(
+      const newLeague = applyPlayoffResult(
         league,
         stage,
         homeGoals,
         awayGoals,
         seed,
       );
-      const newLeague = advanceAITrainingWeek(resultLeague, {
-        playerOpponentId: playoffContext.opponentId,
-        playerGoals: result.playerScore,
-        opponentGoals: result.aiScore,
-      });
-      const trainedTeam = advanceTeamTraining(team, {
-        season: newLeague.season ?? 1,
-        week: newLeague.trainingWeek ?? 1,
-        result:
-          result.playerScore > result.aiScore
-            ? "win"
-            : result.playerScore < result.aiScore
-              ? "loss"
-              : "draw",
-      });
 
-      const transferResult = processTransferWeek(
-        market,
-        trainedTeam,
-        newLeague,
-      );
-      updateTeamAndLeague(transferResult.team, transferResult.league);
-      updateMarket(transferResult.state);
+      updateLeague(newLeague);
 
       const oppName =
-        getAITeamDefForLeague(newLeague, playoffContext.opponentId)?.name ??
-        "Opponent";
+        getAITeamDef(playoffContext.opponentId)?.name ?? "Opponent";
 
       setPlayoffContext(null);
 
@@ -325,7 +208,7 @@ export default function App() {
 
       setScreen("post-match");
     },
-    [league, team, playoffContext, updateTeamAndLeague, market, updateMarket],
+    [league, playoffContext, updateLeague],
   );
 
   const handleStartMatch = useCallback(() => {
@@ -368,23 +251,11 @@ export default function App() {
           ? po.sf1
           : po.stage === "sf2"
             ? po.sf2
-            : (po.final ?? po.sf2);
+            : po.final ?? po.sf2;
 
-      const resultLeague = autoSimPlayoffStage(current, seed);
-      const newLeague = advanceAITrainingWeek(resultLeague);
-      const trainedTeam = advanceTeamTraining(team, {
-        season: newLeague.season ?? 1,
-        week: newLeague.trainingWeek ?? 1,
-        result: "idle",
-      });
+      const newLeague = autoSimPlayoffStage(current, seed);
 
-      const transferResult = processTransferWeek(
-        market,
-        trainedTeam,
-        newLeague,
-      );
-      updateTeamAndLeague(transferResult.team, transferResult.league);
-      updateMarket(transferResult.state);
+      updateLeague(newLeague);
 
       setMatchResult({
         playerScore: 0,
@@ -415,16 +286,7 @@ export default function App() {
 
       setScreen("post-match");
     }
-  }, [
-    isLeagueComplete,
-    league,
-    team,
-    currentOpponentDef,
-    updateLeague,
-    updateTeamAndLeague,
-    market,
-    updateMarket,
-  ]);
+  }, [isLeagueComplete, league, currentOpponentDef, updateLeague]);
 
   const handleForfeit = useCallback(() => {
     if (!currentScheduledMatch || !currentOpponentDef) {
@@ -480,94 +342,29 @@ export default function App() {
     return <Pitch3DPreview />;
   }
 
-  const menuScreens: MenuTab[] = [
-    "team-profiles",
-    "team-setup",
-    "home",
-    "transfer-market",
-    "customize",
-  ];
-  const isMenuScreen = menuScreens.includes(screen as MenuTab);
-
-  const goToMenuTab = (tab: MenuTab) => {
-    setScreen(tab);
-    if (tab !== "team-setup") setSetupTab("lineup");
-    window.location.hash = tab === "home" ? "#/" : `#/${tab}`;
-  };
-
-  if (isMenuScreen) {
-    let content;
-
-    if (screen === "team-profiles") {
-      content = (
-        <TeamProfiles
-          playerTeam={team}
-          league={league}
-          market={market}
-          initialTeamId={profileTeamId}
-          onBack={() => goToMenuTab("home")}
-        />
-      );
-    } else if (screen === "team-setup") {
-      content = (
-        <TeamSetup
-          team={team}
-          onSave={(t: TeamConfig) => {
-            updateTeam(t);
-            goToMenuTab("home");
-          }}
-          initialTab={setupTab}
-          onBack={() => goToMenuTab("home")}
-        />
-      );
-    } else if (screen === "customize") {
-      content = (
-        <Customize
-          team={team}
-          onSave={(t: TeamConfig) => {
-            updateTeam(t);
-            goToMenuTab("home");
-          }}
-          onBack={() => goToMenuTab("home")}
-        />
-      );
-    } else if (screen === "transfer-market") {
-      content = (
-        <TransferMarket
-          team={team}
-          league={league}
-          market={market}
-          onChange={(nextMarket, nextTeam, nextLeague) => {
-            updateMarket(nextMarket);
-            if (nextTeam && nextLeague)
-              updateTeamAndLeague(nextTeam, nextLeague);
-          }}
-        />
-      );
-    } else {
-      content = (
+  if (screen === "home") {
+    return (
+      <div className="max-w-md mx-auto min-h-screen">
         <Home
           team={team}
           league={league}
           isLeagueComplete={isLeagueComplete}
           onStartMatch={handleStartMatch}
-          onGoToTeamSetup={() => goToMenuTab("team-setup")}
-          onGoToCustomize={() => goToMenuTab("customize")}
+          onGoToTeamSetup={() => setScreen("team-setup")}
+          onGoToCustomize={() => setScreen("customize")}
           onGoToProfiles={handleOpenProfiles}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
         />
-      );
-    }
+      </div>
+    );
+  }
 
+  if (screen === "team-profiles") {
     return (
-      <div
-        className="mx-auto min-h-screen max-w-md pb-20"
-        style={{ background: "#0a0e1a" }}
-      >
-        {content}
-        <BottomMenuNav active={screen as MenuTab} onChange={goToMenuTab} />
+      <div className="max-w-md mx-auto min-h-screen">
+        <TeamProfiles playerTeam={team} onBack={() => setScreen("home")} />
       </div>
     );
   }
@@ -596,7 +393,7 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <OnlineLobby
           team={team}
-          onGameReady={(config: OnlineGameConfig) => {
+          onGameReady={(config) => {
             setOnlineConfig(config);
             setScreen("online-match");
           }}
@@ -626,11 +423,42 @@ export default function App() {
     );
   }
 
+  if (screen === "team-setup") {
+    return (
+      <div className="max-w-md mx-auto min-h-screen">
+        <TeamSetup
+          team={team}
+          onSave={handleTeamSave}
+          initialTab={setupTab}
+          onBack={() => {
+            setSetupTab("lineup");
+            setScreen("home");
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "customize") {
+    return (
+      <div className="max-w-md mx-auto min-h-screen">
+        <Customize
+          team={team}
+          onSave={(t) => {
+            updateTeam(t);
+            setScreen("home");
+          }}
+          onBack={() => setScreen("home")}
+        />
+      </div>
+    );
+  }
+
   if (screen === "match") {
     const isPlayoff = !!playoffContext;
 
     const opponentDef = isPlayoff
-      ? getAITeamDefForLeague(league, playoffContext!.opponentId)
+      ? getAITeamDef(playoffContext!.opponentId)
       : currentOpponentDef;
 
     const isHomeForMatch = isPlayoff

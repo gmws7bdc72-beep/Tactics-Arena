@@ -1,10 +1,8 @@
 import type { TeamConfig, LeagueState, SavedMatchState, PlayerStats } from "../engine/types";
 import { getDefaultSquad } from "./players";
-import { expandSquad, MAX_SQUAD_SIZE, MIN_SQUAD_SIZE } from "./transferDatabase";
 import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
-import { ensurePlayerDevelopment, ensureTeamDevelopment } from "./training";
 
 const TEAM_KEY = "fta_team_clean_6v6_v1";
 const LEAGUE_KEY = "fta_league_clean_6v6_v1";
@@ -23,6 +21,19 @@ function hasValidStats(t: TeamConfig): boolean {
   );
 }
 
+function normalizeStats(stats: PlayerStats | (Partial<PlayerStats> & { luck?: number })): PlayerStats {
+  const legacy = stats as Partial<PlayerStats> & { luck?: number };
+  return {
+    ...(stats as PlayerStats),
+    movement:
+      typeof legacy.movement === "number"
+        ? legacy.movement
+        : typeof legacy.luck === "number"
+          ? legacy.luck
+          : 5,
+  };
+}
+
 function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
   const formation =
     FORMATIONS.find((f) => f.id === team.formationId) ??
@@ -30,21 +41,32 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
     FORMATIONS[0];
 
   const defaults = getDefaultSquad();
-  const existing = [...(team.players ?? [])];
-  const players = existing.length <= PLAYERS_PER_TEAM
-    ? expandSquad([...existing, ...defaults], PLAYER_TEAM_ID, 2, 1)
-    : existing.slice(0, MAX_SQUAD_SIZE);
+  const players = [...(team.players ?? [])].map((player) => ({
+    ...player,
+    stats: normalizeStats(player.stats),
+  }));
 
-  return ensureTeamDevelopment({
+  for (const fallback of defaults) {
+    if (players.length >= PLAYERS_PER_TEAM) break;
+
+    if (!players.some((p) => p.id === fallback.id)) {
+      players.push(fallback);
+    }
+  }
+
+  while (players.length < PLAYERS_PER_TEAM) {
+    players.push(defaults[players.length % defaults.length]);
+  }
+
+  return {
     ...team,
     formationId: formation.id,
-    players: players.map((player) => ensurePlayerDevelopment(player)),
+    players: players.slice(0, PLAYERS_PER_TEAM),
     startPositions:
       team.startPositions && team.startPositions.length >= PLAYERS_PER_TEAM
         ? team.startPositions.slice(0, PLAYERS_PER_TEAM)
         : formation.positions.map((p) => ({ ...p })),
-    trainingIntensity: team.trainingIntensity ?? "balanced",
-  });
+  };
 }
 
 export function loadTeam(): TeamConfig {
@@ -56,7 +78,7 @@ export function loadTeam(): TeamConfig {
 
       if (
         t.players &&
-        t.players.length >= MIN_SQUAD_SIZE &&
+        t.players.length >= PLAYERS_PER_TEAM &&
         hasValidStats(t)
       ) {
         const normalized = normalizeTeamForCurrentRules(t);
@@ -111,22 +133,13 @@ export function loadMatch(): SavedMatchState | null {
 
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw) as SavedMatchState;
+    const saved = JSON.parse(raw) as SavedMatchState;
     return {
-      ...parsed,
-      players: parsed.players.map((player) => {
-        const stats = player.stats as PlayerStats & { luck?: number };
-        const movement =
-          typeof stats.movement === "number" && Number.isFinite(stats.movement)
-            ? stats.movement
-            : typeof stats.luck === "number" && Number.isFinite(stats.luck)
-              ? stats.luck
-              : 5;
-        return {
-          ...player,
-          stats: { ...stats, movement },
-        };
-      }),
+      ...saved,
+      players: saved.players.map((player) => ({
+        ...player,
+        stats: normalizeStats(player.stats),
+      })),
     };
   } catch {
     return null;
@@ -152,16 +165,15 @@ export function getDefaultTeam(): TeamConfig {
   const formation =
     FORMATIONS.find((f) => f.id === "2-1-2") ?? FORMATIONS[0];
 
-  return ensureTeamDevelopment({
+  return {
     name: "My Team",
     jerseyColor: "#00b4d8",
     secondaryColor: "#ffffff",
     crestIcon: "⚡",
-    players: getDefaultSquad(),
+    players: getDefaultSquad().slice(0, PLAYERS_PER_TEAM),
     formationId: formation.id,
     startPositions: formation.positions.map((p) => ({ ...p })),
-    trainingIntensity: "balanced",
-  });
+  };
 }
 
 export const JERSEY_COLORS = [
