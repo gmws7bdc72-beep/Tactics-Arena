@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2, KitStyle, SleeveStyle } from "../engine/types";
+import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
 import { CommandType, GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
@@ -8,17 +8,13 @@ import {
   PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles, PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
-import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
 import { getSocket, disconnectSocket } from "../lib/socket";
-import { createPlayerAppearance, deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 
 export interface TeamSummary {
   name: string;
   jerseyColor: string;
   secondaryColor?: string;
-  kitStyle?: KitStyle;
-  sleeveStyle?: SleeveStyle;
   crestIcon?: string;
   formationId: string;
   players: PlayerCard[];
@@ -54,7 +50,6 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     name: card.name,
     jerseyNumber: card.jerseyNumber,
     role: card.role,
-    appearance: card.appearance ?? createPlayerAppearance(card.id, card.role),
   };
 }
 
@@ -407,21 +402,9 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
-      stateTimer: p.stateTimer,
-      actionPassStyle:
-        p.command?.type === CommandType.PASS
-          ? (p.command.passStyle ?? "ground")
-          : undefined,
-      actionTarget:
-        p.command?.type === CommandType.PASS && p.command.targetPosition
-          ? { ...p.command.targetPosition }
-          : p.command?.type === CommandType.SHOOT
-            ? { x: p.teamId === "player" ? PITCH_WIDTH : 0, y: PITCH_HEIGHT / 2 }
-            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
@@ -479,16 +462,9 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       <div className="flex-1 flex flex-col items-center justify-center overflow-hidden">
         <PitchCanvas
           frame={displayFrame}
-          playerTeam={{
-            jerseyColor: myTeam.jerseyColor,
-            secondaryColor: myTeam.secondaryColor,
-            kitStyle: myTeam.kitStyle ?? deriveKitStyle(myTeam.name),
-            sleeveStyle: myTeam.sleeveStyle ?? deriveSleeveStyle(myTeam.name),
-          } as any}
+          playerTeam={{ jerseyColor: myTeam.jerseyColor, secondaryColor: myTeam.secondaryColor } as any}
           aiTeamColor={oppTeam.jerseyColor}
           aiTeamSecondaryColor={oppTeam.secondaryColor}
-          aiTeamKitStyle={oppTeam.kitStyle ?? deriveKitStyle(oppTeam.name)}
-          aiTeamSleeveStyle={oppTeam.sleeveStyle ?? deriveSleeveStyle(oppTeam.name)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           onPlayerClick={handlePlayerClick}
@@ -619,10 +595,6 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
         </div>
       )}
 
-      {/* Event log */}
-      <div className="absolute top-16 right-1 max-w-[180px]">
-        <EventLog events={allEvents} />
-      </div>
     </div>
   );
 }
