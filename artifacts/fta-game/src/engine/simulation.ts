@@ -5,6 +5,7 @@ import type {
   FrameSnapshot,
   GameEvent,
   Vec2,
+  PlayerStats,
 } from "./types";
 import { PlayerState, CommandType, GameEventType } from "./types";
 import {
@@ -36,8 +37,17 @@ import {
   GRID_COLS,
   GRID_ROWS,
   getLinearPixelSpeed,
+  speedToTiles,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
+import {
+  advanceCurveMotion,
+  createCurveMotion,
+  curveMotionProgress,
+  curvePointLimitForCommand,
+  curveRouteFitsMoveBudget,
+  sanitizeCurvePoints,
+} from "./curve";
 
 function vec2Add(a: Vec2, b: Vec2): Vec2 {
   return { x: a.x + b.x, y: a.y + b.y };
@@ -225,8 +235,40 @@ interface BallTracker {
   offsideIds: Set<string>;
 }
 
-export function speedToTiles(speed: number): number {
-  return Math.ceil(Math.max(1, Math.min(10, speed)) / 2);
+function normalizeSimulationCommand(
+  player: SimPlayer,
+  command: Command | null,
+): Command | null {
+  if (!command) return null;
+  const targetPosition = command.targetPosition
+    ? { ...command.targetPosition }
+    : undefined;
+  let curvePoints = sanitizeCurvePoints(
+    command.curvePoints,
+    curvePointLimitForCommand(player.stats, command),
+  );
+  if (
+    command.type === CommandType.MOVE &&
+    targetPosition &&
+    curvePoints.length >= 2 &&
+    !curveRouteFitsMoveBudget(
+      player.position,
+      curvePoints,
+      targetPosition,
+      player.stats.speed,
+    )
+  ) {
+    curvePoints = [];
+  }
+
+  return {
+    ...command,
+    targetPosition,
+    curvePoints: curvePoints.length >= 2 ? curvePoints : undefined,
+    followUp: command.followUp
+      ? (normalizeSimulationCommand(player, command.followUp) ?? undefined)
+      : undefined,
+  };
 }
 
 export function runSimulation(
@@ -245,27 +287,22 @@ export function runSimulation(
     offsideIds: new Set(),
   };
 
-  const simPlayers: SimPlayer[] = players.map((p) => ({
-    ...p,
-    position: { ...p.position },
-    velocity: { ...p.velocity },
-    command: p.command
-      ? {
-          ...p.command,
-          targetPosition: p.command.targetPosition
-            ? { ...p.command.targetPosition }
-            : undefined,
-          followUp: p.command.followUp
-            ? {
-                ...p.command.followUp,
-                targetPosition: p.command.followUp.targetPosition
-                  ? { ...p.command.followUp.targetPosition }
-                  : undefined,
-              }
-            : undefined,
-        }
-      : null,
-  }));
+  const simPlayers: SimPlayer[] = players.map((source) => {
+    const legacyLuck = (source.stats as PlayerStats & { luck?: number }).luck;
+    const player: SimPlayer = {
+      ...source,
+      stats: {
+        ...source.stats,
+        movement: statValue(source.stats.movement, statValue(legacyLuck, 5)),
+      },
+      position: { ...source.position },
+      velocity: { ...source.velocity },
+      command: null,
+      curveMotion: undefined,
+    };
+    player.command = normalizeSimulationCommand(player, source.command);
+    return player;
+  });
 
   const simBall: SimBall = {
     position: { ...ball.position },
@@ -276,6 +313,12 @@ export function runSimulation(
     height: ball.height ?? 0,
     passStyle: ball.passStyle,
     passStart: ball.passStart ? { ...ball.passStart } : undefined,
+    curveMotion: ball.curveMotion
+      ? {
+          ...ball.curveMotion,
+          points: ball.curveMotion.points.map((point) => ({ ...point })),
+        }
+      : undefined,
   };
 
   // Snap all players to tile centers at start of turn
@@ -461,6 +504,7 @@ export function runSimulation(
         simBall.height = 0;
         simBall.passStyle = undefined;
         simBall.passStart = undefined;
+        simBall.curveMotion = undefined;
         winner.state = PlayerState.DRIBBLING;
         winner.command = null;
         winner.commandExecuted = false;
@@ -655,6 +699,38 @@ function moveLinear(player: SimPlayer, target: Vec2, dt: number): boolean {
   return false;
 }
 
+function moveCommand(
+  player: SimPlayer,
+  command: Command,
+  target: Vec2,
+  dt: number,
+): boolean {
+  if (!command.curvePoints || command.curvePoints.length < 2) {
+    player.curveMotion = undefined;
+    return moveLinear(player, target, dt);
+  }
+
+  if (!player.curveMotion) {
+    player.curveMotion = createCurveMotion(
+      player.position,
+      command.curvePoints,
+      target,
+    );
+  }
+  const pixelSpeed = getLinearPixelSpeed(player.stats.speed);
+  const advanced = advanceCurveMotion(
+    player.position,
+    player.curveMotion,
+    pixelSpeed * dt,
+  );
+  player.position = advanced.position;
+  player.velocity = advanced.arrived
+    ? { x: 0, y: 0 }
+    : vec2Scale(advanced.direction, pixelSpeed);
+  if (advanced.arrived) player.curveMotion = undefined;
+  return advanced.arrived;
+}
+
 function updatePlayerMovement(
   players: SimPlayer[],
   ball: SimBall,
@@ -808,9 +884,10 @@ function updatePlayerMovement(
       }
 } else if (cmd.type === CommandType.MOVE) {
   const target = cmd.targetPosition!;
-  const arrived = moveLinear(player, target, dt);
+  const arrived = moveCommand(player, cmd, target, dt);
 
   if (arrived) {
+    player.curveMotion = undefined;
     if (cmd.followUp) {
       const followUp = { ...cmd.followUp };
 
@@ -925,7 +1002,12 @@ function executePass(
   if (player.ability === "bullet_pass") passSpd *= 1.5;
   if (isLongBall) passSpd *= 1.12;
 
-  const dir = vec2Normalize(vec2Sub(targetPos, ball.position));
+  ball.curveMotion =
+    cmd.curvePoints && cmd.curvePoints.length >= 2
+      ? createCurveMotion(ball.position, cmd.curvePoints, targetPos)
+      : undefined;
+  const firstTarget = ball.curveMotion?.points[0] ?? targetPos;
+  const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(dir, passSpd);
   ball.passTarget = { ...targetPos };
   ball.passStart = { ...ball.position };
@@ -948,12 +1030,20 @@ function executeShot(
   let shotSpd = SHOT_SPEED;
   if (player.ability === "eagle_eye") shotSpd *= 1.15;
 
-  const dir = vec2Normalize(vec2Sub({ x: goalX, y: targetY }, ball.position));
+  const target = { x: goalX, y: targetY };
+  const cmd = player.command;
+  ball.curveMotion =
+    cmd?.curvePoints && cmd.curvePoints.length >= 2
+      ? createCurveMotion(ball.position, cmd.curvePoints, target)
+      : undefined;
+  const firstTarget = ball.curveMotion?.points[0] ?? target;
+  const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(dir, shotSpd);
+  ball.passTarget = target;
+  ball.passStart = { ...ball.position };
   ball.ownerId = null;
   ball.height = 0;
   ball.passStyle = undefined;
-  ball.passStart = undefined;
 }
 
 function updateBallPhysics(ball: SimBall, dt: number): void {
@@ -961,37 +1051,55 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
     ball.height = 0;
     ball.passStyle = undefined;
     ball.passStart = undefined;
+    ball.curveMotion = undefined;
     return;
   }
 
   if (ball.passTarget) {
-    const distBefore = vec2Dist(ball.position, ball.passTarget);
-
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
-    ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+    const speed = vec2Len(ball.velocity);
+    let arrived = false;
+
+    if (ball.curveMotion) {
+      const advanced = advanceCurveMotion(
+        ball.position,
+        ball.curveMotion,
+        speed * dt,
+      );
+      ball.position = advanced.position;
+      ball.velocity = advanced.arrived
+        ? { x: 0, y: 0 }
+        : vec2Scale(advanced.direction, speed);
+      arrived = advanced.arrived;
+    } else {
+      const distBefore = vec2Dist(ball.position, ball.passTarget);
+      ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
+      const distAfter = vec2Dist(ball.position, ball.passTarget);
+      arrived = distAfter >= distBefore || distAfter < 4;
+    }
 
     if (ball.passStyle === "long" && ball.passStart) {
-      const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
-      const travelled = vec2Dist(ball.passStart, ball.position);
-      const progress = clamp(travelled / totalDist, 0, 1);
+      const progress = ball.curveMotion
+        ? curveMotionProgress(ball.curveMotion)
+        : clamp(
+            vec2Dist(ball.passStart, ball.position) /
+              Math.max(1, vec2Dist(ball.passStart, ball.passTarget)),
+            0,
+            1,
+          );
       ball.height = Math.sin(progress * Math.PI) * 34;
     } else {
       ball.height = 0;
     }
 
-    const distAfter = vec2Dist(ball.position, ball.passTarget);
-
-    if (
-      distAfter >= distBefore ||
-      distAfter < 4 ||
-      vec2Len(ball.velocity) < 2
-    ) {
+    if (arrived || speed < 2) {
       ball.position = { ...ball.passTarget };
       ball.velocity = { x: 0, y: 0 };
       ball.passTarget = undefined;
       ball.height = 0;
       ball.passStyle = undefined;
       ball.passStart = undefined;
+      ball.curveMotion = undefined;
     }
   } else {
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
@@ -1003,6 +1111,7 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
       ball.passStyle = undefined;
       ball.passStart = undefined;
       ball.height = 0;
+      ball.curveMotion = undefined;
     }
   }
 }
@@ -1024,24 +1133,42 @@ function longBallDirectionalContestAllowed(player: SimPlayer, ball: SimBall, dis
 
   const startTile = posToTile(ball.passStart);
   const targetTile = posToTile(ball.passTarget);
-  const dc = signTileDelta(targetTile.col - startTile.col);
-  const dr = signTileDelta(targetTile.row - startTile.row);
+  const launchToward = ball.curveMotion?.points[0] ?? ball.passTarget;
+  const receiverFrom =
+    ball.curveMotion?.points[Math.max(0, ball.curveMotion.points.length - 2)] ??
+    ball.passStart;
+  const launchTowardTile = posToTile(launchToward);
+  const receiverFromTile = posToTile(receiverFrom);
+  const launchDc = signTileDelta(launchTowardTile.col - startTile.col);
+  const launchDr = signTileDelta(launchTowardTile.row - startTile.row);
+  const receiverDc = signTileDelta(targetTile.col - receiverFromTile.col);
+  const receiverDr = signTileDelta(targetTile.row - receiverFromTile.row);
 
-  if (dc === 0 && dr === 0) return true;
+  if (
+    launchDc === 0 &&
+    launchDr === 0 &&
+    receiverDc === 0 &&
+    receiverDr === 0
+  ) return true;
 
   const playerTile = posToTile(player.position);
   const launchBlockTile = {
-    col: clamp(startTile.col + dc, 0, GRID_COLS - 1),
-    row: clamp(startTile.row + dr, 0, GRID_ROWS - 1),
+    col: clamp(startTile.col + launchDc, 0, GRID_COLS - 1),
+    row: clamp(startTile.row + launchDr, 0, GRID_ROWS - 1),
   };
   const receiverBlockTile = {
-    col: clamp(targetTile.col - dc, 0, GRID_COLS - 1),
-    row: clamp(targetTile.row - dr, 0, GRID_ROWS - 1),
+    col: clamp(targetTile.col - receiverDc, 0, GRID_COLS - 1),
+    row: clamp(targetTile.row - receiverDr, 0, GRID_ROWS - 1),
   };
 
-  const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
-  const travelled = vec2Dist(ball.passStart, ball.position);
-  const progress = clamp(travelled / totalDist, 0, 1);
+  const progress = ball.curveMotion
+    ? curveMotionProgress(ball.curveMotion)
+    : clamp(
+        vec2Dist(ball.passStart, ball.position) /
+          Math.max(1, vec2Dist(ball.passStart, ball.passTarget)),
+        0,
+        1,
+      );
 
   // Long balls are not normal floor passes. They can only be blocked during
   // the takeoff square in the direction of the kick, or during the landing
@@ -1102,7 +1229,9 @@ function detectAndResolveEvents(
         } else {
           score += (player.stats.defense / 10) * 0.2;
         }
-        score += rng() * (player.stats.movement / 10) * 0.2;
+        // Movement is positioning/control, not renamed Luck: reward it
+        // deterministically when two players arrive at the same loose ball.
+        score += (player.stats.movement / 10) * 0.12;
         if (player.ability === "iron_tackle") score += 0.15;
         if (player.ability === "goalkeeper") score += 0.35;
         candidates.push({ player, score });
@@ -1152,6 +1281,7 @@ function detectAndResolveEvents(
           ball.height = 0;
           ball.passStyle = undefined;
           ball.passStart = undefined;
+          ball.curveMotion = undefined;
           loser.state = PlayerState.DRIBBLING;
           winner.state = PlayerState.RECOVERING;
           winner.recoveryTimer = 1.0;
@@ -1239,6 +1369,7 @@ function detectAndResolveEvents(
           ball.height = 0;
           ball.passStyle = undefined;
           ball.passStart = undefined;
+          ball.curveMotion = undefined;
 
           // Return the offside player to their match-start position
           winner.position = { ...winner.startPosition };
@@ -1262,6 +1393,7 @@ function detectAndResolveEvents(
       ball.height = 0;
       ball.passStyle = undefined;
       ball.passStart = undefined;
+      ball.curveMotion = undefined;
       winner.state = PlayerState.DRIBBLING;
 
       if (loser && loser.teamId !== winner.teamId) {

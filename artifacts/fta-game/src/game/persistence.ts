@@ -1,4 +1,4 @@
-import type { TeamConfig, LeagueState, SavedMatchState } from "../engine/types";
+import type { TeamConfig, LeagueState, SavedMatchState, PlayerStats } from "../engine/types";
 import { getDefaultSquad } from "./players";
 import { expandSquad, MAX_SQUAD_SIZE, MIN_SQUAD_SIZE } from "./transferDatabase";
 import { FORMATIONS } from "./formations";
@@ -111,7 +111,23 @@ export function loadMatch(): SavedMatchState | null {
 
     if (!raw) return null;
 
-    return JSON.parse(raw) as SavedMatchState;
+    const parsed = JSON.parse(raw) as SavedMatchState;
+    return {
+      ...parsed,
+      players: parsed.players.map((player) => {
+        const stats = player.stats as PlayerStats & { luck?: number };
+        const movement =
+          typeof stats.movement === "number" && Number.isFinite(stats.movement)
+            ? stats.movement
+            : typeof stats.luck === "number" && Number.isFinite(stats.luck)
+              ? stats.luck
+              : 5;
+        return {
+          ...player,
+          stats: { ...stats, movement },
+        };
+      }),
+    };
   } catch {
     return null;
   }

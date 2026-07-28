@@ -43,6 +43,11 @@ export interface Command {
   targetPosition?: Vec2;
   targetPlayerId?: string;
   followUp?: Command;
+  /**
+   * Ordered intermediate handles for a curved action. The origin and final
+   * targetPosition are implicit and do not consume the player's point limit.
+   */
+  curvePoints?: Vec2[];
   /** When true the pass is a planned coordinated play — skip accuracy deviation so
    *  the ball lands exactly on the announced tile, matching the runner's move target. */
   coordinated?: boolean;
@@ -187,6 +192,13 @@ export interface SimPlayer {
   jerseyNumber: number;
   role: PlayerRole;
   appearance?: PlayerAppearance;
+  /** Runtime arc-length cursor for a curved MOVE command. */
+  curveMotion?: {
+    points: Vec2[];
+    index: number;
+    travelled: number;
+    totalLength: number;
+  };
 }
 
 export interface SimBall {
@@ -200,6 +212,13 @@ export interface SimBall {
   height?: number;
   passStyle?: PassStyle;
   passStart?: Vec2;
+  /** Runtime arc-length cursor for curved passes and shots. */
+  curveMotion?: {
+    points: Vec2[];
+    index: number;
+    travelled: number;
+    totalLength: number;
+  };
 }
 
 export enum GameEventType {

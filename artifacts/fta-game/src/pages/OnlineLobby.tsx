@@ -22,6 +22,7 @@ type LobbyState =
 
 function toTeamSummary(team: TeamConfig): TeamSummary {
   return {
+    rulesVersion: 8,
     name: team.name,
     jerseyColor: team.jerseyColor ?? "#1565c0",
     secondaryColor: team.secondaryColor,

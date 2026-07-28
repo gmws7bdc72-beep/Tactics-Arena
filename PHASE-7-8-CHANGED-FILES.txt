@@ -1,0 +1,15 @@
+artifacts/api-server/src/online/roomManager.ts
+artifacts/fta-game/index.html
+artifacts/fta-game/public/sw.js
+artifacts/fta-game/src/components/MechanicPad.tsx
+artifacts/fta-game/src/components/PitchCanvas.tsx
+artifacts/fta-game/src/engine/ai.ts
+artifacts/fta-game/src/engine/curve.ts
+artifacts/fta-game/src/engine/simulation.ts
+artifacts/fta-game/src/engine/types.ts
+artifacts/fta-game/src/game/persistence.ts
+artifacts/fta-game/src/hooks/useCurvePlanner.ts
+artifacts/fta-game/src/pages/Match.tsx
+artifacts/fta-game/src/pages/OnlineLobby.tsx
+artifacts/fta-game/src/pages/OnlineMatch.tsx
+phase78-curve.test.ts

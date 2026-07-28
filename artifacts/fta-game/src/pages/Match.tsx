@@ -9,7 +9,10 @@ import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
 import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS, PLAYERS_PER_TEAM } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
+import MechanicPad from "../components/MechanicPad";
+import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
+import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
 
 interface Props {
@@ -23,6 +26,7 @@ interface Props {
 }
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
+  const legacyStats = card.stats as PlayerCard["stats"] & { luck?: number };
   return {
     id: `${teamId}_${card.id}`,
     teamId,
@@ -31,7 +35,10 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     velocity: { x: 0, y: 0 },
     startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
-    stats: { ...card.stats },
+    stats: {
+      ...card.stats,
+      movement: legacyStats.movement ?? legacyStats.luck ?? 5,
+    },
     ability: card.ability,
     command: null,
     commandExecuted: false,
@@ -277,14 +284,34 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     setComboStoredPass(null);
   }, []);
 
-  const startCombo = useCallback(() => {
+  const startCombo = useCallback((moveFirst: boolean) => {
     if (!selectedPlayerId) return;
+    setComboMoveFirst(moveFirst);
     setComboActive(true);
     setComboStep(1);
     setComboStoredMove(null);
     setComboStoredPass(null);
-    setPassTargetMode(comboMoveFirst ? false : true);
-  }, [selectedPlayerId, comboMoveFirst]);
+    setLongPassTargetMode(false);
+    setPassTargetMode(!moveFirst);
+  }, [selectedPlayerId]);
+
+  const curvePlayer = useMemo(
+    () => players.find((player) => player.id === selectedPlayerId) ?? null,
+    [players, selectedPlayerId],
+  );
+  const commitCurveCommand = useCallback((command: Command) => {
+    if (!selectedPlayerId) return;
+    setPendingCommands((previous) => {
+      const next = new Map(previous);
+      next.set(selectedPlayerId, command);
+      return next;
+    });
+  }, [selectedPlayerId]);
+  const curve = useCurvePlanner({
+    selectedPlayer: curvePlayer,
+    onCommit: commitCurveCommand,
+    onCommitted: clearSelection,
+  });
 
   const finishSimulation = useCallback((lastFrame: FrameSnapshot, allNewEvents: GameEvent[]) => {
     const goalEvent = allNewEvents.find(e => e.type === GameEventType.GOAL);
@@ -553,6 +580,23 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
+    if (
+      curve.active &&
+      !curve.baseCommand &&
+      selectedPlayerId &&
+      (passTargetMode || longPassTargetMode)
+    ) {
+      curve.setTargetCommand({
+        type: CommandType.PASS,
+        targetPlayerId: playerId,
+        targetPosition: { ...pos },
+        passStyle: longPassTargetMode ? "long" : "ground",
+      });
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      return;
+    }
+
     if (comboActive && selectedPlayerId) {
       if (comboMoveFirst && comboStep === 2) {
         const cmd: Command = {
@@ -595,10 +639,25 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       setComboStoredMove(null);
       setComboStoredPass(null);
     }
-  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove]);
+  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, curve]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
+
+    if (curve.active && !curve.baseCommand) {
+      curve.setTargetCommand(
+        passTargetMode || longPassTargetMode
+          ? {
+              type: CommandType.PASS,
+              targetPosition: pos,
+              passStyle: longPassTargetMode ? "long" : "ground",
+            }
+          : { type: CommandType.MOVE, targetPosition: pos },
+      );
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      return;
+    }
 
     if (comboActive) {
       if (comboMoveFirst) {
@@ -619,7 +678,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       } else if (comboStep === 1) {
         setComboStoredPass({ targetPosition: pos });
         setComboStep(2);
-        setPassTargetMode(true);
+        setPassTargetMode(false);
       } else {
         const cmd: Command = {
           type: CommandType.PASS,
@@ -644,30 +703,51 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
     clearSelection();
-  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection]);
+  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection, curve]);
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      curve.beginAction("shot", { type: CommandType.SHOOT });
+      return;
+    }
     const cmd: Command = { type: CommandType.SHOOT };
     setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     clearSelection();
-  }, [selectedPlayerId, clearSelection]);
+  }, [selectedPlayerId, clearSelection, curve]);
 
   const setPass = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("groundPass");
     setLongPassTargetMode(false);
     setPassTargetMode(true);
-  }, [selectedPlayerId]);
+  }, [selectedPlayerId, curve]);
 
   const setLongPass = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("longPass");
     setPassTargetMode(false);
     setLongPassTargetMode(true);
-  }, [selectedPlayerId]);
+  }, [selectedPlayerId, curve]);
 
   const cancelAction = useCallback(() => {
+    curve.reset();
     clearSelection();
-  }, [clearSelection]);
+  }, [clearSelection, curve]);
+
+  const toggleCurve = useCallback(() => {
+    if (!selectedPlayerId) return;
+    if (!curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      setComboActive(false);
+      curve.arm();
+      return;
+    }
+    curve.handleCurveButton();
+  }, [selectedPlayerId, curve]);
 
   // ── Keyboard shortcuts during planning ───────────────────────────────────
   useEffect(() => {
@@ -687,10 +767,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       switch (e.key) {
         case "1": // Move + Pass
-          if (!comboActive) { setComboMoveFirst(true); startCombo(); }
+          if (!comboActive) { curve.reset(); startCombo(true); }
           break;
         case "2": // Pass + Move
-          if (!comboActive) { setComboMoveFirst(false); startCombo(); }
+          if (!comboActive) { curve.reset(); startCombo(false); }
           break;
         case "3": // Pass
           if (!comboActive && !passTargetMode && !longPassTargetMode) setPass();
@@ -705,7 +785,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [confirmTurn, selectedPlayerId, comboActive, passTargetMode, longPassTargetMode, startCombo, setPass, setLongPass, setShoot]);
+  }, [confirmTurn, selectedPlayerId, comboActive, passTargetMode, longPassTargetMode, startCombo, setPass, setLongPass, setShoot, curve]);
 
   // Always recompute offside from live player positions so the OS flag shows
   // continuously (during both simulation playback and the planning phase)
@@ -722,7 +802,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   }, [currentFrame, players]);
 
   return (
-    <div className="relative min-h-screen flex flex-col" style={{ background: "#070b14" }}>
+    <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
       <div
         className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
@@ -791,6 +871,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode}
+          curveDraft={curve.preview}
+          curveControlMode={curve.placingControls}
           passOriginPos={
             comboActive && comboMoveFirst && comboStep === 2 && comboStoredMove
               ? comboStoredMove
@@ -801,6 +883,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           activePlanningTeam={twoPlayer ? (twoPlayerTurn === "p1" ? "player" : "ai") : undefined}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
+          onCurvePointClick={curve.addControl}
         />
         {isMobile && (
           <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
@@ -831,62 +914,46 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-      </div>
-
-      {/* Controls bottom bar */}
-      <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.55)" }}>
-        {/* Normal action buttons (no pass target mode, no combo) */}
-        {selectedPlayerId && phase === "planning" && !passTargetMode && !longPassTargetMode && !comboActive && (
-          <div className="flex gap-2 px-4 pt-2.5">
-            <button
-              onClick={cancelAction}
-              className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
+        {curve.active && curve.instruction && (
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[92%]">
+            <div
+              className="text-white text-[11px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center"
+              style={{ background: curve.error ? "rgba(185,28,28,0.95)" : "rgba(8,145,178,0.95)" }}
             >
-              ✕
-            </button>
-            <button
-              onClick={setPass}
-              className="flex-1 py-2 rounded-xl text-black text-sm font-bold transition-all active:scale-95"
-              style={{ background: "#ffeb3b" }}
-            >
-              Pass
-            </button>
-            <button
-              onClick={setLongPass}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "linear-gradient(135deg, #0ea5e9, #1d4ed8)" }}
-            >
-              Long Ball
-            </button>
-            <button
-              onClick={startCombo}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "linear-gradient(135deg, #9c27b0, #6a1b9a)" }}
-            >
-              {comboMoveFirst ? "Move+Pass" : "Pass+Move"}
-            </button>
-            <button
-              onClick={setShoot}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "#d32f2f" }}
-            >
-              Shoot
-            </button>
+              {curve.error ?? curve.instruction}
+            </div>
           </div>
         )}
 
-        {/* Combo order toggle + cancel (shown when player selected, not yet in combo) */}
-        {selectedPlayerId && phase === "planning" && !passTargetMode && !longPassTargetMode && !comboActive && (
-          <div className="flex items-center gap-2 px-4 pt-1">
-            <span className="text-[10px] text-gray-600">Combo order:</span>
-            <button
-              onClick={() => setComboMoveFirst(v => !v)}
-              className="text-[10px] px-2 py-0.5 rounded-md font-semibold transition-all"
-              style={{ background: "rgba(156,39,176,0.20)", color: "#ce93d8" }}
-            >
-              {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-            </button>
-          </div>
+        {/* Commentary overlay — bottom of pitch */}
+        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
+          <EventLog events={allEvents} />
+        </div>
+      </div>
+
+      {/* Controls bottom bar */}
+      <div
+        className="flex-shrink-0"
+        style={{
+          background: "rgba(0,0,0,0.62)",
+          paddingBottom: "max(0px, env(safe-area-inset-bottom))",
+        }}
+      >
+        {selectedPlayerId && phase === "planning" && !comboActive && (
+          <MechanicPad
+            onCancel={cancelAction}
+            onPass={setPass}
+            onLongPass={setLongPass}
+            onMovePass={() => { curve.reset(); startCombo(true); }}
+            onPassMove={() => { curve.reset(); startCombo(false); }}
+            onShoot={setShoot}
+            onCurve={toggleCurve}
+            curveActive={curve.active}
+            curveCanFinish={curve.canFinish}
+            curvePointCount={curve.controls.length}
+            curvePointLimit={curve.limit}
+            actionsDisabled={curve.placingControls}
+          />
         )}
 
         {/* Combo in-progress: show cancel */}

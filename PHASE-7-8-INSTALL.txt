@@ -1,0 +1,18 @@
+FTA PHASES 7–8 — MOBILE CONTROLS + CURVE MECHANIC
+
+Required baseline:
+  Phase 6 Management Polish
+
+From the main Replit workspace, run:
+  unzip -o FTA-Phases-7-8-Mobile-Curve-INCREMENTAL.zip && bash apply-phase7-8-mobile-curve.sh
+
+Optional verification:
+  cd artifacts/fta-game && pnpm typecheck && pnpm build
+
+Controls:
+  - Tap Move + Pass for Move → Pass.
+  - Hold Move + Pass for Pass → Move.
+  - Holding Pass and Move + Pass together also activates Pass → Move.
+  - Press Curve, choose an action/target, tap at least two control points,
+    then press Curve again to finish.
+

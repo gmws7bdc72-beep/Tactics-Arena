@@ -3,6 +3,11 @@ import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
 import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import {
+  curvePointLimitForCommand,
+  curveRouteFitsMoveBudget,
+  planTacticalCurve,
+} from "./curve";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -1306,6 +1311,64 @@ function tier3Defense(
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
+function addTacticalCurve(
+  player: SimPlayer,
+  command: Command,
+  opponents: SimPlayer[],
+): Command {
+  const target =
+    command.type === CommandType.SHOOT
+      ? { x: 0, y: PITCH_HEIGHT / 2 }
+      : command.targetPosition;
+  let primary = command;
+
+  if (target) {
+    const mechanic =
+      command.type === CommandType.MOVE
+        ? "move"
+        : command.type === CommandType.SHOOT
+          ? "shot"
+          : command.passStyle === "long"
+            ? "longPass"
+            : "groundPass";
+    const curvePoints = planTacticalCurve(
+      player.position,
+      target,
+      opponents.map((opponent) => opponent.position),
+      {
+        mechanic,
+        maxPoints: curvePointLimitForCommand(player.stats, command),
+      },
+    );
+    const routeAllowed =
+      command.type !== CommandType.MOVE ||
+      !curvePoints ||
+      curveRouteFitsMoveBudget(
+        player.position,
+        curvePoints,
+        target,
+        player.stats.speed,
+      );
+    if (curvePoints && routeAllowed) primary = { ...command, curvePoints };
+  }
+
+  if (
+    primary.type === CommandType.MOVE &&
+    primary.targetPosition &&
+    primary.followUp?.type === CommandType.PASS &&
+    primary.followUp.targetPosition
+  ) {
+    const followUp = addTacticalCurve(
+      { ...player, position: primary.targetPosition },
+      primary.followUp,
+      opponents,
+    );
+    primary = { ...primary, followUp };
+  }
+
+  return primary;
+}
+
 export function generateAICommands(
   aiPlayers: SimPlayer[],
   playerPlayers: SimPlayer[],
@@ -1787,6 +1850,19 @@ export function generateAICommands(
       ballOwner?.id ?? null,
       tactic,
     );
+  }
+
+  // Curves are a tactical response to a blocked lane, never a random flourish.
+  // Applying this after receiver synchronization keeps the curve endpoint and
+  // the receiver's final destination identical.
+  if (ballOwner?.teamId === "ai") {
+    const carrierCommand = commands.get(ballOwner.id);
+    if (carrierCommand) {
+      commands.set(
+        ballOwner.id,
+        addTacticalCurve(ballOwner, carrierCommand, playerPlayers),
+      );
+    }
   }
 
   return commands;
