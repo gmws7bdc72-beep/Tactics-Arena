@@ -15,6 +15,8 @@ import OnlineLobby from "./pages/OnlineLobby";
 import OnlineMatch from "./pages/OnlineMatch";
 import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
+import TransferMarket from "./pages/TransferMarket";
+import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
   getAITeamDef,
@@ -32,6 +34,7 @@ type Screen =
   | "team-setup"
   | "customize"
   | "team-profiles"
+  | "transfer-market"
   | "match"
   | "post-match"
   | "two-player-match"
@@ -89,6 +92,10 @@ function hashToScreen(hash: string): {
 
   if (h === "customize") {
     return { screen: "customize" };
+  }
+
+  if (h === "transfer-market") {
+    return { screen: "transfer-market" };
   }
 
   return { screen: "home" };
@@ -342,29 +349,66 @@ export default function App() {
     return <Pitch3DPreview />;
   }
 
-  if (screen === "home") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
+  const menuScreens: MenuTab[] = ["team-profiles", "team-setup", "home", "transfer-market", "customize"];
+  const isMenuScreen = menuScreens.includes(screen as MenuTab);
+
+  const goToMenuTab = (tab: MenuTab) => {
+    setScreen(tab);
+    if (tab !== "team-setup") setSetupTab("lineup");
+    window.location.hash = tab === "home" ? "#/" : `#/${tab}`;
+  };
+
+  if (isMenuScreen) {
+    let content;
+
+    if (screen === "team-profiles") {
+      content = <TeamProfiles playerTeam={team} onBack={() => goToMenuTab("home")} />;
+    } else if (screen === "team-setup") {
+      content = (
+        <TeamSetup
+          team={team}
+          onSave={(t) => {
+            updateTeam(t);
+            goToMenuTab("home");
+          }}
+          initialTab={setupTab}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
+    } else if (screen === "customize") {
+      content = (
+        <Customize
+          team={team}
+          onSave={(t) => {
+            updateTeam(t);
+            goToMenuTab("home");
+          }}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
+    } else if (screen === "transfer-market") {
+      content = <TransferMarket team={team} league={league} />;
+    } else {
+      content = (
         <Home
           team={team}
           league={league}
           isLeagueComplete={isLeagueComplete}
           onStartMatch={handleStartMatch}
-          onGoToTeamSetup={() => setScreen("team-setup")}
-          onGoToCustomize={() => setScreen("customize")}
+          onGoToTeamSetup={() => goToMenuTab("team-setup")}
+          onGoToCustomize={() => goToMenuTab("customize")}
           onGoToProfiles={handleOpenProfiles}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
         />
-      </div>
-    );
-  }
+      );
+    }
 
-  if (screen === "team-profiles") {
     return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <TeamProfiles playerTeam={team} onBack={() => setScreen("home")} />
+      <div className="mx-auto min-h-screen max-w-md pb-20" style={{ background: "#0a0e1a" }}>
+        {content}
+        <BottomMenuNav active={screen as MenuTab} onChange={goToMenuTab} />
       </div>
     );
   }
@@ -418,37 +462,6 @@ export default function App() {
             setOnlineConfig(null);
             setScreen("home");
           }}
-        />
-      </div>
-    );
-  }
-
-  if (screen === "team-setup") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <TeamSetup
-          team={team}
-          onSave={handleTeamSave}
-          initialTab={setupTab}
-          onBack={() => {
-            setSetupTab("lineup");
-            setScreen("home");
-          }}
-        />
-      </div>
-    );
-  }
-
-  if (screen === "customize") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <Customize
-          team={team}
-          onSave={(t) => {
-            updateTeam(t);
-            setScreen("home");
-          }}
-          onBack={() => setScreen("home")}
         />
       </div>
     );

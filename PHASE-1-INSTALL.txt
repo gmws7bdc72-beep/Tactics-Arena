@@ -1,0 +1,17 @@
+FOOTBALL TACTICS ARENA — FULL RESTART, PHASE 1
+
+Install from the main Replit workspace root:
+
+  unzip -o FTA-Phase-1-Working-Bottom-Menu-RESTART.zip
+  cd artifacts/fta-game
+  pnpm typecheck && pnpm build
+
+This patch adds a persistent five-item bottom menu:
+- Team Profiles
+- Team Setup
+- Play (center football icon; default page)
+- Transfer Market
+- Customize
+
+The original duplicate menu buttons were removed from Home.
+The transfer page is only the navigation foundation for now and is locked for Season 1.

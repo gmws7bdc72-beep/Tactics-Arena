@@ -156,7 +156,7 @@ export default function Home({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-28 space-y-4">
         {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -434,32 +434,6 @@ export default function Home({
             </div>
           </div>
         )}
-
-        {/* Navigation */}
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={onGoToTeamSetup}
-            className="py-3 rounded-xl text-white text-sm font-semibold transition-all hover:bg-white/10 active:scale-95"
-            style={{ background: "rgba(255,255,255,0.06)" }}
-          >
-            Team Setup
-          </button>
-          <button
-            onClick={onGoToCustomize}
-            className="py-3 rounded-xl text-white text-sm font-semibold transition-all hover:bg-white/10 active:scale-95"
-            style={{ background: "rgba(255,255,255,0.06)" }}
-          >
-            Customize
-          </button>
-        </div>
-
-        <button
-          onClick={() => onGoToProfiles()}
-          className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:bg-white/10 active:scale-95"
-          style={{ background: "rgba(0,180,216,0.10)", border: "1px solid rgba(0,180,216,0.25)", color: "#67e8f9" }}
-        >
-          Team Profiles · Stats + Tactics
-        </button>
 
         {/* Restart season */}
         <button
