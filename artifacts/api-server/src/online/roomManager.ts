@@ -1,6 +1,7 @@
 export type TeamRole = "p1" | "p2";
 
 export interface TeamSummary {
+  rulesVersion?: number;
   name: string;
   jerseyColor: string;
   secondaryColor?: string;
@@ -69,6 +70,12 @@ export function joinRoom(
   if (room.phase !== "waiting") return { error: "Game already in progress." };
   if (room.p2) return { error: "Room is full." };
   if (room.p1?.socketId === socketId) return { error: "You cannot join your own room." };
+  if (room.p1?.team.rulesVersion !== team.rulesVersion) {
+    return {
+      error:
+        "This room is using a different gameplay version. Both players need the same update.",
+    };
+  }
 
   room.p2 = { socketId, team, submitted: false, commands: null, ready: false };
   room.phase = "planning";
