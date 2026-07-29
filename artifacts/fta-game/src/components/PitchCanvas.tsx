@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { MouseEvent } from "react";
 import type { FrameSnapshot, TeamConfig, Vec2, Command } from "../engine/types";
 import { CommandType } from "../engine/types";
@@ -634,6 +634,26 @@ export default function PitchCanvas({
   onCurvePointClick,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // FTA_PLAYER_ANIMATION_RESTORED_FINAL
+  // Redraw the canvas at 30 FPS so the stylized 2.5D bodies remain animated.
+  const [animationTick, setAnimationTick] = useState(0);
+
+  useEffect(() => {
+    let frameId = 0;
+    let previousTime = 0;
+
+    const animate = (time: number) => {
+      if (time - previousTime >= 33) {
+        previousTime = time;
+        setAnimationTick((tick) => (tick + 1) % 100000);
+      }
+
+      frameId = requestAnimationFrame(animate);
+    };
+
+    frameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameId);
+  }, []);
 
   const canvasToPitch = useCallback(
     (cx: number, cy: number): Vec2 => {
@@ -1136,7 +1156,7 @@ export default function PitchCanvas({
       (a, b) => view.project(a.position).y - view.project(b.position).y,
     );
 
-    for (const p of players) {
+    for (const [playerIndex, p] of players.entries()) {
       const pos = view.project(p.position);
       const isPlayerTeam = p.teamId === "player";
       const isSelected = p.id === selectedPlayerId;
@@ -1164,13 +1184,26 @@ export default function PitchCanvas({
       const bodyW = r * 1.05;
       const headR = r * 0.42;
 
+      const gait = Math.sin(animationTick * 0.26 + playerIndex * 0.9);
+      const idle = Math.sin(animationTick * 0.08 + playerIndex * 0.7);
+      const isRunning = phase === "simulating";
+      const bob = isRunning
+        ? Math.abs(gait) * r * 0.13
+        : idle * r * 0.035;
+      const legSwing = isRunning ? gait * r * 0.52 : 0;
+      const armSwing = isRunning ? -gait * r * 0.42 : idle * r * 0.04;
+      const drawPos = {
+        x: pos.x,
+        y: pos.y - bob,
+      };
+
       ctx.save();
       ctx.globalAlpha = 0.32;
       ctx.fillStyle = "#000000";
       ctx.beginPath();
       ctx.ellipse(
-        pos.x + r * 0.14,
-        pos.y + r * 0.82,
+        drawPos.x + r * 0.14,
+        drawPos.y + r * 0.82,
         r * 1.15,
         r * 0.38,
         -0.12,
@@ -1187,8 +1220,8 @@ export default function PitchCanvas({
       ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 15 : 4;
       ctx.beginPath();
       ctx.ellipse(
-        pos.x,
-        pos.y + r * 0.7,
+        drawPos.x,
+        drawPos.y + r * 0.7,
         r * 1.18,
         r * 0.45,
         -0.08,
@@ -1204,29 +1237,41 @@ export default function PitchCanvas({
       ctx.lineCap = "round";
 
       ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.22, pos.y + r * 0.45);
-      ctx.lineTo(pos.x - bodyW * 0.48, pos.y + r * 0.95);
-      ctx.moveTo(pos.x + bodyW * 0.22, pos.y + r * 0.45);
-      ctx.lineTo(pos.x + bodyW * 0.42, pos.y + r * 0.98);
+      ctx.moveTo(drawPos.x - bodyW * 0.22, drawPos.y + r * 0.45);
+      ctx.lineTo(
+        drawPos.x - bodyW * 0.48 + legSwing,
+        drawPos.y + r * 0.95,
+      );
+      ctx.moveTo(drawPos.x + bodyW * 0.22, drawPos.y + r * 0.45);
+      ctx.lineTo(
+        drawPos.x + bodyW * 0.42 - legSwing,
+        drawPos.y + r * 0.98,
+      );
       ctx.stroke();
 
       ctx.strokeStyle = secColor;
       ctx.lineWidth = Math.max(2, r * 0.12);
 
       ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.48, pos.y + r * 0.95);
-      ctx.lineTo(pos.x - bodyW * 0.72, pos.y + r * 1);
-      ctx.moveTo(pos.x + bodyW * 0.42, pos.y + r * 0.98);
-      ctx.lineTo(pos.x + bodyW * 0.66, pos.y + r * 1);
+      ctx.moveTo(drawPos.x - bodyW * 0.48, drawPos.y + r * 0.95);
+      ctx.lineTo(
+        drawPos.x - bodyW * 0.72 + legSwing,
+        drawPos.y + r * 1,
+      );
+      ctx.moveTo(drawPos.x + bodyW * 0.42, drawPos.y + r * 0.98);
+      ctx.lineTo(
+        drawPos.x + bodyW * 0.66 - legSwing,
+        drawPos.y + r * 1,
+      );
       ctx.stroke();
 
       ctx.restore();
 
-      const torsoY = pos.y - bodyH * 0.32;
+      const torsoY = drawPos.y - bodyH * 0.32;
       const jerseyGrad = ctx.createLinearGradient(
-        pos.x - bodyW,
+        drawPos.x - bodyW,
         torsoY,
-        pos.x + bodyW,
+        drawPos.x + bodyW,
         torsoY + bodyH,
       );
 
@@ -1241,7 +1286,7 @@ export default function PitchCanvas({
 
       roundedRectPath(
         ctx,
-        pos.x - bodyW / 2,
+        drawPos.x - bodyW / 2,
         torsoY,
         bodyW,
         bodyH * 0.58,
@@ -1257,10 +1302,16 @@ export default function PitchCanvas({
       ctx.lineCap = "round";
 
       ctx.beginPath();
-      ctx.moveTo(pos.x - bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(pos.x - bodyW * 0.76, torsoY + bodyH * 0.38);
-      ctx.moveTo(pos.x + bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(pos.x + bodyW * 0.75, torsoY + bodyH * 0.36);
+      ctx.moveTo(drawPos.x - bodyW * 0.46, torsoY + bodyH * 0.12);
+      ctx.lineTo(
+        drawPos.x - bodyW * 0.76 + armSwing,
+        torsoY + bodyH * 0.38,
+      );
+      ctx.moveTo(drawPos.x + bodyW * 0.46, torsoY + bodyH * 0.12);
+      ctx.lineTo(
+        drawPos.x + bodyW * 0.75 - armSwing,
+        torsoY + bodyH * 0.36,
+      );
       ctx.stroke();
 
       ctx.restore();
@@ -1271,14 +1322,14 @@ export default function PitchCanvas({
       ctx.lineWidth = 1.2;
 
       ctx.beginPath();
-      ctx.arc(pos.x, torsoY - headR * 0.72, headR, 0, Math.PI * 2);
+      ctx.arc(drawPos.x, torsoY - headR * 0.72, headR, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
       ctx.fillStyle = "#1b1714";
       ctx.beginPath();
       ctx.ellipse(
-        pos.x,
+        drawPos.x,
         torsoY - headR * 1.02,
         headR * 0.85,
         headR * 0.35,
@@ -1294,7 +1345,7 @@ export default function PitchCanvas({
       ctx.font = `900 ${Math.round(r * 0.55)}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(p.jerseyNumber), pos.x, torsoY + bodyH * 0.28);
+      ctx.fillText(String(p.jerseyNumber), drawPos.x, torsoY + bodyH * 0.28);
 
       const nameW = clamp(r * 3.3, 28, 54);
       const nameH = clamp(r * 0.7, 8, 13);
@@ -1303,7 +1354,7 @@ export default function PitchCanvas({
       ctx.fillStyle = "rgba(0,0,0,0.72)";
       roundedRectPath(
         ctx,
-        pos.x - nameW / 2,
+        drawPos.x - nameW / 2,
         torsoY - headR * 2.25,
         nameW,
         nameH,
@@ -1317,7 +1368,7 @@ export default function PitchCanvas({
       ctx.textBaseline = "middle";
       ctx.fillText(
         p.name.slice(0, 10),
-        pos.x,
+        drawPos.x,
         torsoY - headR * 2.25 + nameH / 2,
       );
       ctx.restore();
@@ -1329,7 +1380,7 @@ export default function PitchCanvas({
         const fh = r * 0.62;
 
         ctx.fillStyle = "#ff1744";
-        ctx.fillRect(pos.x + r * 0.78, torsoY - headR * 2.2, fw, fh);
+        ctx.fillRect(drawPos.x + r * 0.78, torsoY - headR * 2.2, fw, fh);
 
         ctx.fillStyle = "#fff";
         ctx.font = `900 ${Math.round(fh * 0.55)}px Inter, sans-serif`;
@@ -1337,7 +1388,7 @@ export default function PitchCanvas({
         ctx.textBaseline = "middle";
         ctx.fillText(
           "OS",
-          pos.x + r * 0.78 + fw / 2,
+          drawPos.x + r * 0.78 + fw / 2,
           torsoY - headR * 2.2 + fh / 2,
         );
 
@@ -1446,6 +1497,7 @@ export default function PitchCanvas({
     phase,
     isVertical,
     buildTileMap,
+    animationTick,
   ]);
 
   const handleClick = useCallback(
