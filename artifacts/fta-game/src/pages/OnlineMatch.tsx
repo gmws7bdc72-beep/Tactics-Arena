@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
 import { CommandType, GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
@@ -8,11 +8,14 @@ import {
   PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles, PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
+import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
+import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { getSocket, disconnectSocket } from "../lib/socket";
 
 export interface TeamSummary {
+  rulesVersion: number;
   name: string;
   jerseyColor: string;
   secondaryColor?: string;
@@ -34,6 +37,7 @@ const PLAYBACK_FPS = 60;
 const ONLINE_TURN_TIME = 25;
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
+  const legacyStats = card.stats as PlayerCard["stats"] & { luck?: number };
   return {
     id: `${teamId}_${card.id}`,
     teamId,
@@ -42,7 +46,10 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     velocity: { x: 0, y: 0 },
     startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
-    stats: { ...card.stats },
+    stats: {
+      ...card.stats,
+      movement: legacyStats.movement ?? legacyStats.luck ?? 5,
+    },
     ability: card.ability,
     command: null,
     commandExecuted: false,
@@ -105,6 +112,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const [allEvents, setAllEvents] = useState<GameEvent[]>([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [passTargetMode, setPassTargetMode] = useState(false);
+  const [longPassTargetMode, setLongPassTargetMode] = useState(false);
   const [comboActive, setComboActive] = useState(false);
   const [comboMoveFirst, setComboMoveFirst] = useState(true);
   const [comboStep, setComboStep] = useState<1 | 2>(1);
@@ -120,11 +128,41 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const clearSelection = useCallback(() => {
     setSelectedPlayerId(null);
     setPassTargetMode(false);
+    setLongPassTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
     setComboStoredPass(null);
   }, []);
+
+  const startCombo = useCallback((moveFirst: boolean) => {
+    if (!selectedPlayerId) return;
+    setComboMoveFirst(moveFirst);
+    setComboActive(true);
+    setComboStep(1);
+    setComboStoredMove(null);
+    setComboStoredPass(null);
+    setLongPassTargetMode(false);
+    setPassTargetMode(!moveFirst);
+  }, [selectedPlayerId]);
+
+  const curvePlayer = useMemo(
+    () => players.find((player) => player.id === selectedPlayerId) ?? null,
+    [players, selectedPlayerId],
+  );
+  const commitCurveCommand = useCallback((command: Command) => {
+    if (!selectedPlayerId) return;
+    setPendingCommands((previous) => {
+      const next = new Map(previous);
+      next.set(selectedPlayerId, command);
+      return next;
+    });
+  }, [selectedPlayerId]);
+  const curve = useCurvePlanner({
+    selectedPlayer: curvePlayer,
+    onCommit: commitCurveCommand,
+    onCommitted: clearSelection,
+  });
 
   const stopAnim = useCallback(() => {
     if (animRef.current !== null) {
@@ -303,6 +341,23 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     const player = playersRef.current.find(p => p.id === playerId);
     if (player?.teamId !== myTeamId) return;
 
+    if (
+      curve.active &&
+      !curve.baseCommand &&
+      selectedPlayerId &&
+      (passTargetMode || longPassTargetMode)
+    ) {
+      curve.setTargetCommand({
+        type: CommandType.PASS,
+        targetPlayerId: playerId,
+        targetPosition: { ...pos },
+        passStyle: longPassTargetMode ? "long" : "ground",
+      });
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      return;
+    }
+
     if (comboActive && selectedPlayerId) {
       if (comboMoveFirst && comboStep === 2) {
         const cmd: Command = {
@@ -322,8 +377,13 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       }
     }
 
-    if (passTargetMode && selectedPlayerId) {
-      const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...pos } };
+    if ((passTargetMode || longPassTargetMode) && selectedPlayerId) {
+      const cmd: Command = {
+        type: CommandType.PASS,
+        targetPlayerId: playerId,
+        targetPosition: { ...pos },
+        passStyle: longPassTargetMode ? "long" : "ground",
+      };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
       clearSelection();
       return;
@@ -334,15 +394,31 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     } else {
       setSelectedPlayerId(playerId);
       setPassTargetMode(false);
+      setLongPassTargetMode(false);
       setComboActive(false);
       setComboStep(1);
       setComboStoredMove(null);
       setComboStoredPass(null);
     }
-  }, [passTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, myTeamId]);
+  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, myTeamId, curve]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
+
+    if (curve.active && !curve.baseCommand) {
+      curve.setTargetCommand(
+        passTargetMode || longPassTargetMode
+          ? {
+              type: CommandType.PASS,
+              targetPosition: pos,
+              passStyle: longPassTargetMode ? "long" : "ground",
+            }
+          : { type: CommandType.MOVE, targetPosition: pos },
+      );
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      return;
+    }
 
     if (comboActive) {
       if (comboMoveFirst) {
@@ -362,7 +438,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       } else if (comboStep === 1) {
         setComboStoredPass({ targetPosition: pos });
         setComboStep(2);
-        setPassTargetMode(true);
+        setPassTargetMode(false);
       } else {
         const cmd: Command = {
           type: CommandType.PASS,
@@ -375,24 +451,59 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       return;
     }
 
-    if (passTargetMode) {
-      const cmd: Command = { type: CommandType.PASS, targetPosition: pos };
+    if (passTargetMode || longPassTargetMode) {
+      const cmd: Command = {
+        type: CommandType.PASS,
+        targetPosition: pos,
+        passStyle: longPassTargetMode ? "long" : "ground",
+      };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     } else {
       const cmd: Command = { type: CommandType.MOVE, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
     clearSelection();
-  }, [selectedPlayerId, passTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection]);
+  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection, curve]);
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      curve.beginAction("shot", { type: CommandType.SHOOT });
+      return;
+    }
     setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, { type: CommandType.SHOOT }); return n; });
     clearSelection();
-  }, [selectedPlayerId, clearSelection]);
+  }, [selectedPlayerId, clearSelection, curve]);
 
-  const setPass = useCallback(() => { if (selectedPlayerId) setPassTargetMode(true); }, [selectedPlayerId]);
-  const cancelAction = useCallback(() => clearSelection(), [clearSelection]);
+  const setPass = useCallback(() => {
+    if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("groundPass");
+    setLongPassTargetMode(false);
+    setPassTargetMode(true);
+  }, [selectedPlayerId, curve]);
+  const setLongPass = useCallback(() => {
+    if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("longPass");
+    setPassTargetMode(false);
+    setLongPassTargetMode(true);
+  }, [selectedPlayerId, curve]);
+  const cancelAction = useCallback(() => {
+    curve.reset();
+    clearSelection();
+  }, [clearSelection, curve]);
+  const toggleCurve = useCallback(() => {
+    if (!selectedPlayerId) return;
+    if (!curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      setComboActive(false);
+      curve.arm();
+      return;
+    }
+    curve.handleCurveButton();
+  }, [selectedPlayerId, curve]);
 
   // ── Derived values ────────────────────────────────────────────────────────
   const displayFrame = currentFrame ?? {
@@ -422,30 +533,22 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const tileSize = isMobile ? 32 : 40;
 
   return (
-    <div
-      className={isMobile ? "relative h-[100dvh] w-full overflow-hidden" : "relative min-h-screen flex flex-col"}
-      style={{ background: isMobile ? "#176b36" : "#070b14" }}
-    >
+    <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
-      <div
-        className={isMobile
-          ? "absolute inset-x-2 top-[max(5px,env(safe-area-inset-top))] z-30 flex items-center justify-between rounded-xl border border-white/10 bg-black/70 px-2 py-1 backdrop-blur-sm"
-          : "flex items-center justify-between px-3 py-2 flex-shrink-0"}
-        style={isMobile ? undefined : { background: "rgba(255,255,255,0.04)" }}
-      >
-        <div className={isMobile ? "min-w-0 max-w-[34%] flex items-center gap-1" : "flex flex-col items-center min-w-[80px]"}>
-          <span className={isMobile ? "min-w-0 truncate text-[9px] font-semibold" : "text-xs font-semibold"} style={{ color: p1Team.jerseyColor }}>
+      <div className="flex items-center justify-between px-3 py-2 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
+        <div className="flex flex-col items-center min-w-[80px]">
+          <span className="text-xs font-semibold" style={{ color: p1Team.jerseyColor }}>
             {p1Team.crestIcon ?? "⚽"} {p1Team.name}
             {myRole === "p1" && <span className="ml-1 text-xs opacity-60">(You)</span>}
           </span>
-          <span className={isMobile ? "shrink-0 text-base font-black text-white" : "text-2xl font-black text-white"}>{score.p1}</span>
+          <span className="text-2xl font-black text-white">{score.p1}</span>
         </div>
 
-        <div className={isMobile ? "shrink-0 flex items-center gap-1" : "flex flex-col items-center gap-0.5"}>
-          <div className={isMobile ? "text-[9px] font-bold text-white/55" : "text-xs font-bold text-white opacity-50"}>
+        <div className="flex flex-col items-center gap-0.5">
+          <div className="text-xs font-bold text-white opacity-50">
             {phase === "planning" ? `Turn ${turn}/${maxTurns}` : phase === "waiting" ? "Waiting…" : phase === "simulating" ? "Simulating…" : "Full Time"}
           </div>
-          {phase === "planning" && !isMobile && (
+          {phase === "planning" && (
             <div className="w-20 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.1)" }}>
               <div className="h-full rounded-full transition-all" style={{ width: `${timerPct}%`, background: timerColor }} />
             </div>
@@ -453,24 +556,22 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           {phase === "planning" && (
             <span className="text-xs font-mono font-bold" style={{ color: timerColor }}>{timeLeft}s</span>
           )}
-          {!isMobile && (
-            <span className="text-xs font-mono" style={{ color: "rgba(255,255,255,0.3)" }}>
-              {roomCode}
-            </span>
-          )}
+          <span className="text-xs font-mono" style={{ color: "rgba(255,255,255,0.3)" }}>
+            {roomCode}
+          </span>
         </div>
 
-        <div className={isMobile ? "min-w-0 max-w-[34%] flex flex-row-reverse items-center gap-1" : "flex flex-col items-center min-w-[80px]"}>
-          <span className={isMobile ? "min-w-0 truncate text-right text-[9px] font-semibold" : "text-xs font-semibold"} style={{ color: p2Team.jerseyColor }}>
+        <div className="flex flex-col items-center min-w-[80px]">
+          <span className="text-xs font-semibold" style={{ color: p2Team.jerseyColor }}>
             {p2Team.crestIcon ?? "🆚"} {p2Team.name}
             {myRole === "p2" && <span className="ml-1 text-xs opacity-60">(You)</span>}
           </span>
-          <span className={isMobile ? "shrink-0 text-base font-black text-white" : "text-2xl font-black text-white"}>{score.p2}</span>
+          <span className="text-2xl font-black text-white">{score.p2}</span>
         </div>
       </div>
 
       {/* Pitch */}
-      <div className={isMobile ? "absolute inset-0" : "flex-1 flex flex-col items-center justify-center overflow-hidden"}>
+      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden">
         <PitchCanvas
           frame={displayFrame}
           playerTeam={{ jerseyColor: myTeam.jerseyColor, secondaryColor: myTeam.secondaryColor } as any}
@@ -480,86 +581,62 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           selectedPlayerId={selectedPlayerId}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
-          passTargetMode={passTargetMode}
+          onCurvePointClick={curve.addControl}
+          passTargetMode={passTargetMode || longPassTargetMode}
+          curveDraft={curve.preview}
+          curveControlMode={curve.placingControls}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}
           activePlanningTeam={myTeamId}
           isVertical={isMobile}
-          topDown={isMobile}
-          minimalPitch={isMobile}
         />
       </div>
 
       {/* Status banner */}
       {phase === "waiting" && (
-        <div className={isMobile ? "absolute left-1/2 top-12 z-30 max-w-[calc(100vw-24px)] -translate-x-1/2 truncate rounded-full px-3 py-1 text-[9px] font-semibold" : "flex items-center justify-center py-2 px-4 text-sm font-semibold"}
+        <div className="flex items-center justify-center py-2 px-4 text-sm font-semibold"
           style={{ background: "rgba(234,179,8,0.12)", color: "#fbbf24" }}>
           ✅ Commands locked in — waiting for {oppTeam.name}…
         </div>
       )}
       {phase === "planning" && opponentSubmitted && (
-        <div className={isMobile ? "absolute left-1/2 top-12 z-30 max-w-[calc(100vw-24px)] -translate-x-1/2 truncate rounded-full px-3 py-1 text-[9px] font-semibold" : "flex items-center justify-center py-1 px-4 text-xs font-semibold"}
+        <div className="flex items-center justify-center py-1 px-4 text-xs font-semibold"
           style={{ background: "rgba(34,197,94,0.1)", color: "#86efac" }}>
           {oppTeam.name} is ready — finish your plan!
         </div>
       )}
 
       {/* Action bar */}
-      {isMobile ? (
-        <div className="mobile-safe-bottom absolute inset-x-1 bottom-0 z-30 rounded-t-xl border border-white/10 bg-black/80 p-1 backdrop-blur-sm">
-          {selectedPlayerId && phase === "planning" && !passTargetMode && !comboActive && (
-            <div className="flex items-center gap-1">
-              <button onClick={cancelAction} className="mobile-action-button mobile-action-icon">✕</button>
-              <button onClick={setPass} className="mobile-action-button" style={{ background: "#1d4ed8" }}>Pass</button>
-              <button onClick={setShoot} className="mobile-action-button" style={{ background: "#b45309" }}>Shot</button>
-              <button onClick={() => { setComboMoveFirst(true); setComboActive(true); setComboStep(1); }} className="mobile-action-button" style={{ background: "#7c3aed" }}>M+P</button>
-              <button onClick={() => { setComboMoveFirst(false); setComboActive(true); setComboStep(1); setPassTargetMode(true); }} className="mobile-action-button" style={{ background: "#0f766e" }}>P+M</button>
-            </div>
-          )}
-          {(comboActive || passTargetMode) && phase === "planning" && (
-            <div className="flex items-center gap-1">
-              <button onClick={cancelAction} className="mobile-action-button mobile-action-icon">✕</button>
-              <div className="min-w-0 flex-1 truncate px-1 text-center text-[9px] font-semibold text-white/70">
-                {comboActive ? `Step ${comboStep}/2 · ${comboMoveFirst ? "Move → Pass" : "Pass → Move"}` : "Tap pass target"}
-              </div>
-            </div>
-          )}
-          {phase === "planning" && (
-            <button
-              onClick={confirmTurn}
-              className="mt-1 h-8 w-full truncate rounded-lg text-[10px] font-black text-white"
-              style={{ background: "#16a34a" }}
-            >
-              Confirm
-            </button>
-          )}
-          {(phase === "finished" || opponentLeft) && (
-            <button
-              onClick={() => { disconnectSocket(); onLeave(); }}
-              className="h-8 w-full truncate rounded-lg text-[10px] font-black text-white"
-              style={{ background: "#6b7280" }}
-            >
-              Back to Menu
-            </button>
-          )}
-        </div>
-      ) : (
-      <div className="flex-shrink-0 px-3 py-2" style={{ background: "rgba(255,255,255,0.03)" }}>
+      <div
+        className="flex-shrink-0 px-2 pt-2"
+        style={{
+          background: "rgba(255,255,255,0.03)",
+          paddingBottom: "max(8px, env(safe-area-inset-bottom))",
+        }}
+      >
         {/* Combo banner */}
         {comboActive && (
           <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#a78bfa" }}>
             Combo Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
           </div>
         )}
-        {!comboActive && passTargetMode && (
+        {!comboActive && (passTargetMode || longPassTargetMode) && (
           <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#38bdf8" }}>
-            Tap a tile or player to pass
+            {longPassTargetMode ? "Tap a tile or player to launch a long ball" : "Tap a tile or player to pass"}
+          </div>
+        )}
+        {curve.active && curve.instruction && (
+          <div
+            className="text-center text-xs mb-2 font-semibold"
+            style={{ color: curve.error ? "#fca5a5" : "#67e8f9" }}
+          >
+            {curve.error ?? curve.instruction}
           </div>
         )}
 
         {/* Hint text */}
         <p className="text-center text-xs mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
-          {phase === "planning" && selectedPlayerId && !passTargetMode && !comboActive && "Tap green tile to move · ⚔ orange = tackle"}
-          {phase === "planning" && !comboActive && passTargetMode && "Tap a tile or player to pass"}
+          {phase === "planning" && selectedPlayerId && !passTargetMode && !longPassTargetMode && !comboActive && !curve.active && "Tap green tile to move · ⚔ orange = tackle"}
+          {phase === "planning" && !comboActive && (passTargetMode || longPassTargetMode) && (longPassTargetMode ? "Tap a tile or player to launch a long ball" : "Tap a tile or player to pass")}
           {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
           {phase === "planning" && comboActive && comboMoveFirst && comboStep === 2 && "Now tap pass target (tile or player)"}
           {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 1 && "Tap pass target (tile or player)"}
@@ -568,17 +645,24 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           {phase === "simulating" && "Simulating…"}
         </p>
 
-        {/* Player action buttons */}
-        {selectedPlayerId && phase === "planning" && !passTargetMode && !comboActive && (
-          <div className="flex gap-2 mb-2 justify-center">
-            <button onClick={setPass} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#1d4ed8", color: "#fff" }}>Pass</button>
-            <button onClick={setShoot} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#b45309", color: "#fff" }}>Shoot</button>
-            <button onClick={() => { setComboMoveFirst(true); setComboActive(true); setComboStep(1); }} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#7c3aed", color: "#fff" }}>Move+Pass</button>
-            <button onClick={() => { setComboMoveFirst(false); setComboActive(true); setComboStep(1); setPassTargetMode(true); }} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#0f766e", color: "#fff" }}>Pass+Move</button>
-          </div>
+        {selectedPlayerId && phase === "planning" && !comboActive && (
+          <MechanicPad
+            onCancel={cancelAction}
+            onPass={setPass}
+            onLongPass={setLongPass}
+            onMovePass={() => { curve.reset(); startCombo(true); }}
+            onPassMove={() => { curve.reset(); startCombo(false); }}
+            onShoot={setShoot}
+            onCurve={toggleCurve}
+            curveActive={curve.active}
+            curveCanFinish={curve.canFinish}
+            curvePointCount={curve.controls.length}
+            curvePointLimit={curve.limit}
+            actionsDisabled={curve.placingControls}
+          />
         )}
 
-        {(selectedPlayerId || comboActive || passTargetMode) && phase === "planning" && (
+        {comboActive && phase === "planning" && (
           <div className="flex justify-center mb-2">
             <button onClick={cancelAction} className="px-3 py-1 rounded-lg text-xs" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>Cancel</button>
           </div>
@@ -606,8 +690,6 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           )}
         </div>
       </div>
-
-      )}
 
       {/* Game over overlay */}
       {phase === "finished" && (
@@ -650,11 +732,9 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       )}
 
       {/* Event log */}
-      {!isMobile && (
-        <div className="absolute top-16 right-1 max-w-[180px]">
-          <EventLog events={allEvents} />
-        </div>
-      )}
+      <div className="absolute top-16 right-1 max-w-[180px]">
+        <EventLog events={allEvents} />
+      </div>
     </div>
   );
 }

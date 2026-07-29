@@ -1,3 +1,15 @@
+export type PlayerRole = "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+
+export type KitStyle = "solid" | "vertical-stripes" | "horizontal-stripes" | "diagonal-sash";
+export type SleeveStyle = "primary" | "secondary" | "split";
+
+export interface PlayerAppearance {
+  skinTone: string;
+  hairColor: string;
+  hairStyle: "short" | "fade" | "curly" | "mohawk" | "bald" | "dreadlocks";
+  facialHair: "none" | "stubble" | "goatee" | "full";
+}
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -30,9 +42,12 @@ export interface Command {
   type: CommandType;
   targetPosition?: Vec2;
   targetPlayerId?: string;
-  /** Chained route points used by curved dribbles, passes, long balls, and shots. */
-  curvePoints?: Vec2[];
   followUp?: Command;
+  /**
+   * Ordered intermediate handles for a curved action. The origin and final
+   * targetPosition are implicit and do not consume the player's point limit.
+   */
+  curvePoints?: Vec2[];
   /** When true the pass is a planned coordinated play — skip accuracy deviation so
    *  the ball lands exactly on the announced tile, matching the runner's move target. */
   coordinated?: boolean;
@@ -55,6 +70,39 @@ export interface PlayerStats {
   vision: number;
   longPassing: number;
   aerial: number;
+}
+
+
+export type TrainingFocus =
+  | "balanced"
+  | "passing"
+  | "shooting"
+  | "longPassing"
+  | "defending"
+  | "goalkeeping"
+  | "movement";
+
+export interface DevelopmentHistoryEntry {
+  season: number;
+  week: number;
+  focus: TrainingFocus;
+  progressGain: number;
+  statGains: Partial<Record<keyof PlayerStats, number>>;
+  overallBefore: number;
+  overallAfter: number;
+  moraleAfter: number;
+}
+
+export interface PlayerDevelopment {
+  focus: TrainingFocus;
+  potential: number;
+  morale: number;
+  progress: number;
+  totalGrowth: number;
+  seasonGrowth: number;
+  lastWeekGrowth: number;
+  lastTrainedWeek: number;
+  history: DevelopmentHistoryEntry[];
 }
 
 export type TeamTacticId =
@@ -110,10 +158,19 @@ export interface Ability {
 export interface PlayerCard {
   id: string;
   name: string;
-  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+  role: PlayerRole;
   stats: PlayerStats;
   ability: AbilityId;
   jerseyNumber: number;
+  appearance?: PlayerAppearance;
+  age?: number;
+  potential?: number;
+  marketValue?: number;
+  weeklyWage?: number;
+  marketStatus?: "available" | "listed" | "not_for_sale" | "untouchable";
+  clubId?: string;
+  askingPrice?: number;
+  development?: PlayerDevelopment;
 }
 
 export interface SimPlayer {
@@ -133,7 +190,15 @@ export interface SimPlayer {
   recoveryTimer: number;
   name: string;
   jerseyNumber: number;
-  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+  role: PlayerRole;
+  appearance?: PlayerAppearance;
+  /** Runtime arc-length cursor for a curved MOVE command. */
+  curveMotion?: {
+    points: Vec2[];
+    index: number;
+    travelled: number;
+    totalLength: number;
+  };
 }
 
 export interface SimBall {
@@ -147,8 +212,13 @@ export interface SimBall {
   height?: number;
   passStyle?: PassStyle;
   passStart?: Vec2;
-  /** Remaining route points for a curved pass/shot. The final point is passTarget. */
-  curvePoints?: Vec2[];
+  /** Runtime arc-length cursor for curved passes and shots. */
+  curveMotion?: {
+    points: Vec2[];
+    index: number;
+    travelled: number;
+    totalLength: number;
+  };
 }
 
 export enum GameEventType {
@@ -182,9 +252,13 @@ export interface FrameSnapshot {
     position: Vec2;
     velocity: Vec2;
     state: PlayerState;
+    stateTimer?: number;
+    actionPassStyle?: PassStyle;
+    actionTarget?: Vec2;
     name: string;
     jerseyNumber: number;
-    role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
+    role: PlayerRole;
+    appearance?: PlayerAppearance;
     tileRange: number;
     offside?: boolean;
   }[];
@@ -196,7 +270,6 @@ export interface FrameSnapshot {
     passTarget?: Vec2;
     height?: number;
     passStyle?: PassStyle;
-    curvePoints?: Vec2[];
   };
   events: GameEvent[];
 }
@@ -211,10 +284,13 @@ export interface TeamConfig {
   name: string;
   jerseyColor: string;
   secondaryColor: string;
+  kitStyle?: KitStyle;
+  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   players: PlayerCard[];
   formationId: string;
   startPositions: Vec2[];
+  trainingIntensity?: "light" | "balanced" | "intense";
 }
 
 export interface LeagueTeamEntry {
@@ -275,6 +351,9 @@ export interface LeagueState {
   aiSchedule?: [string, string][];
   aiMatchIndex?: number;
   lastMatchdayResults?: MatchdayResult[];
+  season?: number;
+  trainingWeek?: number;
+  aiSquads?: Record<string, PlayerCard[]>;
 }
 
 export interface SavedMatchState {

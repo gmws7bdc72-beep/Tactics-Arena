@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+// @ts-expect-error three@0.170 does not expose declarations in this workspace.
 import * as THREE from "three";
 
 interface Ball3DProps {
@@ -51,13 +52,22 @@ function createBallTexture(): THREE.CanvasTexture {
   return texture;
 }
 
-export function Ball3D({ x, y = 0, z, radius = 0.11, active = false }: Ball3DProps) {
+export function Ball3D({
+  x,
+  y = 0,
+  z,
+  radius = 0.11,
+  active = false,
+}: Ball3DProps) {
   const texture = useMemo(() => createBallTexture(), []);
 
   return (
     <group position={[x, y + radius, z]}>
       {active && (
-        <mesh position={[0, -y - radius + 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh
+          position={[0, -y - radius + 0.015, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
           <ringGeometry args={[radius * 1.4, radius * 2.1, 32]} />
           <meshBasicMaterial color="#ff3d3d" transparent opacity={0.7} />
         </mesh>

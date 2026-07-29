@@ -2,7 +2,12 @@ import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, speedToTiles, movementToCurvePoints, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_H } from "./constants";
+import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import {
+  curvePointLimitForCommand,
+  curveRouteFitsMoveBudget,
+  planTacticalCurve,
+} from "./curve";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -129,82 +134,6 @@ function chebDist(a: TilePos, b: TilePos): number {
 
 function eucDist(a: Vec2, b: Vec2): number {
   return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
-}
-
-/**
- * Add a curve only when a defender meaningfully blocks the direct lane.
- * This is deterministic tactical routing, not random curve usage.
- */
-function addSmartCurve(
-  player: SimPlayer,
-  command: Command,
-  opponents: SimPlayer[],
-  hasBall: boolean,
-): Command {
-  if (!hasBall || command.curvePoints?.length) return command;
-  if (command.type !== CommandType.MOVE && command.type !== CommandType.PASS && command.type !== CommandType.SHOOT) {
-    return command;
-  }
-
-  const start = player.position;
-  const target = command.type === CommandType.SHOOT
-    ? { x: 0, y: PITCH_HEIGHT / 2 }
-    : command.targetPosition;
-
-  if (!target || eucDist(start, target) < TILE_H * 1.2) return command;
-
-  const dx = target.x - start.x;
-  const dy = target.y - start.y;
-  const lengthSq = dx * dx + dy * dy;
-  if (lengthSq < 1) return command;
-
-  let blocker: { player: SimPlayer; t: number; distance: number; projection: Vec2 } | null = null;
-
-  for (const opponent of opponents) {
-    const ox = opponent.position.x - start.x;
-    const oy = opponent.position.y - start.y;
-    const t = Math.max(0, Math.min(1, (ox * dx + oy * dy) / lengthSq));
-    if (t < 0.15 || t > 0.88) continue;
-
-    const projection = { x: start.x + dx * t, y: start.y + dy * t };
-    const distance = eucDist(opponent.position, projection);
-    const laneWidth = command.type === CommandType.MOVE ? TILE_H * 0.72 : TILE_H * 0.58;
-    if (distance > laneWidth) continue;
-
-    if (!blocker || distance < blocker.distance) {
-      blocker = { player: opponent, t, distance, projection };
-    }
-  }
-
-  if (!blocker) return command;
-
-  const length = Math.sqrt(lengthSq);
-  const perpendicular = { x: -dy / length, y: dx / length };
-  const offset = command.type === CommandType.MOVE ? TILE_H * 1.05 : TILE_H * 0.88;
-
-  const candidates = [-1, 1].map((side) => ({
-    x: Math.max(8, Math.min(PITCH_WIDTH - 8, blocker!.projection.x + perpendicular.x * offset * side)),
-    y: Math.max(8, Math.min(PITCH_HEIGHT - 8, blocker!.projection.y + perpendicular.y * offset * side)),
-  }));
-
-  const congestion = (point: Vec2) => opponents.reduce((score, opponent) => {
-    const distance = Math.max(18, eucDist(point, opponent.position));
-    return score + 1 / distance;
-  }, 0);
-
-  const control = congestion(candidates[0]) <= congestion(candidates[1])
-    ? candidates[0]
-    : candidates[1];
-
-  const allowed = movementToCurvePoints(player.stats.movement);
-  const route = [control, { ...target }].slice(0, allowed);
-  if (route.length < 2) return command;
-
-  return {
-    ...command,
-    targetPosition: { ...target },
-    curvePoints: route,
-  };
 }
 
 function moveStep(
@@ -1382,6 +1311,64 @@ function tier3Defense(
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
+function addTacticalCurve(
+  player: SimPlayer,
+  command: Command,
+  opponents: SimPlayer[],
+): Command {
+  const target =
+    command.type === CommandType.SHOOT
+      ? { x: 0, y: PITCH_HEIGHT / 2 }
+      : command.targetPosition;
+  let primary = command;
+
+  if (target) {
+    const mechanic =
+      command.type === CommandType.MOVE
+        ? "move"
+        : command.type === CommandType.SHOOT
+          ? "shot"
+          : command.passStyle === "long"
+            ? "longPass"
+            : "groundPass";
+    const curvePoints = planTacticalCurve(
+      player.position,
+      target,
+      opponents.map((opponent) => opponent.position),
+      {
+        mechanic,
+        maxPoints: curvePointLimitForCommand(player.stats, command),
+      },
+    );
+    const routeAllowed =
+      command.type !== CommandType.MOVE ||
+      !curvePoints ||
+      curveRouteFitsMoveBudget(
+        player.position,
+        curvePoints,
+        target,
+        player.stats.speed,
+      );
+    if (curvePoints && routeAllowed) primary = { ...command, curvePoints };
+  }
+
+  if (
+    primary.type === CommandType.MOVE &&
+    primary.targetPosition &&
+    primary.followUp?.type === CommandType.PASS &&
+    primary.followUp.targetPosition
+  ) {
+    const followUp = addTacticalCurve(
+      { ...player, position: primary.targetPosition },
+      primary.followUp,
+      opponents,
+    );
+    primary = { ...primary, followUp };
+  }
+
+  return primary;
+}
+
 export function generateAICommands(
   aiPlayers: SimPlayer[],
   playerPlayers: SimPlayer[],
@@ -1863,14 +1850,17 @@ export function generateAICommands(
       ballOwner?.id ?? null,
       tactic,
     );
+  }
 
-    // Curve only when the direct lane is blocked. The ball carrier decides from geometry.
-    for (const player of aiPlayers) {
-      const command = commands.get(player.id);
-      if (!command) continue;
+  // Curves are a tactical response to a blocked lane, never a random flourish.
+  // Applying this after receiver synchronization keeps the curve endpoint and
+  // the receiver's final destination identical.
+  if (ballOwner?.teamId === "ai") {
+    const carrierCommand = commands.get(ballOwner.id);
+    if (carrierCommand) {
       commands.set(
-        player.id,
-        addSmartCurve(player, command, playerPlayers, player.id === ball.ownerId),
+        ballOwner.id,
+        addTacticalCurve(ballOwner, carrierCommand, playerPlayers),
       );
     }
   }

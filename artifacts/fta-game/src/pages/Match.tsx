@@ -7,10 +7,12 @@ import { generateAICommands } from "../engine/ai";
 import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById, getFormationById } from "../game/formations";
-import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, movementToCurvePoints, TILE_H, GRID_ROWS, PLAYERS_PER_TEAM } from "../engine/constants";
+import { PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, GOALS_TO_WIN, speedToTiles, TILE_H, GRID_ROWS, PLAYERS_PER_TEAM } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
+import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
+import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
 
 interface Props {
@@ -24,6 +26,7 @@ interface Props {
 }
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
+  const legacyStats = card.stats as PlayerCard["stats"] & { luck?: number };
   return {
     id: `${teamId}_${card.id}`,
     teamId,
@@ -32,7 +35,10 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     velocity: { x: 0, y: 0 },
     startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
-    stats: { ...card.stats },
+    stats: {
+      ...card.stats,
+      movement: legacyStats.movement ?? legacyStats.luck ?? 5,
+    },
     ability: card.ability,
     command: null,
     commandExecuted: false,
@@ -158,11 +164,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const [comboStoredMove, setComboStoredMove] = useState<Vec2 | null>(savedMatch?.comboStoredMove ?? null);
   const [comboStoredPass, setComboStoredPass] = useState<{ targetPosition?: Vec2; targetPlayerId?: string } | null>(savedMatch?.comboStoredPass ?? null);
 
-  // Curve planner: choose an action, then chain up to the player's Movement limit.
-  const [curveMode, setCurveMode] = useState(false);
-  const [curveAction, setCurveAction] = useState<"move" | "pass" | "long" | "shoot">("move");
-  const [curvePoints, setCurvePoints] = useState<Vec2[]>([]);
-
   // 2-player sequential turn tracking: P1 plans first, then P2.
   const [twoPlayerTurn, setTwoPlayerTurn] = useState<"p1" | "p2">("p1");
   const twoPlayerTurnRef = useRef<"p1" | "p2">("p1");
@@ -281,66 +282,36 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     setComboStep(1);
     setComboStoredMove(null);
     setComboStoredPass(null);
-    setCurveMode(false);
-    setCurveAction("move");
-    setCurvePoints([]);
   }, []);
 
-  const selectedSimPlayer = selectedPlayerId
-    ? players.find((player) => player.id === selectedPlayerId) ?? null
-    : null;
-  const curvePointLimit = selectedSimPlayer
-    ? movementToCurvePoints(selectedSimPlayer.stats.movement)
-    : 0;
-
-  const startCurve = useCallback((action: "move" | "pass" | "long" | "shoot" = "move") => {
+  const startCombo = useCallback((moveFirst: boolean) => {
     if (!selectedPlayerId) return;
-    setCurveMode(true);
-    setCurveAction(action);
-    setCurvePoints([]);
-    setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setComboActive(false);
+    setComboMoveFirst(moveFirst);
+    setComboActive(true);
     setComboStep(1);
     setComboStoredMove(null);
     setComboStoredPass(null);
+    setLongPassTargetMode(false);
+    setPassTargetMode(!moveFirst);
   }, [selectedPlayerId]);
 
-  const commitCurve = useCallback(() => {
-    if (!selectedPlayerId || curvePoints.length === 0) return;
-    const points = curvePoints.map((point) => ({ ...point }));
-    const targetPosition = points[points.length - 1];
-    const command: Command = curveAction === "move"
-      ? { type: CommandType.MOVE, targetPosition, curvePoints: points }
-      : curveAction === "shoot"
-        ? { type: CommandType.SHOOT, targetPosition, curvePoints: points }
-        : {
-            type: CommandType.PASS,
-            targetPosition,
-            curvePoints: points,
-            passStyle: curveAction === "long" ? "long" : "ground",
-          };
-
+  const curvePlayer = useMemo(
+    () => players.find((player) => player.id === selectedPlayerId) ?? null,
+    [players, selectedPlayerId],
+  );
+  const commitCurveCommand = useCallback((command: Command) => {
+    if (!selectedPlayerId) return;
     setPendingCommands((previous) => {
       const next = new Map(previous);
       next.set(selectedPlayerId, command);
       return next;
     });
-    clearSelection();
-  }, [selectedPlayerId, curvePoints, curveAction, clearSelection]);
-
-  const undoCurvePoint = useCallback(() => {
-    setCurvePoints((points) => points.slice(0, -1));
-  }, []);
-
-  const startCombo = useCallback(() => {
-    if (!selectedPlayerId) return;
-    setComboActive(true);
-    setComboStep(1);
-    setComboStoredMove(null);
-    setComboStoredPass(null);
-    setPassTargetMode(comboMoveFirst ? false : true);
-  }, [selectedPlayerId, comboMoveFirst]);
+  }, [selectedPlayerId]);
+  const curve = useCurvePlanner({
+    selectedPlayer: curvePlayer,
+    onCommit: commitCurveCommand,
+    onCommitted: clearSelection,
+  });
 
   const finishSimulation = useCallback((lastFrame: FrameSnapshot, allNewEvents: GameEvent[]) => {
     const goalEvent = allNewEvents.find(e => e.type === GameEventType.GOAL);
@@ -609,13 +580,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
-    if (curveMode && selectedPlayerId) {
-      if (playerId === selectedPlayerId) return;
-      const planner = playersRef.current.find((player) => player.id === selectedPlayerId);
-      const limit = planner ? movementToCurvePoints(planner.stats.movement) : 2;
-      setCurvePoints((points) =>
-        points.length >= limit ? points : [...points, { ...pos }],
-      );
+    if (
+      curve.active &&
+      !curve.baseCommand &&
+      selectedPlayerId &&
+      (passTargetMode || longPassTargetMode)
+    ) {
+      curve.setTargetCommand({
+        type: CommandType.PASS,
+        targetPlayerId: playerId,
+        targetPosition: { ...pos },
+        passStyle: longPassTargetMode ? "long" : "ground",
+      });
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
       return;
     }
 
@@ -661,17 +639,23 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       setComboStoredMove(null);
       setComboStoredPass(null);
     }
-  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, curveMode]);
+  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, curve]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
-    if (curveMode) {
-      const planner = playersRef.current.find((player) => player.id === selectedPlayerId);
-      const limit = planner ? movementToCurvePoints(planner.stats.movement) : 2;
-      setCurvePoints((points) =>
-        points.length >= limit ? points : [...points, { ...pos }],
+    if (curve.active && !curve.baseCommand) {
+      curve.setTargetCommand(
+        passTargetMode || longPassTargetMode
+          ? {
+              type: CommandType.PASS,
+              targetPosition: pos,
+              passStyle: longPassTargetMode ? "long" : "ground",
+            }
+          : { type: CommandType.MOVE, targetPosition: pos },
       );
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
       return;
     }
 
@@ -694,7 +678,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       } else if (comboStep === 1) {
         setComboStoredPass({ targetPosition: pos });
         setComboStep(2);
-        setPassTargetMode(true);
+        setPassTargetMode(false);
       } else {
         const cmd: Command = {
           type: CommandType.PASS,
@@ -719,30 +703,51 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
     clearSelection();
-  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection, curveMode]);
+  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection, curve]);
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      curve.beginAction("shot", { type: CommandType.SHOOT });
+      return;
+    }
     const cmd: Command = { type: CommandType.SHOOT };
     setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     clearSelection();
-  }, [selectedPlayerId, clearSelection]);
+  }, [selectedPlayerId, clearSelection, curve]);
 
   const setPass = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("groundPass");
     setLongPassTargetMode(false);
     setPassTargetMode(true);
-  }, [selectedPlayerId]);
+  }, [selectedPlayerId, curve]);
 
   const setLongPass = useCallback(() => {
     if (!selectedPlayerId) return;
+    if (curve.active) curve.beginAction("longPass");
     setPassTargetMode(false);
     setLongPassTargetMode(true);
-  }, [selectedPlayerId]);
+  }, [selectedPlayerId, curve]);
 
   const cancelAction = useCallback(() => {
+    curve.reset();
     clearSelection();
-  }, [clearSelection]);
+  }, [clearSelection, curve]);
+
+  const toggleCurve = useCallback(() => {
+    if (!selectedPlayerId) return;
+    if (!curve.active) {
+      setPassTargetMode(false);
+      setLongPassTargetMode(false);
+      setComboActive(false);
+      curve.arm();
+      return;
+    }
+    curve.handleCurveButton();
+  }, [selectedPlayerId, curve]);
 
   // ── Keyboard shortcuts during planning ───────────────────────────────────
   useEffect(() => {
@@ -762,10 +767,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       switch (e.key) {
         case "1": // Move + Pass
-          if (!comboActive) { setComboMoveFirst(true); startCombo(); }
+          if (!comboActive) { curve.reset(); startCombo(true); }
           break;
         case "2": // Pass + Move
-          if (!comboActive) { setComboMoveFirst(false); startCombo(); }
+          if (!comboActive) { curve.reset(); startCombo(false); }
           break;
         case "3": // Pass
           if (!comboActive && !passTargetMode && !longPassTargetMode) setPass();
@@ -780,7 +785,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [confirmTurn, selectedPlayerId, comboActive, passTargetMode, longPassTargetMode, startCombo, setPass, setLongPass, setShoot]);
+  }, [confirmTurn, selectedPlayerId, comboActive, passTargetMode, longPassTargetMode, startCombo, setPass, setLongPass, setShoot, curve]);
 
   // Always recompute offside from live player positions so the OS flag shows
   // continuously (during both simulation playback and the planning phase)
@@ -797,79 +802,52 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   }, [currentFrame, players]);
 
   return (
-    <div
-      className={isMobile ? "relative h-[100dvh] w-full overflow-hidden" : "relative min-h-screen flex flex-col"}
-      style={{ background: isMobile ? "#176b36" : "#070b14" }}
-    >
-      {/* Score and match status. On phones this floats over the pitch instead of consuming height. */}
-      {isMobile ? (
-        <div className="absolute left-1/2 top-[max(5px,env(safe-area-inset-top))] z-30 flex -translate-x-1/2 items-center gap-1.5 rounded-xl border border-white/10 bg-black/70 px-2 py-1 shadow-lg backdrop-blur-sm max-w-[calc(100vw-54px)]">
-          <button
-            onClick={onForfeit}
-            className="mobile-icon-button absolute -left-10 top-0 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/65 text-xs text-white/70"
-            aria-label="Leave match"
-          >
-            ✕
-          </button>
-          <div className="min-w-0 max-w-[100px] truncate text-[10px] font-semibold text-white/85">
-            {twoPlayer ? <span style={{ color: p1JerseyColor }}>● P1</span> : <>{team.crestIcon} {team.name}</>}
+    <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
+      {/* Top bar */}
+      <div
+        className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
+        style={{ background: "rgba(255,255,255,0.04)" }}
+      >
+        <button onClick={onForfeit} className="text-gray-500 hover:text-white transition-colors text-sm px-2 py-1">
+          ✕
+        </button>
+        <div className="flex items-center gap-5">
+          <div className="text-center min-w-20">
+            <div className="text-xs text-gray-400 truncate">
+              {twoPlayer ? <span style={{ color: p1JerseyColor }}>● P1</span> : <>{team.crestIcon} {team.name}</>}
+            </div>
+            <div className="text-white font-black text-3xl leading-none">{score.player}</div>
+            <GoalDots filled={score.player} total={GOALS_TO_WIN} />
           </div>
-          <span className="text-base font-black leading-none text-white">{score.player}</span>
-          <span className="text-[9px] font-semibold text-white/45">–</span>
-          <span className="text-base font-black leading-none text-white">{score.ai}</span>
-          <div className="min-w-0 max-w-[100px] truncate text-right text-[10px] font-semibold text-white/85">
-            {twoPlayer ? <span style={{ color: effectiveAiColor }}>P2 ●</span> : <>{opponentTeamDef.crestIcon} {opponentTeamDef.name}</>}
+          <div className="text-center">
+            <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
+            {phase === "simulating" && <div className="text-[#00e676] text-sm">▶</div>}
+            {phase === "finished" && <div className="text-gray-500 text-xs">FT</div>}
+            <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
           </div>
-          <span className="ml-1 shrink-0 text-[9px] text-white/45">T{turn}/{MAX_MATCH_TURNS}</span>
-          {phase === "simulating" && <span className="shrink-0 text-[10px] text-[#00e676]">▶</span>}
-          {phase === "finished" && <span className="shrink-0 text-[9px] text-white/50">FT</span>}
+          <div className="text-center min-w-20">
+            <div className="text-xs text-gray-400 truncate">
+              {twoPlayer ? <span style={{ color: effectiveAiColor }}>● P2</span> : <>{opponentTeamDef.crestIcon} {opponentTeamDef.name}</>}
+            </div>
+            <div className="text-white font-black text-3xl leading-none">{score.ai}</div>
+            <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
+          </div>
         </div>
-      ) : (
-        <div
-          className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
-          style={{ background: "rgba(255,255,255,0.04)" }}
-        >
-          <button onClick={onForfeit} className="text-gray-500 hover:text-white transition-colors text-sm px-2 py-1">
-            ✕
-          </button>
-          <div className="flex items-center gap-5">
-            <div className="text-center min-w-20">
-              <div className="text-xs text-gray-400 truncate">
-                {twoPlayer ? <span style={{ color: p1JerseyColor }}>● P1</span> : <>{team.crestIcon} {team.name}</>}
-              </div>
-              <div className="text-white font-black text-3xl leading-none">{score.player}</div>
-              <GoalDots filled={score.player} total={GOALS_TO_WIN} />
-            </div>
-            <div className="text-center">
-              <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
-              {phase === "simulating" && <div className="text-[#00e676] text-sm">▶</div>}
-              {phase === "finished" && <div className="text-gray-500 text-xs">FT</div>}
-              <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
-            </div>
-            <div className="text-center min-w-20">
-              <div className="text-xs text-gray-400 truncate">
-                {twoPlayer ? <span style={{ color: effectiveAiColor }}>● P2</span> : <>{opponentTeamDef.crestIcon} {opponentTeamDef.name}</>}
-              </div>
-              <div className="text-white font-black text-3xl leading-none">{score.ai}</div>
-              <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
-            </div>
-          </div>
-          <div className="w-8" />
-        </div>
-      )}
+        <div className="w-8" />
+      </div>
 
       {/* Goal banner */}
       {showGoalBanner && (
         <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
           <div
-            className={isMobile ? "max-w-[80vw] px-6 py-4 rounded-2xl text-center animate-bounce" : "px-12 py-6 rounded-3xl text-center animate-bounce"}
+            className="px-12 py-6 rounded-3xl text-center animate-bounce"
             style={{
               background: showGoalBanner === "player" ? "rgba(0,230,118,0.94)" : "rgba(255,82,82,0.94)",
               boxShadow: showGoalBanner === "player" ? "0 0 80px rgba(0,230,118,0.5)" : "0 0 80px rgba(255,82,82,0.5)",
             }}
           >
-            <div className={isMobile ? "text-2xl font-black text-white" : "text-4xl font-black text-white"}>⚽ GOAL!</div>
-            <div className={isMobile ? "max-w-[68vw] truncate text-white text-xs font-bold mt-1" : "text-white text-lg font-bold mt-1"}>
+            <div className="text-4xl font-black text-white">⚽ GOAL!</div>
+            <div className="text-white text-lg font-bold mt-1">
               {showGoalBanner === "player"
                 ? (twoPlayer ? "Player 1" : team.name)
                 : (twoPlayer ? "Player 2" : opponentTeamDef.name)}
@@ -879,10 +857,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       )}
 
       {/* Pitch */}
-      <div
-        className={isMobile ? "absolute inset-0" : "flex-1 relative"}
-        style={{ minHeight: 0, padding: isMobile ? 0 : "4px 4px 0" }}
-      >
+      <div className="flex-1 relative" style={{ minHeight: 0, padding: "4px 4px 0" }}>
+        {isMobile && (
+          <div className="absolute top-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <span className="text-[10px] text-white/40 font-semibold tracking-wide">▲ Attacking</span>
+          </div>
+        )}
         <PitchCanvas
           frame={liveFrame}
           playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
@@ -891,6 +871,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode}
+          curveDraft={curve.preview}
+          curveControlMode={curve.placingControls}
           passOriginPos={
             comboActive && comboMoveFirst && comboStep === 2 && comboStoredMove
               ? comboStoredMove
@@ -898,28 +880,21 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           }
           phase={phase}
           isVertical={isMobile}
-          topDown={isMobile}
-          minimalPitch={isMobile}
-          curveMode={curveMode}
-          curveDraftPoints={curvePoints}
-          curvePointLimit={curvePointLimit}
           activePlanningTeam={twoPlayer ? (twoPlayerTurn === "p1" ? "player" : "ai") : undefined}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
+          onCurvePointClick={curve.addControl}
         />
-        {/* Compact action guidance; kept narrow enough to fit small phones. */}
-        {curveMode && (
-          <div className={isMobile ? "absolute left-1/2 top-12 z-20 w-[calc(100%-24px)] max-w-sm -translate-x-1/2 text-center" : "absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none"}>
-            <div className="inline-block max-w-full rounded-full bg-cyan-500/90 px-3 py-1 text-[10px] font-bold leading-tight text-white shadow-lg whitespace-normal break-words">
-              {curveAction === "move" ? "Move" : curveAction === "pass" ? "Pass" : curveAction === "long" ? "Long ball" : "Shot"} curve · tap up to {curvePointLimit} points ({curvePoints.length}/{curvePointLimit})
-            </div>
+        {isMobile && (
+          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <span className="text-[10px] text-white/40 font-semibold tracking-wide">▼ Your Goal</span>
           </div>
         )}
 
         {/* Combo hint banner */}
         {comboActive && (
-          <div className={isMobile ? "absolute left-1/2 top-12 z-20 w-[calc(100%-24px)] max-w-sm -translate-x-1/2 text-center pointer-events-none" : "absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none"}>
-            <div className="inline-block max-w-full bg-purple-500/90 text-white text-[10px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center whitespace-normal break-words">
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+            <div className="bg-purple-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center whitespace-nowrap">
               {comboMoveFirst
                 ? comboStep === 1 ? "Combo: tap move destination" : "Combo: tap pass target"
                 : comboStep === 1 ? "Combo: tap pass target" : "Combo: tap move destination"}
@@ -929,7 +904,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
         {!comboActive && (passTargetMode || longPassTargetMode) && (
           <div
-            className={isMobile ? "absolute left-1/2 top-12 z-20 w-[calc(100%-24px)] max-w-sm -translate-x-1/2 rounded-full px-3 py-1.5 text-center text-[10px] font-bold leading-tight pointer-events-none shadow-lg whitespace-normal break-words" : "absolute top-2 left-1/2 -translate-x-1/2 text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg"}
+            className="absolute top-2 left-1/2 -translate-x-1/2 text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg"
             style={{
               background: longPassTargetMode ? "rgba(14,165,233,0.94)" : "rgba(250,204,21,0.94)",
               color: longPassTargetMode ? "white" : "black",
@@ -939,139 +914,46 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        {/* Commentary stays off the phone pitch so gameplay remains pitch-only. */}
-        {!isMobile && (
-          <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
-            <EventLog events={allEvents} />
+        {curve.active && curve.instruction && (
+          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[92%]">
+            <div
+              className="text-white text-[11px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center"
+              style={{ background: curve.error ? "rgba(185,28,28,0.95)" : "rgba(8,145,178,0.95)" }}
+            >
+              {curve.error ?? curve.instruction}
+            </div>
           </div>
         )}
+
+        {/* Commentary overlay — bottom of pitch */}
+        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
+          <EventLog events={allEvents} />
+        </div>
       </div>
 
-      {/* Compact mobile action dock: one shallow row over the pitch, never a 2×2 panel. */}
-      {isMobile && phase === "planning" && (
-        <>
-          {twoPlayer && (
-            <div
-              className="pointer-events-none absolute left-1/2 z-30 max-w-[calc(100vw-32px)] -translate-x-1/2 truncate rounded-lg border px-2 py-1 text-center text-[9px] font-bold"
-              style={{
-                bottom: selectedPlayerId ? "calc(max(48px, env(safe-area-inset-bottom) + 42px))" : "calc(max(48px, env(safe-area-inset-bottom) + 42px))",
-                background: twoPlayerTurn === "p1" ? "rgba(18,69,110,0.84)" : "rgba(105,53,12,0.84)",
-                borderColor: twoPlayerTurn === "p1" ? "rgba(147,197,253,0.35)" : "rgba(253,186,116,0.35)",
-                color: twoPlayerTurn === "p1" ? "#bfdbfe" : "#fed7aa",
-              }}
-            >
-              {twoPlayerTurn === "p1" ? "P1 planning" : "P2 planning"}
-            </div>
-          )}
-
-          {selectedPlayerId && !passTargetMode && !longPassTargetMode && !comboActive && !curveMode && (
-            <div className="mobile-safe-bottom absolute inset-x-1 bottom-0 z-30 flex items-center gap-1 rounded-t-xl border border-white/10 bg-black/80 p-1 backdrop-blur-sm">
-              <button onClick={cancelAction} className="mobile-action-button mobile-action-icon" aria-label="Cancel selection">✕</button>
-              <button onClick={setPass} className="mobile-action-button" style={{ background: "#ffeb3b", color: "#111" }}>Pass</button>
-              <button onClick={setLongPass} className="mobile-action-button" style={{ background: "#1367b1", color: "white" }}>Long</button>
-              <button onClick={() => startCurve("move")} className="mobile-action-button" style={{ background: "#0891b2", color: "white" }}>Curve</button>
-              <button onClick={setShoot} className="mobile-action-button" style={{ background: "#c62828", color: "white" }}>Shot</button>
-            </div>
-          )}
-
-          {curveMode && selectedPlayerId && (
-            <div className="mobile-safe-bottom absolute inset-x-1 bottom-0 z-30 flex items-center gap-1 overflow-x-auto rounded-t-xl border border-white/10 bg-black/[0.84] p-1 backdrop-blur-sm">
-              <button onClick={cancelAction} className="mobile-action-button mobile-action-icon shrink-0" aria-label="Cancel curve">✕</button>
-              <button onClick={() => startCurve("move")} className={`mobile-action-button shrink-0 ${curveAction === "move" ? "mobile-action-active" : ""}`}>Move</button>
-              <button onClick={() => startCurve("pass")} className={`mobile-action-button shrink-0 ${curveAction === "pass" ? "mobile-action-active" : ""}`}>Pass</button>
-              <button onClick={() => startCurve("long")} className={`mobile-action-button shrink-0 ${curveAction === "long" ? "mobile-action-active" : ""}`}>Long</button>
-              <button onClick={() => startCurve("shoot")} className={`mobile-action-button shrink-0 ${curveAction === "shoot" ? "mobile-action-active" : ""}`}>Shot</button>
-              <button onClick={undoCurvePoint} disabled={curvePoints.length === 0} className="mobile-action-button mobile-action-secondary shrink-0 disabled:opacity-35">Undo</button>
-              <button onClick={commitCurve} disabled={curvePoints.length === 0} className="mobile-action-button mobile-action-confirm shrink-0 disabled:opacity-35">Done</button>
-            </div>
-          )}
-
-          {comboActive && (
-            <div className="mobile-safe-bottom absolute inset-x-1 bottom-0 z-30 flex items-center gap-1 rounded-t-xl border border-white/10 bg-black/80 p-1 backdrop-blur-sm">
-              <button onClick={cancelAction} className="mobile-action-button mobile-action-icon">✕</button>
-              <div className="min-w-0 flex-1 truncate px-1 text-center text-[10px] font-semibold text-purple-200">
-                Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={confirmTurn}
-            className="absolute right-2 z-30 h-9 max-w-[42vw] truncate rounded-lg px-3 text-[10px] font-black text-white shadow-lg active:scale-95"
-            style={{
-              bottom: selectedPlayerId || comboActive || curveMode ? "calc(max(48px, env(safe-area-inset-bottom) + 42px))" : "max(8px, env(safe-area-inset-bottom))",
-              background: twoPlayer && twoPlayerTurn === "p2"
-                ? "linear-gradient(135deg, #ff9800, #e65100)"
-                : "linear-gradient(135deg, #00c96b, #008f72)",
-            }}
-          >
-            {twoPlayer ? (twoPlayerTurn === "p1" ? "P1 Done" : "P2 Done") : "Confirm"}
-          </button>
-        </>
-      )}
-
-      {/* Desktop controls bottom bar */}
-      {!isMobile && (
-      <div className="flex-shrink-0" style={{ background: "rgba(0,0,0,0.55)" }}>
-        {/* Normal action buttons (no pass target mode, no combo) */}
-        {selectedPlayerId && phase === "planning" && !passTargetMode && !longPassTargetMode && !comboActive && !curveMode && (
-          <div className="flex gap-2 px-4 pt-2.5">
-            <button
-              onClick={cancelAction}
-              className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
-            >
-              ✕
-            </button>
-            <button
-              onClick={setPass}
-              className="flex-1 py-2 rounded-xl text-black text-sm font-bold transition-all active:scale-95"
-              style={{ background: "#ffeb3b" }}
-            >
-              Pass
-            </button>
-            <button
-              onClick={setLongPass}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "linear-gradient(135deg, #0ea5e9, #1d4ed8)" }}
-            >
-              Long Ball
-            </button>
-            <button
-              onClick={startCombo}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "linear-gradient(135deg, #9c27b0, #6a1b9a)" }}
-            >
-              {comboMoveFirst ? "Move+Pass" : "Pass+Move"}
-            </button>
-            <button
-              onClick={() => startCurve("move")}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "linear-gradient(135deg, #06b6d4, #0e7490)" }}
-            >
-              Curve
-            </button>
-            <button
-              onClick={setShoot}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-bold transition-all active:scale-95"
-              style={{ background: "#d32f2f" }}
-            >
-              Shoot
-            </button>
-          </div>
-        )}
-
-        {/* Combo order toggle + cancel (shown when player selected, not yet in combo) */}
-        {selectedPlayerId && phase === "planning" && !passTargetMode && !longPassTargetMode && !comboActive && !curveMode && (
-          <div className="flex items-center gap-2 px-4 pt-1">
-            <span className="text-[10px] text-gray-600">Combo order:</span>
-            <button
-              onClick={() => setComboMoveFirst(v => !v)}
-              className="text-[10px] px-2 py-0.5 rounded-md font-semibold transition-all"
-              style={{ background: "rgba(156,39,176,0.20)", color: "#ce93d8" }}
-            >
-              {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-            </button>
-          </div>
+      {/* Controls bottom bar */}
+      <div
+        className="flex-shrink-0"
+        style={{
+          background: "rgba(0,0,0,0.62)",
+          paddingBottom: "max(0px, env(safe-area-inset-bottom))",
+        }}
+      >
+        {selectedPlayerId && phase === "planning" && !comboActive && (
+          <MechanicPad
+            onCancel={cancelAction}
+            onPass={setPass}
+            onLongPass={setLongPass}
+            onMovePass={() => { curve.reset(); startCombo(true); }}
+            onPassMove={() => { curve.reset(); startCombo(false); }}
+            onShoot={setShoot}
+            onCurve={toggleCurve}
+            curveActive={curve.active}
+            curveCanFinish={curve.canFinish}
+            curvePointCount={curve.controls.length}
+            curvePointLimit={curve.limit}
+            actionsDisabled={curve.placingControls}
+          />
         )}
 
         {/* Combo in-progress: show cancel */}
@@ -1085,49 +967,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             </button>
             <div className="flex-1 flex items-center justify-center text-xs text-purple-400 font-semibold">
               Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-            </div>
-          </div>
-        )}
-
-        {/* Desktop curve planner */}
-        {curveMode && selectedPlayerId && phase === "planning" && (
-          <div className="px-4 pt-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <button onClick={cancelAction} className="px-3 py-2 rounded-xl text-gray-400 text-sm font-medium hover:text-white transition-colors">
-                ✕ Cancel
-              </button>
-              {(["move", "pass", "long", "shoot"] as const).map((action) => (
-                <button
-                  key={action}
-                  onClick={() => startCurve(action)}
-                  className="min-w-20 px-3 py-2 rounded-xl text-white text-xs font-bold transition-all active:scale-95"
-                  style={{
-                    background: curveAction === action ? "#0891b2" : "rgba(255,255,255,0.08)",
-                    border: curveAction === action ? "1px solid rgba(255,255,255,0.35)" : "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  {action === "move" ? "Move" : action === "pass" ? "Pass" : action === "long" ? "Long Ball" : "Shoot"}
-                </button>
-              ))}
-              <div className="min-w-0 flex-1 text-center text-xs font-semibold text-cyan-300">
-                {curvePoints.length}/{curvePointLimit} points
-              </div>
-              <button
-                onClick={undoCurvePoint}
-                disabled={curvePoints.length === 0}
-                className="px-3 py-2 rounded-xl text-xs font-bold text-gray-200 disabled:opacity-35"
-                style={{ background: "rgba(255,255,255,0.10)" }}
-              >
-                Undo
-              </button>
-              <button
-                onClick={commitCurve}
-                disabled={curvePoints.length === 0}
-                className="px-4 py-2 rounded-xl text-xs font-black text-white disabled:opacity-35"
-                style={{ background: "linear-gradient(135deg, #00c96b, #008f72)" }}
-              >
-                Set Curve
-              </button>
             </div>
           </div>
         )}
@@ -1165,14 +1004,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </button>
         </div>
       </div>
-      )}
 
       {/* Match-end overlay */}
       {matchEndResult && !replayMode && (
         <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.72)" }}>
-          <div className={isMobile ? "w-[calc(100%-32px)] max-w-sm text-center px-5 py-5 rounded-2xl mx-4" : "text-center px-8 py-7 rounded-2xl mx-4"} style={{ background: "rgba(7,11,20,0.97)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <div className="text-center px-8 py-7 rounded-2xl mx-4" style={{ background: "rgba(7,11,20,0.97)", border: "1px solid rgba(255,255,255,0.1)" }}>
             <div className="text-gray-400 text-xs tracking-widest uppercase mb-1">Full Time</div>
-            <div className={isMobile ? "text-white font-black text-4xl mb-1" : "text-white font-black text-5xl mb-1"}>
+            <div className="text-white font-black text-5xl mb-1">
               {matchEndResult.playerScore} – {matchEndResult.aiScore}
             </div>
             <div
@@ -1206,7 +1044,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       {/* Replay controls overlay */}
       {replayMode && (
         <div
-          className={isMobile ? "mobile-safe-bottom absolute bottom-0 left-0 right-0 z-40 flex flex-col gap-1 px-2 py-1.5" : "absolute bottom-0 left-0 right-0 z-40 flex flex-col gap-2 px-4 py-3"}
+          className="absolute bottom-0 left-0 right-0 z-40 flex flex-col gap-2 px-4 py-3"
           style={{ background: "rgba(7,11,20,0.92)", backdropFilter: "blur(8px)", borderTop: "1px solid rgba(255,255,255,0.08)" }}
         >
           <input
@@ -1218,10 +1056,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             className="w-full h-1 accent-green-400 cursor-pointer"
             style={{ accentColor: "#00e676" }}
           />
-          <div className={isMobile ? "flex items-center gap-1.5" : "flex items-center gap-3"}>
+          <div className="flex items-center gap-3">
             <button
               onClick={handleToggleReplayPlay}
-              className={isMobile ? "text-white text-base w-7 text-center" : "text-white text-xl w-8 text-center"}
+              className="text-white text-xl w-8 text-center"
             >
               {replayPlaying ? "⏸" : "▶"}
             </button>
