@@ -147,6 +147,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const turnRef = useRef(savedMatch?.turn ?? 1);
   const [phase, setPhase] = useState<"planning" | "simulating" | "finished">(savedMatch?.phase ?? "planning");
   const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map(savedMatch?.pendingCommands ?? []));
+  const [diveTargetMode, setDiveTargetMode] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(savedMatch?.selectedPlayerId ?? null);
   const [passTargetMode, setPassTargetMode] = useState(savedMatch?.passTargetMode ?? false);
   const [longPassTargetMode, setLongPassTargetMode] = useState(false);
@@ -644,6 +645,19 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
+    // FTA_GK_DIVE_TARGET_V4
+    if (diveTargetMode) {
+      const cmd: Command = { type: CommandType.DIVE, targetPosition: pos };
+      setPendingCommands(prev => {
+        const next = new Map(prev);
+        next.set(selectedPlayerId, cmd);
+        return next;
+      });
+      setDiveTargetMode(false);
+      clearSelection();
+      return;
+    }
+
     if (curve.active && !curve.baseCommand) {
       curve.setTargetCommand(
         passTargetMode || longPassTargetMode
@@ -801,6 +815,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     };
   }, [currentFrame, players]);
 
+  const selectedSimPlayer = selectedPlayerId
+    ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ?? null
+    : null;
+
+  const goalkeeperCanDive =
+    !!selectedSimPlayer &&
+    selectedSimPlayer.role === "goalkeeper" &&
+    currentFrame?.ball.ownerId !== selectedSimPlayer.id;
+
+  const beginGoalkeeperDive = useCallback(() => {
+    if (!selectedPlayerId || !goalkeeperCanDive) return;
+    setDiveTargetMode(true);
+  }, [selectedPlayerId, goalkeeperCanDive]);
+
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
@@ -947,6 +975,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             onMovePass={() => { curve.reset(); startCombo(true); }}
             onPassMove={() => { curve.reset(); startCombo(false); }}
             onShoot={setShoot}
+              goalkeeperCanDive={goalkeeperCanDive}
+              onDive={beginGoalkeeperDive}
             onCurve={toggleCurve}
             curveActive={curve.active}
             curveCanFinish={curve.canFinish}

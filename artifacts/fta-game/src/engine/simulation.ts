@@ -72,6 +72,66 @@ function vec2Dot(a: Vec2, b: Vec2): number {
   return a.x * b.x + a.y * b.y;
 }
 
+function sanitizeBallCurve(
+  start: Vec2,
+  rawPoints: Vec2[] | undefined,
+  finalTarget: Vec2,
+  rng: () => number,
+): Vec2[] | undefined {
+  if (!rawPoints?.length) return undefined;
+
+  const points = [...rawPoints.map((p) => ({ ...p }))];
+  points[points.length - 1] = { ...finalTarget };
+
+  const direct = vec2Sub(finalTarget, start);
+  const directLen = Math.max(1, vec2Len(direct));
+  const forward = vec2Normalize(direct);
+  const normal = { x: -forward.y, y: forward.x };
+
+  // A legal ball curve can bend one way, but cannot reverse, loop, or form an S.
+  let side = 0;
+  let lastProgress = 0;
+  const legal: Vec2[] = [];
+  for (const point of points) {
+    const rel = vec2Sub(point, start);
+    const progress = vec2Dot(rel, forward);
+    const lateral = vec2Dot(rel, normal);
+    if (progress <= lastProgress + 2 || progress > directLen * 1.08) continue;
+    const pointSide = Math.sign(lateral);
+    if (pointSide !== 0 && side !== 0 && pointSide !== side) continue;
+    if (pointSide !== 0) side = pointSide;
+    lastProgress = progress;
+    legal.push(point);
+  }
+
+  if (!legal.length || vec2Dist(legal[legal.length - 1], finalTarget) > 4) {
+    legal.push({ ...finalTarget });
+  }
+
+  // Only PASS/LONG/SHOT routes call this helper. Movement/dribble curves stay untouched.
+  const tileDistance = directLen / Math.max(TILE_W, TILE_H);
+  if (tileDistance > 7) {
+    const maxLateral = legal.reduce((m, p) => {
+      const rel = vec2Sub(p, start);
+      return Math.max(m, Math.abs(vec2Dot(rel, normal)));
+    }, 0);
+    const bendTiles = maxLateral / Math.max(TILE_W, TILE_H);
+    const distancePenalty = clamp((tileDistance - 7) / 8, 0, 1);
+    const bendPenalty = clamp(bendTiles / 4, 0, 1);
+    const errorTiles = distancePenalty * (0.25 + bendPenalty * 1.75);
+    if (errorTiles > 0.05) {
+      const miss = (rng() * 2 - 1) * errorTiles * Math.max(TILE_W, TILE_H);
+      const end = legal[legal.length - 1];
+      legal[legal.length - 1] = {
+        x: clamp(end.x + normal.x * miss, 4, PITCH_WIDTH - 4),
+        y: clamp(end.y + normal.y * miss, 4, PITCH_HEIGHT - 4),
+      };
+    }
+  }
+
+  return legal;
+}
+
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
@@ -867,7 +927,26 @@ function updatePlayerMovement(
         moveLinear(player, ball.position, dt);
         player.state = PlayerState.MOVING;
       }
-} else if (cmd.type === CommandType.MOVE) {
+} else if (cmd.type === CommandType.DIVE) {
+      if (player.role === "goalkeeper" && ball.ownerId !== player.id && cmd.targetPosition) {
+        const from = posToTile(player.position);
+        const wanted = posToTile(cmd.targetPosition);
+        const maxTiles = Math.max(player.stats.defense, player.stats.speed) >= 9 ? 2 : 1;
+        const dc = clamp(wanted.col - from.col, -maxTiles, maxTiles);
+        const dr = clamp(wanted.row - from.row, -maxTiles, maxTiles);
+        let col = from.col + dc;
+        const row = clamp(from.row + dr, 0, GRID_ROWS - 1);
+        col = player.teamId === "player"
+          ? clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
+          : clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+        player.position = tileToPos(col, row);
+        player.velocity = vec2Scale(vec2Normalize(vec2Sub(player.position, tileToPos(from.col, from.row))), getLinearPixelSpeed(10) * 1.8);
+        player.state = PlayerState.DIVING;
+        player.stateTimer = 0.34;
+        player.recoveryTimer = 0.28;
+        player.commandExecuted = true;
+      }
+    } else if (cmd.type === CommandType.MOVE) {
   const target = cmd.targetPosition!;
   const arrived = moveCommand(player, cmd, target, dt);
 

@@ -105,6 +105,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
   const [opponentSubmitted, setOpponentSubmitted] = useState(false);
   const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map());
+  const [diveTargetMode, setDiveTargetMode] = useState(false);
   const pendingCommandsRef = useRef<Map<string, Command>>(new Map());
   useEffect(() => { pendingCommandsRef.current = pendingCommands; }, [pendingCommands]);
 
@@ -405,6 +406,19 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
+    // FTA_GK_DIVE_TARGET_V4
+    if (diveTargetMode) {
+      const cmd: Command = { type: CommandType.DIVE, targetPosition: pos };
+      setPendingCommands(prev => {
+        const next = new Map(prev);
+        next.set(selectedPlayerId, cmd);
+        return next;
+      });
+      setDiveTargetMode(false);
+      clearSelection();
+      return;
+    }
+
     if (curve.active && !curve.baseCommand) {
       curve.setTargetCommand(
         passTargetMode || longPassTargetMode
@@ -532,6 +546,20 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
   const tileSize = isMobile ? 32 : 40;
 
+  const selectedSimPlayer = selectedPlayerId
+    ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ?? null
+    : null;
+
+  const goalkeeperCanDive =
+    !!selectedSimPlayer &&
+    selectedSimPlayer.role === "goalkeeper" &&
+    currentFrame?.ball.ownerId !== selectedSimPlayer.id;
+
+  const beginGoalkeeperDive = useCallback(() => {
+    if (!selectedPlayerId || !goalkeeperCanDive) return;
+    setDiveTargetMode(true);
+  }, [selectedPlayerId, goalkeeperCanDive]);
+
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
@@ -653,6 +681,8 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
             onMovePass={() => { curve.reset(); startCombo(true); }}
             onPassMove={() => { curve.reset(); startCombo(false); }}
             onShoot={setShoot}
+              goalkeeperCanDive={goalkeeperCanDive}
+              onDive={beginGoalkeeperDive}
             onCurve={toggleCurve}
             curveActive={curve.active}
             curveCanFinish={curve.canFinish}

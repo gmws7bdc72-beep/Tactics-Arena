@@ -1865,6 +1865,33 @@ export function generateAICommands(
     }
   }
 
+  // FTA_FORWARD_SPACE_PROGRESS_V4
+  // Patient teams still advance when uncontested space exists. This prevents
+  // adjacent-tile stagnation without turning possession teams reckless.
+  if (aiHasBall && ballOwner?.teamId === "ai") {
+    const turnsUrgency = tier >= 4 ? 0.45 : tier >= 3 ? 0.30 : 0.15;
+    const patienceBias = tactic.progression === "slow" ? 0.72 : 1;
+    for (const p of aiPlayers) {
+      if (p.role === "goalkeeper") continue;
+      const cmd = commands.get(p.id);
+      if (!cmd || cmd.type !== CommandType.MOVE || !cmd.targetPosition) continue;
+      const from = posToTile(p.position);
+      const to = posToTile(cmd.targetPosition);
+      const openAhead = playerPlayers.every((opp) => {
+        const ot = posToTile(opp.position);
+        return !(ot.col >= from.col - 3 && ot.col <= from.col && Math.abs(ot.row - from.row) <= 1);
+      });
+      const stalled = Math.abs(to.col - from.col) <= 1 && Math.abs(to.row - from.row) <= 1;
+      if (openAhead && stalled && Math.random() < patienceBias + turnsUrgency * 0.25) {
+        const advance = aiClamp(from.col - (turnsUrgency >= 0.40 ? 2 : 1), 1, GRID_COLS - 2);
+        commands.set(p.id, {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(advance, aiClamp(from.row + Math.sign(ballTile.row - from.row), 0, GRID_ROWS - 1)),
+        });
+      }
+    }
+  }
+
   return commands;
 }
 // ─── TACTIC BUFFS + LONG BALLS ──────────────────────────────────────────────
@@ -3292,59 +3319,65 @@ function manMarkTile(
   return clampAITile({ col, row });
 }
 
+function aiClamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+
 function zonalBlockTile(
   player: SimPlayer,
   playerIndex: number,
   ballTile: TilePos,
   tactic: TeamTactic,
 ): TilePos {
-  const baseCol = blockColForRole(player, tactic);
   const centerRow = Math.floor(GRID_ROWS / 2);
+  const baseCol = blockColForRole(player, tactic);
 
-  let row = centerRow;
+  // The block breathes with the ball instead of sitting on fixed coordinates.
+  const ballProgress = aiClamp((GRID_COLS - 1 - ballTile.col) / Math.max(1, GRID_COLS - 1), 0, 1);
+  const danger = aiClamp((ballTile.col - Math.floor(GRID_COLS * 0.45)) / Math.max(1, GRID_COLS * 0.5), 0, 1);
+  const lateralShift = Math.round((ballTile.row - centerRow) * (
+    tactic.defensiveShape === "wide" || tactic.pressTrigger === "wide_trap" ? 0.72 : 0.48
+  ));
 
-  if (player.role === "defender") {
-    const defenderRows = [centerRow - 2, centerRow, centerRow + 2];
-    row = defenderRows[playerIndex % defenderRows.length];
-  } else if (player.role === "midfielder") {
-    const midRows = [centerRow - 1, centerRow + 1, centerRow];
-    row = midRows[playerIndex % midRows.length];
-  } else {
-    row = ballTile.row;
+  let lineStep = 0;
+  if (tactic.blockHeight === "high") lineStep = Math.round(3 * ballProgress - 1 * danger);
+  else if (tactic.blockHeight === "mid") lineStep = Math.round(2 * ballProgress - 1.5 * danger);
+  else lineStep = Math.round(1.25 * ballProgress - 2 * danger);
+
+  let col = aiClamp(baseCol - lineStep, 1, GRID_COLS - 2);
+  const compactness =
+    tactic.defensiveShape === "protect_box" ? 0.60 :
+    tactic.defensiveShape === "compact" ? 0.76 :
+    tactic.defensiveShape === "wide" ? 1.22 : 1.0;
+
+  const roleIndex = player.role === "defender"
+    ? aiPlayersRoleIndexFallback(playerIndex, 4)
+    : player.role === "midfielder"
+      ? aiPlayersRoleIndexFallback(playerIndex, 3)
+      : aiPlayersRoleIndexFallback(playerIndex, 2);
+
+  const roleSpread = player.role === "defender"
+    ? [-2.5, -0.8, 0.8, 2.5]
+    : player.role === "midfielder"
+      ? [-2, 0, 2]
+      : [-1.2, 1.2];
+
+  const spread = roleSpread[roleIndex % roleSpread.length] ?? 0;
+  let row = Math.round(centerRow + spread * compactness + lateralShift);
+
+  // Expand away from the ball in harmless zones, compress sharply near goal.
+  if (danger > 0.55) {
+    row = Math.round((row * (1 - danger * 0.35)) + (ballTile.row * danger * 0.35));
+  } else if (ballTile.col < Math.floor(GRID_COLS * 0.45)) {
+    row = Math.round(centerRow + spread * Math.min(1.45, compactness + 0.2) + lateralShift);
   }
 
-  // Compact teams squeeze toward the ball side but stay central.
-  if (tactic.defensiveShape === "compact") {
-    row = Math.round((row * 2 + ballTile.row) / 3);
-  }
+  return clampAITile({ col, row: aiClamp(row, 0, GRID_ROWS - 1) });
+}
 
-  // Wide-trap teams slide harder to the wing.
-  if (
-    tactic.defensiveShape === "wide" ||
-    tactic.pressTrigger === "wide_trap"
-  ) {
-    if (ballTile.row <= 2) row = Math.max(0, row - 1);
-    if (ballTile.row >= GRID_ROWS - 3) row = Math.min(GRID_ROWS - 1, row + 1);
-  }
-
-  // Protect-box teams stay very central and deep.
-  if (tactic.defensiveShape === "protect_box") {
-    row = Math.round((row + centerRow) / 2);
-  }
-
-  let col = baseCol;
-
-  // High block steps toward the ball.
-  if (tactic.blockHeight === "high") {
-    col = Math.max(1, Math.min(baseCol, ballTile.col + 2));
-  }
-
-  // Low block refuses to get dragged too high.
-  if (tactic.blockHeight === "low") {
-    col = Math.max(baseCol, GRID_COLS - 7);
-  }
-
-  return clampAITile({ col, row });
+function aiPlayersRoleIndexFallback(index: number, size: number): number {
+  return ((index % size) + size) % size;
 }
 
 function shouldPressBall(

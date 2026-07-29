@@ -28,12 +28,14 @@ export enum PlayerState {
   SHOOTING = "SHOOTING",
   CONTESTING = "CONTESTING",
   RECOVERING = "RECOVERING",
+  DIVING = "DIVING",
 }
 
 export enum CommandType {
   MOVE = "MOVE",
   PASS = "PASS",
   SHOOT = "SHOOT",
+  DIVE = "DIVE",
 }
 
 export type PassStyle = "ground" | "long";
