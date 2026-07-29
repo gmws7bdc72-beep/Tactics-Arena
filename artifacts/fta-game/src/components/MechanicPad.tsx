@@ -163,9 +163,8 @@ export default function MechanicPad({
           }}
           title="Tap for Move → Pass. Hold for Pass → Move."
         >
-          <span className="block">Move+Pass</span>
-          <span className="block text-[7px] sm:text-[8px] font-semibold opacity-75">
-            Hold: Pass+Move
+          <span className="block text-sm font-black tracking-tight">
+            {holdingCombo ? "P→M" : "M→P"}
           </span>
         </button>
 

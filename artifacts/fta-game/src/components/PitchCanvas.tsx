@@ -111,14 +111,15 @@ function roundedRectPath(
 }
 
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
+  // FTA_MOBILE_TOP_DOWN_V3: mobile uses a straight orthographic top-down pitch.
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
 
   // Mobile is a fixed, straight top-down view. Desktop keeps the angled presentation.
-  const CAMERA_ZOOM = isVertical ? 1.0 : 1.08;
+  const CAMERA_ZOOM = isVertical ? 1.0: 1.08;
   const CAMERA_SHIFT_X = 0;
-  const CAMERA_SHIFT_Y = isVertical ? 0 : 0.015;
-  const skew = isVertical ? 0 : 0.13;
-  const squash = isVertical ? 1 : 0.88;
+  const CAMERA_SHIFT_Y = isVertical ? 0: 0.015;
+  const skew = isVertical ? 0: 0.13;
+  const squash = isVertical ? 1: 0.88;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
