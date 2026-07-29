@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent, SVGProps } from "react";
 
 interface Props {
   onCancel: () => void;
@@ -14,90 +14,92 @@ interface Props {
   curvePointCount: number;
   curvePointLimit: number;
   actionsDisabled?: boolean;
-  active?: boolean;
+  active: boolean;
 }
 
 type ChordKey = "pass" | "movePass";
 const HOLD_MS = 460;
 
-function ActionIcon({ children, label }: { children: ReactNode; label: string }) {
+const iconProps: SVGProps<SVGSVGElement> = {
+  viewBox: "0 0 64 64",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 3.6,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+};
+
+function Ball({ x = 45, y = 36, r = 7 }: { x?: number; y?: number; r?: number }) {
   return (
-    <span className="flex h-full w-full items-center justify-center" aria-hidden="true">
-      <svg viewBox="0 0 64 44" className="h-9 w-12 max-w-full" role="img" aria-label={label}>
-        {children}
-      </svg>
-    </span>
+    <>
+      <circle cx={x} cy={y} r={r} fill="rgba(255,255,255,.96)" stroke="currentColor" />
+      <path d={`M ${x - 2.5} ${y - 2} l 3 -2 3 2 -1 3.5 -3.5 .5 -2 -3 z`} strokeWidth="1.6" />
+      <path d={`M ${x - 6} ${y + 1} l 4 2.5 M ${x + 4} ${y + 3} l 1.5 3`} strokeWidth="1.4" />
+    </>
   );
 }
 
 function PassIcon() {
   return (
-    <ActionIcon label="Pass">
-      <path d="M8 34c7-1 12-5 16-12 3-6 7-9 14-9" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-      <path d="M13 13c6 0 10 3 12 8" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-      <circle cx="48" cy="15" r="7" fill="none" stroke="currentColor" strokeWidth="3" />
-      <path d="M43 15l4-4 5 2 1 5-5 3-5-2z" fill="currentColor" opacity=".7" />
-    </ActionIcon>
+    <svg {...iconProps}>
+      <path d="M12 14v26c0 7 5 12 12 12h8" opacity=".75" />
+      <path d="M17 16h10M17 22h7" opacity=".42" />
+      <path d="M23 48c4-5 8-9 14-11M19 45c5 0 8 2 12 6M28 52c2-7 6-12 11-16" />
+      <Ball />
+    </svg>
   );
 }
 
-function LongPassIcon() {
+function LongBallIcon() {
   return (
-    <ActionIcon label="Long ball">
-      <path d="M8 32C17 4 39 4 51 27" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-      <path d="M7 32l7-2-3-6" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="52" cy="28" r="7" fill="none" stroke="currentColor" strokeWidth="3" />
-      <path d="M47 28l4-4 5 2 1 5-5 3-5-2z" fill="currentColor" opacity=".7" />
-    </ActionIcon>
+    <svg {...iconProps}>
+      <path d="M8 44c8-25 27-32 45-18" />
+      <path d="M9 44c7-8 14-11 22-11M10 49h13M14 53h7" opacity=".4" />
+      <Ball x={51} y={26} r={6.5} />
+    </svg>
   );
 }
 
-function ShootIcon() {
+function ShotIcon() {
   return (
-    <ActionIcon label="Shoot">
-      <path d="M5 15h18M2 23h23M8 31h17" stroke="currentColor" strokeWidth="4" strokeLinecap="round" opacity=".7" />
-      <circle cx="43" cy="23" r="10" fill="none" stroke="currentColor" strokeWidth="4" />
-      <path d="M36 23l6-6 8 3 1 7-8 4-7-3z" fill="currentColor" opacity=".78" />
-      <path d="M24 23h8" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-    </ActionIcon>
+    <svg {...iconProps}>
+      <path d="M7 25h18M4 33h24M9 41h16" opacity=".42" />
+      <path d="M16 18c10 5 17 10 24 16M19 48c8-4 15-8 22-13" opacity=".62" />
+      <path d="M13 22c5 2 9 5 13 9M12 44c6-2 10-5 14-9" />
+      <Ball x={47} y={35} r={8} />
+    </svg>
   );
 }
 
 function ComboIcon({ reversed }: { reversed: boolean }) {
   return (
-    <ActionIcon label={reversed ? "Pass then move" : "Move then pass"}>
-      <circle cx="13" cy="30" r="5" fill="none" stroke="currentColor" strokeWidth="3" />
-      <circle cx="49" cy="14" r="5" fill="none" stroke="currentColor" strokeWidth="3" />
-      <path d={reversed ? "M47 22C38 35 24 35 16 26" : "M17 23C25 10 39 9 47 18"} fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-      <path d={reversed ? "M17 26l-1 7-7-2" : "M46 18l1-7 7 2"} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M26 34l6-5 6 5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" opacity=".75" />
-    </ActionIcon>
+    <svg {...iconProps}>
+      <circle cx="15" cy="18" r="5" fill="currentColor" stroke="none" />
+      <circle cx="49" cy="46" r="5" fill="currentColor" stroke="none" />
+      <path d={reversed ? "M46 38C40 24 27 20 18 24" : "M18 26C26 39 38 42 46 39"} />
+      <path d={reversed ? "m22 18-5 6 7 3" : "m42 33 5 6-7 3"} />
+      <path d={reversed ? "M46 50c-9 5-20 2-27-7" : "M18 14c10-5 22-2 29 7"} opacity=".42" />
+      <path d="M29 27l7 7M36 27l-7 7" opacity=".7" />
+    </svg>
   );
 }
 
-function CurveIcon() {
+function CurveIcon({ active }: { active: boolean }) {
   return (
-    <ActionIcon label="Curve">
-      <path d="M10 35C16 8 43 7 51 27" fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round" />
-      <path d="M48 21l4 7 6-5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-    </ActionIcon>
+    <svg {...iconProps}>
+      <path d="M14 12c26 0 36 10 36 20S40 52 14 52" />
+      <path d="m20 44-7 8 9 5" />
+      {active && <><circle cx="33" cy="17" r="2.4" fill="currentColor" stroke="none" /><circle cx="48" cy="31" r="2.4" fill="currentColor" stroke="none" /><circle cx="34" cy="47" r="2.4" fill="currentColor" stroke="none" /></>}
+    </svg>
   );
 }
 
 export default function MechanicPad({
-  onCancel,
-  onPass,
-  onLongPass,
-  onMovePass,
-  onPassMove,
-  onShoot,
-  onCurve,
-  curveActive,
-  curveCanFinish,
-  curvePointCount,
-  curvePointLimit,
+  onCancel, onPass, onLongPass, onMovePass, onPassMove, onShoot, onCurve,
+  curveActive, curveCanFinish, curvePointCount, curvePointLimit,
   actionsDisabled = false,
-  active = true,
+  active,
 }: Props) {
   const pressed = useRef(new Map<number, ChordKey>());
   const holdTimer = useRef<number | null>(null);
@@ -111,6 +113,7 @@ export default function MechanicPad({
     }
     setHoldingCombo(false);
   };
+
   const consumeAsPassMove = () => {
     if (actionsDisabled || !active) return;
     suppressClicksUntil.current = performance.now() + 800;
@@ -118,6 +121,7 @@ export default function MechanicPad({
     pressed.current.clear();
     onPassMove();
   };
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, key: ChordKey) => {
     if (actionsDisabled || !active) return;
     pressed.current.set(event.pointerId, key);
@@ -132,11 +136,13 @@ export default function MechanicPad({
       holdTimer.current = window.setTimeout(consumeAsPassMove, HOLD_MS);
     }
   };
+
   const releasePointer = (pointerId: number) => {
     const key = pressed.current.get(pointerId);
     pressed.current.delete(pointerId);
     if (key === "movePass") clearHoldTimer();
   };
+
   useEffect(() => {
     const release = (event: PointerEvent) => releasePointer(event.pointerId);
     const reset = () => { pressed.current.clear(); clearHoldTimer(); };
@@ -155,41 +161,19 @@ export default function MechanicPad({
   }, []);
 
   const clickAllowed = () => performance.now() >= suppressClicksUntil.current;
-  const disabled = actionsDisabled || !active;
-  const actionClass = "h-12 min-w-0 rounded-lg p-1 transition-all active:scale-[0.96] disabled:active:scale-100";
+  const actionClass = `h-12 min-w-0 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] disabled:opacity-30 disabled:active:scale-100 [&>svg]:h-full [&>svg]:w-full ${active ? "" : "invisible pointer-events-none"}`;
   const chordStyle = { touchAction: "none", userSelect: "none" as const, WebkitUserSelect: "none" as const, WebkitTouchCallout: "none" as const };
-  const placeholder = { background: "rgba(255,255,255,0.055)", color: "transparent", border: "1px solid rgba(255,255,255,0.05)" };
 
   return (
-    <div className="h-[56px] flex items-center gap-1.5 px-2 py-1">
-      <button
-        onClick={onCancel}
-        disabled={!active}
-        className="h-12 w-9 min-w-9 rounded-lg text-gray-400 text-lg font-bold transition-colors disabled:text-transparent"
-        style={!active ? placeholder : { background: "rgba(255,255,255,0.055)" }}
-        aria-label="Cancel selected action"
-      >✕</button>
+    <div className="flex h-14 items-center gap-1.5 px-2 py-1">
+      <button onClick={() => active && onCancel()} className={`h-12 w-9 min-w-9 rounded-xl border border-white/10 text-lg font-bold text-gray-400 transition-colors hover:text-white ${active ? "" : "invisible pointer-events-none"}`} aria-label="Cancel selected action">×</button>
       <div className="grid min-w-0 flex-1 grid-cols-4 gap-1.5">
-        <button onPointerDown={(e) => handlePointerDown(e, "pass")} onClick={() => { if (clickAllowed() && !disabled) onPass(); }} disabled={disabled} className={actionClass} style={active ? { ...chordStyle, background: "#ffeb3b", color: "#111827" } : placeholder} aria-label="Pass"><PassIcon /></button>
-        <button onClick={onLongPass} disabled={disabled} className={actionClass} style={active ? { background: "linear-gradient(135deg,#0ea5e9,#1d4ed8)", color: "#fff" } : placeholder} aria-label="Long ball"><LongPassIcon /></button>
-        <button onPointerDown={(e) => handlePointerDown(e, "movePass")} onContextMenu={(e) => e.preventDefault()} onClick={() => { if (clickAllowed() && !disabled) onMovePass(); }} disabled={disabled} className={actionClass} style={active ? { ...chordStyle, background: holdingCombo ? "linear-gradient(135deg,#0f766e,#115e59)" : "linear-gradient(135deg,#9c27b0,#6a1b9a)", color: "#fff" } : placeholder} title="Tap: Move then Pass. Hold: Pass then Move." aria-label={holdingCombo ? "Pass then move" : "Move then pass"}><ComboIcon reversed={holdingCombo} /></button>
-        <button onClick={onShoot} disabled={disabled} className={actionClass} style={active ? { background: "#d32f2f", color: "#fff" } : placeholder} aria-label="Shoot"><ShootIcon /></button>
+        <button onPointerDown={(event) => handlePointerDown(event, "pass")} onClick={() => { if (active && clickAllowed() && !actionsDisabled) onPass(); }} disabled={actionsDisabled || !active} className={actionClass} style={{ ...chordStyle, background: "linear-gradient(145deg,#facc15,#ca8a04)", color: "#111827" }} aria-label="Inside-foot pass" title="Pass"><PassIcon /></button>
+        <button onClick={() => active && onLongPass()} disabled={actionsDisabled || !active} className={actionClass} style={{ background: "linear-gradient(145deg,#38bdf8,#1d4ed8)" }} aria-label="Long pass" title="Long pass"><LongBallIcon /></button>
+        <button onPointerDown={(event) => handlePointerDown(event, "movePass")} onContextMenu={(event) => event.preventDefault()} onClick={() => { if (active && clickAllowed() && !actionsDisabled) onMovePass(); }} disabled={actionsDisabled || !active} className={actionClass} style={{ ...chordStyle, background: holdingCombo ? "linear-gradient(145deg,#14b8a6,#115e59)" : "linear-gradient(145deg,#c026d3,#6b21a8)" }} aria-label={holdingCombo ? "Pass then move" : "Move then pass"} title="Tap: Move → Pass. Hold: Pass → Move."><ComboIcon reversed={holdingCombo} /></button>
+        <button onClick={() => active && onShoot()} disabled={actionsDisabled || !active} className={actionClass} style={{ background: "linear-gradient(145deg,#ef4444,#991b1b)" }} aria-label="Shoot" title="Shoot"><ShotIcon /></button>
       </div>
-      <button
-        onClick={onCurve}
-        disabled={!active}
-        className="relative h-12 w-[58px] min-w-[58px] rounded-lg p-1 transition-all active:scale-[0.96] disabled:active:scale-100"
-        style={active ? {
-          background: curveActive ? (curveCanFinish ? "linear-gradient(160deg,#22d3ee,#2563eb)" : "linear-gradient(160deg,#155e75,#1e3a8a)") : "linear-gradient(160deg,#0891b2,#4338ca)",
-          color: "#fff",
-          boxShadow: curveActive ? "0 0 14px rgba(34,211,238,.24)" : "none",
-        } : placeholder}
-        aria-label={curveActive && curveCanFinish ? "Finish curve" : "Curve"}
-        aria-pressed={curveActive}
-      >
-        <CurveIcon />
-        {active && curveActive && <span className="absolute right-1 top-0.5 rounded bg-black/35 px-1 text-[8px] font-bold">{curvePointCount}/{curvePointLimit}</span>}
-      </button>
+      <button onClick={() => active && onCurve()} className={`relative h-12 w-14 min-w-14 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] ${active ? "" : "invisible pointer-events-none"}`} style={{ background: curveActive ? (curveCanFinish ? "linear-gradient(145deg,#22d3ee,#2563eb)" : "linear-gradient(145deg,#0e7490,#1e3a8a)") : "linear-gradient(145deg,#0891b2,#4338ca)", boxShadow: curveActive ? "0 0 14px rgba(34,211,238,.28)" : "none" }} aria-label={curveActive && curveCanFinish ? "Finish curve" : curveActive ? "Curve active" : "Add curve"} aria-pressed={curveActive} title="Curve"><CurveIcon active={curveActive} />{curveActive && <span className="absolute bottom-0.5 right-1 rounded bg-black/45 px-1 text-[8px] font-bold leading-3">{curvePointCount}/{curvePointLimit}</span>}</button>
     </div>
   );
 }

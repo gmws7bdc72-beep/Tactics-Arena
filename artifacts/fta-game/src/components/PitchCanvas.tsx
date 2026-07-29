@@ -1152,250 +1152,221 @@ export default function PitchCanvas({
       }
     }
 
+    // FTA_POLISHED_ACTION_PLAYERS
     const players = [...frame.players].sort(
       (a, b) => view.project(a.position).y - view.project(b.position).y,
     );
 
+    const drawLimb = (
+      a: ScreenPoint,
+      joint: ScreenPoint,
+      b: ScreenPoint,
+      width: number,
+      color: string,
+      endColor?: string,
+    ) => {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0,0,0,0.38)";
+      ctx.lineWidth = width + 2.2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(joint.x, joint.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(joint.x, joint.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      if (endColor) {
+        ctx.strokeStyle = endColor;
+        ctx.lineWidth = Math.max(2, width * 0.52);
+        ctx.beginPath();
+        ctx.moveTo(joint.x, joint.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+
     for (const [playerIndex, p] of players.entries()) {
-      const pos = view.project(p.position);
+      const ground = view.project(p.position);
       const isPlayerTeam = p.teamId === "player";
       const isSelected = p.id === selectedPlayerId;
       const isGK = p.role === "goalkeeper";
-      const depth = view.depth(p.position);
-      const scale = 0.78 + depth * 0.33;
-
       const baseColor = isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor;
-      const secColor = isPlayerTeam
-        ? playerTeam.secondaryColor
-        : aiTeamSecondaryColor;
-
-      const ringColor = isSelected
-        ? "#00e5ff"
-        : frame.ball.ownerId === p.id
-          ? "#ffd700"
-          : rgba(baseColor, 0.9);
-
-      const r = view.radius(
-        isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
-        p.position.y,
-      );
-
-      const bodyH = r * (1.9 + scale * 0.25);
-      const bodyW = r * 1.05;
-      const headR = r * 0.42;
-
-      const gait = Math.sin(animationTick * 0.26 + playerIndex * 0.9);
-      const idle = Math.sin(animationTick * 0.08 + playerIndex * 0.7);
-      const isRunning = phase === "simulating";
-      const bob = isRunning
-        ? Math.abs(gait) * r * 0.13
-        : idle * r * 0.035;
-      const legSwing = isRunning ? gait * r * 0.52 : 0;
-      const armSwing = isRunning ? -gait * r * 0.42 : idle * r * 0.04;
-      const drawPos = {
-        x: pos.x,
-        y: pos.y - bob,
-      };
+      const secColor = isPlayerTeam ? playerTeam.secondaryColor : aiTeamSecondaryColor;
+      const skin = p.appearance?.skinTone ?? "#c98b6b";
+      const hair = p.appearance?.hairColor ?? "#211915";
+      const ringColor = isSelected ? "#00e5ff" : frame.ball.ownerId === p.id ? "#ffd700" : rgba(baseColor, 0.9);
+      const r = view.radius(isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS, p.position.y);
+      const t = animationTick * 0.19 + playerIndex * 0.81;
+      const speed = Math.hypot(p.velocity.x, p.velocity.y);
+      const moving = p.state === "MOVING" || p.state === "DRIBBLING" || speed > 4;
+      const passing = p.state === "PASSING";
+      const shooting = p.state === "SHOOTING";
+      const longPass = passing && p.actionPassStyle === "long";
+      const contesting = p.state === "CONTESTING";
+      const recovering = p.state === "RECOVERING";
+      const actionProgress = clamp((p.stateTimer ?? 0) / 0.48, 0, 1);
+      const actionWave = Math.sin(actionProgress * Math.PI);
+      const gait = moving ? Math.sin(t * 1.65) : 0;
+      const idle = Math.sin(t * 0.42);
+      const kick = shooting ? actionWave * 1.15 : longPass ? actionWave * 0.92 : passing ? actionWave * 0.68 : 0;
+      const lean = shooting ? -0.18 * actionWave : longPass ? -0.12 * actionWave : passing ? 0.07 * actionWave : contesting ? 0.13 : 0;
+      const crouch = recovering ? r * 0.22 : contesting ? r * 0.08 : 0;
+      const bob = moving ? Math.abs(gait) * r * 0.1 : idle * r * 0.025;
+      const hip = { x: ground.x + lean * r, y: ground.y - r * 0.08 - bob + crouch };
+      const torsoCenter = { x: hip.x + lean * r * 0.65, y: hip.y - r * 0.9 };
+      const shoulderY = torsoCenter.y - r * 0.47;
+      const shoulderHalf = r * 0.48;
+      const hipHalf = r * 0.31;
+      const headR = r * 0.38;
+      const neck = { x: torsoCenter.x + lean * r * 0.25, y: shoulderY - r * 0.15 };
+      const head = { x: neck.x + lean * r * 0.32, y: neck.y - headR * 0.82 };
+      const leftHip = { x: hip.x - hipHalf, y: hip.y };
+      const rightHip = { x: hip.x + hipHalf, y: hip.y };
+      const leftShoulder = { x: torsoCenter.x - shoulderHalf, y: shoulderY };
+      const rightShoulder = { x: torsoCenter.x + shoulderHalf, y: shoulderY };
+      const runSwing = gait * r * 0.52;
+      const plantBend = Math.abs(gait) * r * 0.12;
+      const leftKnee = { x: leftHip.x + runSwing * 0.56 - kick * r * 0.14, y: hip.y + r * 0.58 - kick * r * 0.08 };
+      const rightKnee = { x: rightHip.x - runSwing * 0.56 + kick * r * 0.52, y: hip.y + r * 0.57 - kick * r * 0.42 };
+      const leftFoot = { x: leftKnee.x + runSwing * 0.55 - kick * r * 0.18, y: ground.y + r * 0.62 - plantBend };
+      const rightFoot = { x: rightKnee.x - runSwing * 0.55 + kick * r * 0.72, y: ground.y + r * 0.62 - Math.abs(kick) * r * 0.3 };
+      const armSwing = moving ? -gait * r * 0.4 : idle * r * 0.03;
+      const brace = contesting ? r * 0.45 : 0;
+      const shotArm = shooting ? actionWave * r * 0.36 : 0;
+      const leftElbow = { x: leftShoulder.x - r * 0.23 - armSwing - brace, y: shoulderY + r * 0.42 - shotArm };
+      const rightElbow = { x: rightShoulder.x + r * 0.23 + armSwing + brace, y: shoulderY + r * 0.4 + shotArm * 0.25 };
+      const leftHand = { x: leftElbow.x - r * 0.12 - armSwing * 0.4, y: leftElbow.y + r * 0.38 };
+      const rightHand = { x: rightElbow.x + r * 0.12 + armSwing * 0.4, y: rightElbow.y + r * 0.38 };
 
       ctx.save();
-      ctx.globalAlpha = 0.32;
-      ctx.fillStyle = "#000000";
+      ctx.globalAlpha = 0.27;
+      ctx.fillStyle = "#000";
       ctx.beginPath();
-      ctx.ellipse(
-        drawPos.x + r * 0.14,
-        drawPos.y + r * 0.82,
-        r * 1.15,
-        r * 0.38,
-        -0.12,
-        0,
-        Math.PI * 2,
-      );
+      ctx.ellipse(ground.x + r * 0.1, ground.y + r * 0.55, r * 1.05, r * 0.3, -0.08, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
       ctx.save();
       ctx.strokeStyle = ringColor;
-      ctx.lineWidth = isSelected ? 4 : 2.4;
+      ctx.lineWidth = isSelected ? 3.5 : 2.1;
       ctx.shadowColor = ringColor;
-      ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 15 : 4;
+      ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 12 : 3;
       ctx.beginPath();
-      ctx.ellipse(
-        drawPos.x,
-        drawPos.y + r * 0.7,
-        r * 1.18,
-        r * 0.45,
-        -0.08,
-        0,
-        Math.PI * 2,
-      );
+      ctx.ellipse(ground.x, ground.y + r * 0.48, r * 1.08, r * 0.36, -0.05, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
 
-      ctx.save();
-      ctx.strokeStyle = "#171717";
-      ctx.lineWidth = Math.max(3, r * 0.22);
-      ctx.lineCap = "round";
+      drawLimb(leftHip, leftKnee, leftFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
+      drawLimb(rightHip, rightKnee, rightFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
+      drawLimb(leftShoulder, leftElbow, leftHand, Math.max(3, r * 0.18), baseColor, skin);
+      drawLimb(rightShoulder, rightElbow, rightHand, Math.max(3, r * 0.18), baseColor, skin);
 
-      ctx.beginPath();
-      ctx.moveTo(drawPos.x - bodyW * 0.22, drawPos.y + r * 0.45);
-      ctx.lineTo(
-        drawPos.x - bodyW * 0.48 + legSwing,
-        drawPos.y + r * 0.95,
-      );
-      ctx.moveTo(drawPos.x + bodyW * 0.22, drawPos.y + r * 0.45);
-      ctx.lineTo(
-        drawPos.x + bodyW * 0.42 - legSwing,
-        drawPos.y + r * 0.98,
-      );
-      ctx.stroke();
-
-      ctx.strokeStyle = secColor;
-      ctx.lineWidth = Math.max(2, r * 0.12);
-
-      ctx.beginPath();
-      ctx.moveTo(drawPos.x - bodyW * 0.48, drawPos.y + r * 0.95);
-      ctx.lineTo(
-        drawPos.x - bodyW * 0.72 + legSwing,
-        drawPos.y + r * 1,
-      );
-      ctx.moveTo(drawPos.x + bodyW * 0.42, drawPos.y + r * 0.98);
-      ctx.lineTo(
-        drawPos.x + bodyW * 0.66 - legSwing,
-        drawPos.y + r * 1,
-      );
-      ctx.stroke();
-
-      ctx.restore();
-
-      const torsoY = drawPos.y - bodyH * 0.32;
-      const jerseyGrad = ctx.createLinearGradient(
-        drawPos.x - bodyW,
-        torsoY,
-        drawPos.x + bodyW,
-        torsoY + bodyH,
-      );
-
-      jerseyGrad.addColorStop(0, rgba("#ffffff", 0.18));
-      jerseyGrad.addColorStop(0.25, baseColor);
-      jerseyGrad.addColorStop(1, rgba(baseColor, 0.78));
-
+      const torsoTopLeft = { x: leftShoulder.x, y: shoulderY - r * 0.08 };
+      const torsoTopRight = { x: rightShoulder.x, y: shoulderY - r * 0.08 };
+      const torsoBottomRight = { x: rightHip.x + r * 0.08, y: hip.y + r * 0.04 };
+      const torsoBottomLeft = { x: leftHip.x - r * 0.08, y: hip.y + r * 0.04 };
+      const jerseyGrad = ctx.createLinearGradient(torsoTopLeft.x, torsoTopLeft.y, torsoBottomRight.x, torsoBottomRight.y);
+      jerseyGrad.addColorStop(0, rgba("#ffffff", 0.2));
+      jerseyGrad.addColorStop(0.24, baseColor);
+      jerseyGrad.addColorStop(1, rgba(baseColor, 0.72));
       ctx.save();
       ctx.fillStyle = jerseyGrad;
-      ctx.strokeStyle = isGK ? "#ffd700" : "rgba(0,0,0,0.55)";
-      ctx.lineWidth = isGK ? 2.4 : 1.4;
-
-      roundedRectPath(
-        ctx,
-        drawPos.x - bodyW / 2,
-        torsoY,
-        bodyW,
-        bodyH * 0.58,
-        r * 0.2,
-      );
+      ctx.strokeStyle = isGK ? "#ffd700" : "rgba(0,0,0,.55)";
+      ctx.lineWidth = isGK ? 2.2 : 1.25;
+      ctx.beginPath();
+      ctx.moveTo(torsoTopLeft.x, torsoTopLeft.y);
+      ctx.quadraticCurveTo(torsoCenter.x, shoulderY - r * 0.18, torsoTopRight.x, torsoTopRight.y);
+      ctx.lineTo(torsoBottomRight.x, torsoBottomRight.y);
+      ctx.quadraticCurveTo(torsoCenter.x, hip.y + r * 0.16, torsoBottomLeft.x, torsoBottomLeft.y);
+      ctx.closePath();
       ctx.fill();
       ctx.stroke();
       ctx.restore();
 
       ctx.save();
-      ctx.strokeStyle = baseColor;
-      ctx.lineWidth = Math.max(3, r * 0.2);
+      ctx.fillStyle = secColor;
+      ctx.strokeStyle = "rgba(0,0,0,.48)";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(torsoBottomLeft.x + r * 0.06, torsoBottomLeft.y - r * 0.08);
+      ctx.lineTo(torsoBottomRight.x - r * 0.06, torsoBottomRight.y - r * 0.08);
+      ctx.lineTo(rightHip.x + r * 0.12, hip.y + r * 0.26);
+      ctx.lineTo(hip.x, hip.y + r * 0.18);
+      ctx.lineTo(leftHip.x - r * 0.12, hip.y + r * 0.26);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.strokeStyle = skin;
+      ctx.lineWidth = Math.max(2.5, r * 0.17);
       ctx.lineCap = "round";
-
       ctx.beginPath();
-      ctx.moveTo(drawPos.x - bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(
-        drawPos.x - bodyW * 0.76 + armSwing,
-        torsoY + bodyH * 0.38,
-      );
-      ctx.moveTo(drawPos.x + bodyW * 0.46, torsoY + bodyH * 0.12);
-      ctx.lineTo(
-        drawPos.x + bodyW * 0.75 - armSwing,
-        torsoY + bodyH * 0.36,
-      );
+      ctx.moveTo(torsoCenter.x, shoulderY - r * 0.03);
+      ctx.lineTo(neck.x, neck.y);
       ctx.stroke();
-
-      ctx.restore();
-
-      ctx.save();
-      ctx.fillStyle = "#c98b4c";
-      ctx.strokeStyle = "rgba(0,0,0,0.45)";
-      ctx.lineWidth = 1.2;
-
+      ctx.fillStyle = skin;
+      ctx.strokeStyle = "rgba(0,0,0,.45)";
+      ctx.lineWidth = 1.15;
       ctx.beginPath();
-      ctx.arc(drawPos.x, torsoY - headR * 0.72, headR, 0, Math.PI * 2);
+      ctx.arc(head.x, head.y, headR, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-
-      ctx.fillStyle = "#1b1714";
-      ctx.beginPath();
-      ctx.ellipse(
-        drawPos.x,
-        torsoY - headR * 1.02,
-        headR * 0.85,
-        headR * 0.35,
-        0,
-        Math.PI,
-        Math.PI * 2,
-      );
-      ctx.fill();
-
+      if (p.appearance?.hairStyle !== "bald") {
+        ctx.fillStyle = hair;
+        ctx.beginPath();
+        ctx.arc(head.x, head.y - headR * 0.18, headR * 0.92, Math.PI, Math.PI * 2);
+        ctx.lineTo(head.x + headR * 0.82, head.y - headR * 0.02);
+        ctx.quadraticCurveTo(head.x, head.y - headR * 0.6, head.x - headR * 0.82, head.y - headR * 0.02);
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.restore();
 
       ctx.fillStyle = secColor;
-      ctx.font = `900 ${Math.round(r * 0.55)}px Inter, sans-serif`;
+      ctx.font = `900 ${Math.max(8, Math.round(r * 0.48))}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(p.jerseyNumber), drawPos.x, torsoY + bodyH * 0.28);
+      ctx.fillText(String(p.jerseyNumber), torsoCenter.x, torsoCenter.y);
 
-      const nameW = clamp(r * 3.3, 28, 54);
-      const nameH = clamp(r * 0.7, 8, 13);
-
+      const nameW = clamp(r * 3.2, 30, 56);
+      const nameH = clamp(r * 0.68, 9, 13);
+      const nameY = head.y - headR * 1.75;
       ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.72)";
-      roundedRectPath(
-        ctx,
-        drawPos.x - nameW / 2,
-        torsoY - headR * 2.25,
-        nameW,
-        nameH,
-        4,
-      );
+      ctx.fillStyle = "rgba(4,8,15,.78)";
+      roundedRectPath(ctx, head.x - nameW / 2, nameY, nameW, nameH, 4);
       ctx.fill();
-
-      ctx.fillStyle = "#ffffff";
-      ctx.font = `700 ${Math.round(nameH * 0.55)}px Inter, sans-serif`;
+      ctx.fillStyle = "#fff";
+      ctx.font = `700 ${Math.max(7, Math.round(nameH * 0.56))}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(
-        p.name.slice(0, 10),
-        drawPos.x,
-        torsoY - headR * 2.25 + nameH / 2,
-      );
+      ctx.fillText(p.name.slice(0, 10), head.x, nameY + nameH / 2);
       ctx.restore();
 
       if (p.offside) {
+        const fw = r * 1.05;
+        const fh = r * 0.58;
         ctx.save();
-
-        const fw = r * 1.1;
-        const fh = r * 0.62;
-
         ctx.fillStyle = "#ff1744";
-        ctx.fillRect(drawPos.x + r * 0.78, torsoY - headR * 2.2, fw, fh);
-
+        roundedRectPath(ctx, head.x + r * 0.72, nameY, fw, fh, 3);
+        ctx.fill();
         ctx.fillStyle = "#fff";
         ctx.font = `900 ${Math.round(fh * 0.55)}px Inter, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(
-          "OS",
-          drawPos.x + r * 0.78 + fw / 2,
-          torsoY - headR * 2.2 + fh / 2,
-        );
-
+        ctx.fillText("OS", head.x + r * 0.72 + fw / 2, nameY + fh / 2);
         ctx.restore();
       }
     }
-
     const visualBall = frame.ball as typeof frame.ball & {
       height?: number;
       passStyle?: string;
