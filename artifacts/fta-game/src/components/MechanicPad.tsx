@@ -63,12 +63,10 @@ export default function MechanicPad({
     pressed.current.set(event.pointerId, key);
     const values = [...pressed.current.values()];
 
-    // Supports the literal two-button hold as well as a long hold on Move+Pass.
     if (values.includes("pass") && values.includes("movePass")) {
       consumeAsPassMove();
       return;
     }
-
     if (key === "movePass") {
       clearHoldTimer();
       setHoldingCombo(true);
@@ -96,6 +94,7 @@ export default function MechanicPad({
     window.addEventListener("pointercancel", release);
     window.addEventListener("blur", resetPointers);
     document.addEventListener("visibilitychange", visibility);
+
     return () => {
       window.removeEventListener("pointerup", release);
       window.removeEventListener("pointercancel", release);
@@ -107,7 +106,7 @@ export default function MechanicPad({
 
   const clickAllowed = () => performance.now() >= suppressClicksUntil.current;
   const actionClass =
-    "min-h-11 rounded-xl px-2 py-2 text-[11px] sm:text-sm font-black leading-tight transition-all active:scale-[0.97] disabled:opacity-35 disabled:active:scale-100";
+    "h-10 min-w-0 flex-1 rounded-lg px-1.5 text-[10px] sm:text-xs font-black leading-tight transition-all active:scale-[0.97] disabled:opacity-35 disabled:active:scale-100";
   const chordStyle = {
     touchAction: "none",
     userSelect: "none" as const,
@@ -116,16 +115,16 @@ export default function MechanicPad({
   };
 
   return (
-    <div className="flex items-stretch gap-2 px-3 sm:px-4 pt-2.5">
+    <div className="flex items-stretch gap-1.5 px-2 sm:px-3 pt-1.5">
       <button
         onClick={onCancel}
-        className="w-11 min-w-11 rounded-xl text-gray-500 text-base font-bold hover:text-white transition-colors"
+        className="h-10 w-9 min-w-9 rounded-lg text-gray-500 text-sm font-bold hover:text-white transition-colors"
         aria-label="Cancel selected action"
       >
         ✕
       </button>
 
-      <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
+      <div className="flex min-w-0 flex-1 items-stretch gap-1.5">
         <button
           onPointerDown={(event) => handlePointerDown(event, "pass")}
           onClick={() => {
@@ -137,17 +136,16 @@ export default function MechanicPad({
         >
           Pass
         </button>
+
         <button
           onClick={onLongPass}
           disabled={actionsDisabled}
           className={actionClass}
-          style={{
-            background: "linear-gradient(135deg, #0ea5e9, #1d4ed8)",
-            color: "#fff",
-          }}
+          style={{ background: "linear-gradient(135deg, #0ea5e9, #1d4ed8)", color: "#fff" }}
         >
-          Long Ball
+          Long
         </button>
+
         <button
           onPointerDown={(event) => handlePointerDown(event, "movePass")}
           onContextMenu={(event) => event.preventDefault()}
@@ -155,7 +153,7 @@ export default function MechanicPad({
             if (clickAllowed() && !actionsDisabled) onMovePass();
           }}
           disabled={actionsDisabled}
-          className={actionClass}
+          className={`${actionClass} basis-[30%]`}
           style={{
             ...chordStyle,
             background: holdingCombo
@@ -165,11 +163,12 @@ export default function MechanicPad({
           }}
           title="Tap for Move → Pass. Hold for Pass → Move."
         >
-          <span className="block">Move + Pass</span>
-          <span className="block text-[8px] sm:text-[9px] font-semibold opacity-75">
-            Hold: Pass + Move
+          <span className="block">Move+Pass</span>
+          <span className="block text-[7px] sm:text-[8px] font-semibold opacity-75">
+            Hold: Pass+Move
           </span>
         </button>
+
         <button
           onClick={onShoot}
           disabled={actionsDisabled}
@@ -182,7 +181,7 @@ export default function MechanicPad({
 
       <button
         onClick={onCurve}
-        className="w-[clamp(70px,21vw,96px)] min-w-[70px] self-stretch rounded-xl px-2 py-2 text-xs sm:text-sm font-black leading-tight transition-all active:scale-[0.97]"
+        className="h-10 w-[58px] min-w-[58px] rounded-lg px-1 text-[10px] sm:text-xs font-black leading-tight transition-all active:scale-[0.97]"
         style={{
           background: curveActive
             ? curveCanFinish
@@ -190,19 +189,17 @@ export default function MechanicPad({
               : "linear-gradient(160deg, #155e75, #1e3a8a)"
             : "linear-gradient(160deg, #0891b2, #4338ca)",
           color: "#fff",
-          boxShadow: curveActive
-            ? "0 0 18px rgba(34,211,238,0.28)"
-            : "none",
+          boxShadow: curveActive ? "0 0 12px rgba(34,211,238,0.24)" : "none",
         }}
         aria-pressed={curveActive}
       >
-        <span className="block text-lg">↝</span>
+        <span className="block text-sm">↝</span>
         <span className="block">
-          {curveActive && curveCanFinish ? "Finish" : curveActive ? "Curve On" : "Curve"}
+          {curveActive && curveCanFinish ? "Finish" : curveActive ? "Curve" : "Curve"}
         </span>
         {curveActive && (
-          <span className="block mt-1 text-[9px] font-semibold opacity-80">
-            {curvePointCount}/{curvePointLimit} pts
+          <span className="block text-[7px] font-semibold opacity-80">
+            {curvePointCount}/{curvePointLimit}
           </span>
         )}
       </button>
