@@ -45,7 +45,6 @@ import {
   createCurveMotion,
   curveMotionProgress,
   curvePointLimitForCommand,
-  curveRouteFitsMoveBudget,
   sanitizeCurvePoints,
 } from "./curve";
 
@@ -247,20 +246,6 @@ function normalizeSimulationCommand(
     command.curvePoints,
     curvePointLimitForCommand(player.stats, command),
   );
-  if (
-    command.type === CommandType.MOVE &&
-    targetPosition &&
-    curvePoints.length >= 2 &&
-    !curveRouteFitsMoveBudget(
-      player.position,
-      curvePoints,
-      targetPosition,
-      player.stats.speed,
-    )
-  ) {
-    curvePoints = [];
-  }
-
   return {
     ...command,
     targetPosition,

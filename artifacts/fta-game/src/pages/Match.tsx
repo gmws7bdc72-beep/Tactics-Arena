@@ -939,7 +939,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
         }}
       >
-        {selectedPlayerId && phase === "planning" && !comboActive && (
+        {phase === "planning" && !comboActive && (
           <MechanicPad
             onCancel={cancelAction}
             onPass={setPass}
@@ -953,6 +953,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             curvePointCount={curve.controls.length}
             curvePointLimit={curve.limit}
             actionsDisabled={curve.placingControls}
+            active={!!selectedPlayerId}
           />
         )}
 

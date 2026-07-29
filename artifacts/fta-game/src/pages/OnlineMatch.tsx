@@ -645,7 +645,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           {phase === "simulating" && "Simulating…"}
         </p>
 
-        {selectedPlayerId && phase === "planning" && !comboActive && (
+        {phase === "planning" && !comboActive && (
           <MechanicPad
             onCancel={cancelAction}
             onPass={setPass}
@@ -659,11 +659,12 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
             curvePointCount={curve.controls.length}
             curvePointLimit={curve.limit}
             actionsDisabled={curve.placingControls}
+            active={!!selectedPlayerId}
           />
         )}
 
         {comboActive && phase === "planning" && (
-          <div className="flex justify-center mb-2">
+          <div className="h-[56px] flex items-center justify-center">
             <button onClick={cancelAction} className="px-3 py-1 rounded-lg text-xs" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>Cancel</button>
           </div>
         )}
