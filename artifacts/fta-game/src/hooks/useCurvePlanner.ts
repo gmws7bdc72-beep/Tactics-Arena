@@ -3,7 +3,6 @@ import type { Command, SimPlayer, Vec2 } from "../engine/types";
 import { CommandType } from "../engine/types";
 import {
   curvePointLimitForMechanic,
-  curveRouteFitsMoveBudget,
   sanitizeCurvePoints,
   type CurveMechanic,
 } from "../engine/curve";
@@ -106,19 +105,6 @@ export function useCurvePlanner({
       return false;
     }
 
-    if (
-      baseCommand.type === CommandType.MOVE &&
-      baseCommand.targetPosition &&
-      !curveRouteFitsMoveBudget(
-        selectedPlayer.position,
-        cleanControls,
-        baseCommand.targetPosition,
-        selectedPlayer.stats.speed,
-      )
-    ) {
-      setError("That dribble curve is too long for this player's speed.");
-      return false;
-    }
 
     onCommit({ ...baseCommand, curvePoints: cleanControls });
     reset();

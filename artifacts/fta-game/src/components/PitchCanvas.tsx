@@ -113,15 +113,12 @@ function roundedRectPath(
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
   const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
 
-  // Slightly zoomed out from the previous version.
-  // Still angled, but not so close that the outside breaks.
-  const CAMERA_ZOOM = isVertical ? 1.12 : 1.08;
+  // Mobile is a fixed, straight top-down view. Desktop keeps the angled presentation.
+  const CAMERA_ZOOM = isVertical ? 1.0 : 1.08;
   const CAMERA_SHIFT_X = 0;
-  const CAMERA_SHIFT_Y = isVertical ? 0.015 : 0.015;
-
-  // Mobile football angle: mostly top-down, slightly rotated.
-  const skew = isVertical ? 0.16 : 0.13;
-  const squash = isVertical ? 0.9 : 0.88;
+  const CAMERA_SHIFT_Y = isVertical ? 0 : 0.015;
+  const skew = isVertical ? 0 : 0.13;
+  const squash = isVertical ? 1 : 0.88;
 
   const base = (p: Vec2): ScreenPoint =>
     isVertical
@@ -1541,7 +1538,7 @@ export default function PitchCanvas({
       ref={canvasRef}
       width={isVertical ? PITCH_HEIGHT : PITCH_WIDTH}
       height={isVertical ? PITCH_WIDTH : PITCH_HEIGHT}
-      className="w-full h-full cursor-pointer rounded-lg"
+      className="w-full h-full cursor-pointer rounded-none sm:rounded-lg"
       style={{
         imageRendering: "auto",
         background: "#255c33",

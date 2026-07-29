@@ -535,7 +535,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
-      <div className="flex items-center justify-between px-3 py-2 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
+      <div className="flex items-center justify-between px-2 sm:px-3 py-1.5 sm:py-2 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
         <div className="flex flex-col items-center min-w-[80px]">
           <span className="text-xs font-semibold" style={{ color: p1Team.jerseyColor }}>
             {p1Team.crestIcon ?? "⚽"} {p1Team.name}
@@ -571,7 +571,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       </div>
 
       {/* Pitch */}
-      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center overflow-hidden">
         <PitchCanvas
           frame={displayFrame}
           playerTeam={{ jerseyColor: myTeam.jerseyColor, secondaryColor: myTeam.secondaryColor } as any}
@@ -607,7 +607,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
       {/* Action bar */}
       <div
-        className="flex-shrink-0 px-2 pt-2"
+        className="flex-shrink-0 px-1.5 sm:px-2 pt-1 sm:pt-2 text-[11px] sm:text-sm"
         style={{
           background: "rgba(255,255,255,0.03)",
           paddingBottom: "max(8px, env(safe-area-inset-bottom))",
@@ -634,7 +634,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
         )}
 
         {/* Hint text */}
-        <p className="text-center text-xs mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
+        <p className="hidden sm:block text-center text-xs mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
           {phase === "planning" && selectedPlayerId && !passTargetMode && !longPassTargetMode && !comboActive && !curve.active && "Tap green tile to move · ⚔ orange = tackle"}
           {phase === "planning" && !comboActive && (passTargetMode || longPassTargetMode) && (longPassTargetMode ? "Tap a tile or player to launch a long ball" : "Tap a tile or player to pass")}
           {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}

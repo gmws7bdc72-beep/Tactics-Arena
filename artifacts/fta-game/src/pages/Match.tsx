@@ -805,7 +805,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
       <div
-        className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
+        className="flex items-center justify-between px-2 sm:px-4 py-1.5 sm:py-2.5 flex-shrink-0"
         style={{ background: "rgba(255,255,255,0.04)" }}
       >
         <button onClick={onForfeit} className="text-gray-500 hover:text-white transition-colors text-sm px-2 py-1">
@@ -857,7 +857,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       )}
 
       {/* Pitch */}
-      <div className="flex-1 relative" style={{ minHeight: 0, padding: "4px 4px 0" }}>
+      <div className="flex-1 relative" style={{ minHeight: 0, padding: isMobile ? 0 : "4px 4px 0" }}>
         {isMobile && (
           <div className="absolute top-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
             <span className="text-[10px] text-white/40 font-semibold tracking-wide">▲ Attacking</span>
@@ -933,7 +933,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       {/* Controls bottom bar */}
       <div
-        className="flex-shrink-0"
+        className="flex-shrink-0 text-[11px] sm:text-sm"
         style={{
           background: "rgba(0,0,0,0.62)",
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
@@ -958,7 +958,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
         {/* Combo in-progress: show cancel */}
         {comboActive && phase === "planning" && (
-          <div className="flex gap-2 px-4 pt-2.5">
+          <div className="flex gap-1.5 px-2 sm:px-4 pt-1.5 sm:pt-2.5">
             <button
               onClick={cancelAction}
               className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
