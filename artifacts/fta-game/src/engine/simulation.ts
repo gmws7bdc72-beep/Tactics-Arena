@@ -344,6 +344,7 @@ export function runSimulation(
       velocity: { ...source.velocity },
       command: null,
       curveMotion: undefined,
+      diveMotion: undefined,
     };
     player.command = normalizeSimulationCommand(player, source.command);
     return player;
@@ -786,6 +787,32 @@ function updatePlayerMovement(
   rng: () => number,
 ): void {
   for (const player of players) {
+    if (player.state === PlayerState.DIVING && player.diveMotion) {
+      const motion = player.diveMotion;
+      motion.elapsed = Math.min(motion.duration, motion.elapsed + dt);
+      const t = Math.min(1, motion.elapsed / Math.max(0.001, motion.duration));
+      const eased = 1 - Math.pow(1 - t, 3);
+      const previous = { ...player.position };
+      player.position = {
+        x: motion.start.x + (motion.target.x - motion.start.x) * eased,
+        y: motion.start.y + (motion.target.y - motion.start.y) * eased,
+      };
+      player.velocity = {
+        x: (player.position.x - previous.x) / Math.max(dt, 0.001),
+        y: (player.position.y - previous.y) / Math.max(dt, 0.001),
+      };
+      player.stateTimer = Math.max(0, motion.duration - motion.elapsed);
+
+      if (t >= 1) {
+        player.position = { ...motion.target };
+        player.velocity = { x: 0, y: 0 };
+        player.diveMotion = undefined;
+        player.state = PlayerState.RECOVERING;
+        player.recoveryTimer = 0.3;
+      }
+      continue;
+    }
+
     if (player.state === PlayerState.RECOVERING) {
       player.recoveryTimer -= dt;
       if (player.recoveryTimer <= 0) {
@@ -939,11 +966,15 @@ function updatePlayerMovement(
         col = player.teamId === "player"
           ? clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
           : clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
-        player.position = tileToPos(col, row);
-        player.velocity = vec2Scale(vec2Normalize(vec2Sub(player.position, tileToPos(from.col, from.row))), getLinearPixelSpeed(10) * 1.8);
+        const target = tileToPos(col, row);
+        const start = { ...player.position };
+        const distance = Math.max(1, Math.hypot(target.x - start.x, target.y - start.y));
+        const duration = Math.max(0.28, Math.min(0.46, distance / (getLinearPixelSpeed(10) * 2.1)));
+        player.velocity = vec2Scale(vec2Normalize(vec2Sub(target, start)), distance / duration);
         player.state = PlayerState.DIVING;
-        player.stateTimer = 0.34;
-        player.recoveryTimer = 0.28;
+        player.stateTimer = duration;
+        player.recoveryTimer = 0;
+        player.diveMotion = { start, target, duration, elapsed: 0 };
         player.commandExecuted = true;
       }
     } else if (cmd.type === CommandType.MOVE) {

@@ -201,6 +201,13 @@ export interface SimPlayer {
     travelled: number;
     totalLength: number;
   };
+  /** Runtime target for a goalkeeper dive. */
+  diveMotion?: {
+    start: Vec2;
+    target: Vec2;
+    duration: number;
+    elapsed: number;
+  };
 }
 
 export interface SimBall {

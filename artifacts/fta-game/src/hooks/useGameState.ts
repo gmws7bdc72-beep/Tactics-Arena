@@ -8,7 +8,7 @@ import {
   saveLeague,
   PLAYER_TEAM_ID_CONST,
 } from "../game/persistence";
-import { migrateLeague, prepareLeagueForNewSeason } from "../game/league";
+import { AI_TEAMS, migrateLeague, prepareLeagueForNewSeason } from "../game/league";
 import {
   ensureTeamDevelopment,
   prepareTeamForNewSeason,
@@ -19,6 +19,44 @@ import {
   normalizeMarket,
   saveTransferMarket,
 } from "../game/transferMarket";
+import { generateReservePlayer, getPlayerOverall } from "../game/transferDatabase";
+
+function transformTenAIPlayersForNewSeason(league: LeagueState): {
+  league: LeagueState;
+  headlines: string[];
+} {
+  const season = league.season ?? 1;
+  const aiSquads = { ...(league.aiSquads ?? {}) };
+  const headlines: string[] = [];
+
+  AI_TEAMS.slice(0, 10).forEach((club, clubIndex) => {
+    const squad = [...(aiSquads[club.id] ?? club.players)];
+    if (squad.length === 0) return;
+    const replaceable = squad
+      .map((player, index) => ({ player, index }))
+      .filter(({ player }) => player.role !== "goalkeeper");
+    const chosen = replaceable[(season * 7 + clubIndex * 3) % Math.max(1, replaceable.length)]
+      ?? { player: squad[0], index: 0 };
+    const oldPlayer = chosen.player;
+    const oldOverall = getPlayerOverall(oldPlayer);
+    const replacement = generateReservePlayer(club.id, 1000 + season * 20 + clubIndex, club.tier, season);
+    const newOverall = getPlayerOverall(replacement);
+    squad[chosen.index] = replacement;
+    aiSquads[club.id] = squad;
+
+    const comparison =
+      newOverall > oldOverall
+        ? `BETTER by ${newOverall - oldOverall} OVR`
+        : newOverall < oldOverall
+          ? `WORSE by ${oldOverall - newOverall} OVR`
+          : "THE SAME overall";
+    headlines.push(
+      `${club.name}: ${oldPlayer.name} (${oldOverall} OVR) was transformed into ${replacement.name} (${newOverall} OVR) — ${comparison}.`,
+    );
+  });
+
+  return { league: { ...league, aiSquads }, headlines };
+}
 
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
@@ -102,19 +140,48 @@ export function useGameState() {
 
   const startNewSeason = useCallback(
     (teamName: string) => {
-      const nextLeague = prepareLeagueForNewSeason(
+      const preparedLeague = prepareLeagueForNewSeason(
         league,
         PLAYER_TEAM_ID_CONST,
         teamName,
       );
+      const transformation = transformTenAIPlayersForNewSeason(preparedLeague);
+      const nextLeague = transformation.league;
       const nextTeam = prepareTeamForNewSeason(
         { ...team, name: teamName },
         nextLeague.season ?? 1,
       );
 
       const prizeMarket = awardSeasonPrize(market, league, team);
+      const transformationSeason = league.season ?? prizeMarket.season;
+      const transformationNews = transformation.headlines.map((headline, index) => ({
+        id: `season_transform_${transformationSeason}_${index}`,
+        kind: "system" as const,
+        headline,
+        season: transformationSeason,
+        week: league.trainingWeek ?? prizeMarket.week,
+      }));
+      const marketWithTransformations: TransferMarketState = {
+        ...prizeMarket,
+        news: [
+          `Season ${transformationSeason} player transformations: 10 players were replaced.`,
+          ...transformation.headlines,
+          ...prizeMarket.news,
+        ].slice(0, 80),
+        newsFeed: [
+          {
+            id: `season_transform_summary_${transformationSeason}`,
+            kind: "system" as const,
+            headline: `Season ${transformationSeason}: the 10 transformed players have been revealed.`,
+            season: transformationSeason,
+            week: league.trainingWeek ?? prizeMarket.week,
+          },
+          ...transformationNews,
+          ...prizeMarket.newsFeed,
+        ].slice(0, 80),
+      };
       const normalizedMarket = normalizeMarket(
-        prizeMarket,
+        marketWithTransformations,
         nextTeam,
         nextLeague,
       );

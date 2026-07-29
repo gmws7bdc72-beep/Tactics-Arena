@@ -1206,13 +1206,16 @@ export default function PitchCanvas({
       const r = view.radius(isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS, p.position.y);
       const t = animationTick * 0.19 + playerIndex * 0.81;
       const speed = Math.hypot(p.velocity.x, p.velocity.y);
-      const moving = p.state === "MOVING" || p.state === "DRIBBLING" || speed > 4;
+      const diving = p.state === "DIVING";
+      const moving = p.state === "MOVING" || p.state === "DRIBBLING" || (speed > 4 && !diving);
       const passing = p.state === "PASSING";
       const shooting = p.state === "SHOOTING";
       const longPass = passing && p.actionPassStyle === "long";
       const contesting = p.state === "CONTESTING";
       const recovering = p.state === "RECOVERING";
       const actionProgress = clamp((p.stateTimer ?? 0) / 0.48, 0, 1);
+      const diveProgress = diving ? clamp(1 - (p.stateTimer ?? 0) / 0.46, 0, 1) : 0;
+      const diveDirection = Math.atan2(p.velocity.y, p.velocity.x);
       const actionWave = Math.sin(actionProgress * Math.PI);
       const gait = moving ? Math.sin(t * 1.65) : 0;
       const idle = Math.sin(t * 0.42);
@@ -1220,7 +1223,12 @@ export default function PitchCanvas({
       const lean = shooting ? -0.18 * actionWave : longPass ? -0.12 * actionWave : passing ? 0.07 * actionWave : contesting ? 0.13 : 0;
       const crouch = recovering ? r * 0.22 : contesting ? r * 0.08 : 0;
       const bob = moving ? Math.abs(gait) * r * 0.1 : idle * r * 0.025;
-      const hip = { x: ground.x + lean * r, y: ground.y - r * 0.08 - bob + crouch };
+      const diveLift = diving ? Math.sin(diveProgress * Math.PI) * r * 0.72 : 0;
+      const diveStretch = diving ? Math.sin(Math.min(1, diveProgress * 1.45) * Math.PI / 2) : 0;
+      const hip = {
+        x: ground.x + lean * r + (diving ? Math.cos(diveDirection) * r * 0.45 * diveStretch : 0),
+        y: ground.y - r * 0.08 - bob + crouch - diveLift,
+      };
       const torsoCenter = { x: hip.x + lean * r * 0.65, y: hip.y - r * 0.9 };
       const shoulderY = torsoCenter.y - r * 0.47;
       const shoulderHalf = r * 0.48;
@@ -1241,8 +1249,9 @@ export default function PitchCanvas({
       const armSwing = moving ? -gait * r * 0.4 : idle * r * 0.03;
       const brace = contesting ? r * 0.45 : 0;
       const shotArm = shooting ? actionWave * r * 0.36 : 0;
-      const leftElbow = { x: leftShoulder.x - r * 0.23 - armSwing - brace, y: shoulderY + r * 0.42 - shotArm };
-      const rightElbow = { x: rightShoulder.x + r * 0.23 + armSwing + brace, y: shoulderY + r * 0.4 + shotArm * 0.25 };
+      const diveArm = diving ? r * 0.95 * diveStretch : 0;
+      const leftElbow = { x: leftShoulder.x - r * 0.23 - armSwing - brace - diveArm, y: shoulderY + r * 0.42 - shotArm - diveLift * 0.18 };
+      const rightElbow = { x: rightShoulder.x + r * 0.23 + armSwing + brace + diveArm, y: shoulderY + r * 0.4 + shotArm * 0.25 - diveLift * 0.18 };
       const leftHand = { x: leftElbow.x - r * 0.12 - armSwing * 0.4, y: leftElbow.y + r * 0.38 };
       const rightHand = { x: rightElbow.x + r * 0.12 + armSwing * 0.4, y: rightElbow.y + r * 0.38 };
 

@@ -1023,6 +1023,18 @@ function counterOffer(
   return addNews(next, message);
 }
 
+function offerDecisionDelayWeeks(offer: TransferOffer, player: PlayerCard): number {
+  // Every outside club waits at least one full week. Strong bids can still be
+  // held for another week or two while the seller waits for competition.
+  const seed = [...`${offer.id}:${player.id}:${offer.createdSeason ?? 1}`]
+    .reduce((total, char) => Math.imul(total ^ char.charCodeAt(0), 16777619), 2166136261) >>> 0;
+  const amount = currentOfferAmount(offer);
+  const threshold = transferThreshold(player);
+  if (amount >= threshold * 1.18) return 1;
+  if (amount >= threshold) return 1 + (seed % 2);
+  return 1 + (seed % 3);
+}
+
 function resolveExistingOffers(
   state: TransferMarketState,
   team: TeamConfig,
@@ -1033,11 +1045,15 @@ function resolveExistingOffers(
   let nextLeague = league;
   const week = league.trainingWeek ?? 0;
 
-  const candidates = state.offers.filter(
-    (offer) =>
-      isActiveOffer(offer) &&
-      (offer.lastUpdatedWeek ?? offer.createdWeek) < week,
-  );
+  const candidates = state.offers.filter((offer) => {
+    if (!isActiveOffer(offer)) return false;
+    const clubs = allClubPlayers(team, league);
+    const seller = clubs.find((club) => club.id === offer.toClubId);
+    const player = seller?.players.find((item) => item.id === offer.playerId);
+    if (!player) return true;
+    const referenceWeek = offer.lastUpdatedWeek ?? offer.createdWeek;
+    return week - referenceWeek >= offerDecisionDelayWeeks(offer, player);
+  });
 
   for (const original of candidates) {
     const offer = nextState.offers.find((item) => item.id === original.id);

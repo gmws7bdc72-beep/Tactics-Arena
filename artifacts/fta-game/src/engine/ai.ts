@@ -1311,6 +1311,49 @@ function tier3Defense(
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
+function usefulMovementCurve(
+  player: SimPlayer,
+  target: Vec2,
+  opponents: SimPlayer[],
+): Vec2[] | undefined {
+  const dx = target.x - player.position.x;
+  const dy = target.y - player.position.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 45 || player.stats.movement < 4) return undefined;
+
+  const nx = -dy / length;
+  const ny = dx / length;
+  const nearby = opponents
+    .map((opponent) => {
+      const relX = opponent.position.x - player.position.x;
+      const relY = opponent.position.y - player.position.y;
+      const progress = (relX * dx + relY * dy) / (length * length);
+      const side = relX * nx + relY * ny;
+      return { opponent, progress, side, distance: Math.abs(side) };
+    })
+    .filter((item) => item.progress > 0.12 && item.progress < 0.9 && item.distance < 58)
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  // Curves are especially useful when carrying around a defender, making an
+  // off-ball run around traffic, or bending a defensive recovery/marking run.
+  if (!nearby) return undefined;
+  const sideSign = nearby.side >= 0 ? -1 : 1;
+  const movement = Math.max(1, Math.min(10, player.stats.movement));
+  const offset = 28 + movement * 3.2;
+  const firstProgress = player.teamId === "ai" ? 0.34 : 0.38;
+  const secondProgress = 0.68;
+  return [
+    {
+      x: player.position.x + dx * firstProgress + nx * offset * sideSign,
+      y: player.position.y + dy * firstProgress + ny * offset * sideSign,
+    },
+    {
+      x: player.position.x + dx * secondProgress + nx * offset * 0.72 * sideSign,
+      y: player.position.y + dy * secondProgress + ny * offset * 0.72 * sideSign,
+    },
+  ];
+}
+
 function addTacticalCurve(
   player: SimPlayer,
   command: Command,
@@ -1331,15 +1374,19 @@ function addTacticalCurve(
           : command.passStyle === "long"
             ? "longPass"
             : "groundPass";
-    const curvePoints = planTacticalCurve(
-      player.position,
-      target,
-      opponents.map((opponent) => opponent.position),
-      {
-        mechanic,
-        maxPoints: curvePointLimitForCommand(player.stats, command),
-      },
-    );
+    const curvePoints =
+      planTacticalCurve(
+        player.position,
+        target,
+        opponents.map((opponent) => opponent.position),
+        {
+          mechanic,
+          maxPoints: curvePointLimitForCommand(player.stats, command),
+        },
+      ) ??
+      (command.type === CommandType.MOVE
+        ? usefulMovementCurve(player, target, opponents)
+        : undefined);
     const routeAllowed =
       command.type !== CommandType.MOVE ||
       !curvePoints ||
