@@ -1130,7 +1130,9 @@ function executePass(
     const directDistance = vec2Dist(ball.position, targetPos);
     // Keep even a full-pitch long ball readable but brisk; it should never
     // crawl for several seconds and then be snapped to its destination.
-    passSpd = Math.max(passSpd * 1.35, Math.min(360, directDistance / 1.65));
+    passSpd = Math.max(
+      passSpd * 0.72,
+      Math.min(240, directDistance / 2.4));
   }
 
   ball.curveMotion =
