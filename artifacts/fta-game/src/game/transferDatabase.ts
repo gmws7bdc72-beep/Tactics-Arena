@@ -109,3 +109,34 @@ export function formatMoney(value: number): string {
   if (value >= 1_000) return `$${Math.round(value / 1_000)}K`;
   return `$${value}`;
 }
+
+
+const NEW_SAVE_ABILITIES = ["bullet_pass", "iron_tackle", "ghost_run", "eagle_eye", "powerhouse", "shadow_mark", "none"] as const;
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+export function randomizePlayerForNewSave(template: PlayerCard, clubId: string, index: number): PlayerCard {
+  const first = FIRST_NAMES[randomInt(0, FIRST_NAMES.length - 1)];
+  const last = LAST_NAMES[randomInt(0, LAST_NAMES.length - 1)];
+  const level = Math.max(3, Math.min(9, Math.round(getPlayerOverall(template) / 10)));
+  const seed = randomInt(1, 0x7fffffff);
+  const ability = template.role === "goalkeeper"
+    ? "goalkeeper"
+    : NEW_SAVE_ABILITIES[randomInt(0, NEW_SAVE_ABILITIES.length - 1)];
+  return enrichMarketPlayer({
+    ...template,
+    id: `${clubId}_new_${Date.now().toString(36)}_${index}_${seed.toString(36)}`,
+    name: `${first} ${last}`,
+    ability,
+    stats: baseStats(template.role, level, seed),
+    jerseyNumber: index + 1,
+    age: undefined,
+    potential: undefined,
+    marketValue: undefined,
+    weeklyWage: undefined,
+    marketStatus: undefined,
+    development: undefined,
+  }, clubId, 1);
+}

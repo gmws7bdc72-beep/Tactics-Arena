@@ -119,11 +119,24 @@ export default function Customize({ team, onSave, onBack }: Props) {
         </button>
         <div>
           <h1 className="text-lg font-black">Kit Workshop</h1>
-          <p className="text-xs text-gray-500">Shirt-only team customization</p>
+          <p className="text-xs text-gray-500">Team identity and kit customization</p>
         </div>
       </header>
 
       <main className="space-y-7 px-4 pb-28 pt-5">
+        <section>
+          <label className="mb-3 block text-xs font-bold uppercase tracking-[0.18em] text-gray-400">
+            Team Name
+          </label>
+          <input
+            type="text"
+            value={current.name}
+            maxLength={28}
+            onChange={(event) => setCurrent((previous) => ({ ...previous, name: event.target.value }))}
+            className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-bold text-white outline-none focus:border-emerald-400/60"
+            placeholder="Team name"
+          />
+        </section>
         <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] p-6">
           <div
             className="absolute inset-0 opacity-20"
@@ -253,7 +266,7 @@ export default function Customize({ team, onSave, onBack }: Props) {
           className="w-full rounded-2xl py-4 text-sm font-black text-[#03110a] transition-transform active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg, #5cff9a, #00c77a)" }}
         >
-          Save Kit
+          Save Team & Kit
         </button>
       </footer>
     </div>

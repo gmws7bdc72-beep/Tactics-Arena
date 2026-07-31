@@ -18,7 +18,7 @@ import {
   prepareSquadForNewSeason,
   type MatchTrainingResult,
 } from "./training";
-import { expandSquad } from "./transferDatabase";
+import { expandSquad, randomizePlayerForNewSave } from "./transferDatabase";
 
 export interface AITeamDef {
   id: string;
@@ -625,7 +625,9 @@ export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> 
   return Object.fromEntries(
     AI_TEAMS.map((team) => [
       team.id,
-      expandSquad(team.players, team.id, team.tier, season).map((player) => ensurePlayerDevelopment(player, season)),
+      expandSquad(team.players, team.id, team.tier, season)
+        .map((player, index) => randomizePlayerForNewSave(player, team.id, index))
+        .map((player) => ensurePlayerDevelopment(player, season)),
     ]),
   );
 }

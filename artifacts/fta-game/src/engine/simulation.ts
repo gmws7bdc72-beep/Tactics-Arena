@@ -45,7 +45,11 @@ import {
   createCurveMotion,
   curveMotionProgress,
   curvePointLimitForCommand,
+  curvePointLimitForMechanic,
+  curveMechanicForCommand,
+  curveStatForMechanic,
   sanitizeCurvePoints,
+  sanitizeActionCurve,
 } from "./curve";
 
 function vec2Add(a: Vec2, b: Vec2): Vec2 {
@@ -302,9 +306,16 @@ function normalizeSimulationCommand(
   const targetPosition = command.targetPosition
     ? { ...command.targetPosition }
     : undefined;
-  let curvePoints = sanitizeCurvePoints(
+  const mechanic = curveMechanicForCommand(command);
+  const limit = curvePointLimitForCommand(player.stats, command);
+  const target = targetPosition ?? player.position;
+  const curvePoints = sanitizeActionCurve(
+    player.position,
+    target,
     command.curvePoints,
-    curvePointLimitForCommand(player.stats, command),
+    limit,
+    mechanic,
+    curveStatForMechanic(player.stats, mechanic),
   );
   return {
     ...command,
@@ -395,7 +406,7 @@ export function runSimulation(
   // Run for TICKS_PER_TURN, but extend while a pass is still in flight so the
   // ball always reaches its destination within the same turn. Safety ceiling at
   // 5× the normal budget to prevent runaway loops.
-  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 5;
+  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 20;
   for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
@@ -439,11 +450,18 @@ export function runSimulation(
     allEvents.push(...tickEvents);
     frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
 
-    // End the turn once the normal budget is spent AND no pass is in flight.
-    // If a pass is still travelling, keep ticking until it resolves.
-    if (tick >= TICKS_PER_TURN - 1 && !simBall.passTarget) {
-      break;
-    }
+    // A playing phase ends only after every planned action has genuinely
+    // resolved. The normal tick budget is a minimum, not a cutoff. This lets
+    // long AI runs, chained actions, dives and long balls finish naturally.
+    const actionsResolved = simPlayers.every((planned) => {
+      const activeAction =
+        planned.state === PlayerState.PASSING ||
+        planned.state === PlayerState.SHOOTING ||
+        planned.state === PlayerState.DIVING;
+      return !activeAction && (!planned.command || planned.commandExecuted);
+    });
+    const ballResolved = !simBall.passTarget && vec2Len(simBall.velocity) < 2;
+    if (tick >= TICKS_PER_TURN - 1 && actionsResolved && ballResolved) break;
   }
 
   // Snap all players to tile centers at end of turn
@@ -959,14 +977,27 @@ function updatePlayerMovement(
         const from = posToTile(player.position);
         const wanted = posToTile(cmd.targetPosition);
         const maxTiles = Math.max(player.stats.defense, player.stats.speed) >= 9 ? 2 : 1;
-        const dc = clamp(wanted.col - from.col, -maxTiles, maxTiles);
-        const dr = clamp(wanted.row - from.row, -maxTiles, maxTiles);
-        let col = from.col + dc;
-        const row = clamp(from.row + dr, 0, GRID_ROWS - 1);
-        col = player.teamId === "player"
-          ? clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
-          : clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
-        const target = tileToPos(col, row);
+        const rawDc = wanted.col - from.col;
+        const rawDr = wanted.row - from.row;
+        const rawLength = Math.hypot(rawDc, rawDr);
+        const scale = rawLength > maxTiles ? maxTiles / rawLength : 1;
+        let bestCol = from.col;
+        let bestRow = from.row;
+        let bestError = Number.POSITIVE_INFINITY;
+        for (let dc = -maxTiles; dc <= maxTiles; dc++) {
+          for (let dr = -maxTiles; dr <= maxTiles; dr++) {
+            if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
+            const candidateCol = player.teamId === "player"
+              ? clamp(from.col + dc, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
+              : clamp(from.col + dc, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+            const candidateRow = clamp(from.row + dr, 0, GRID_ROWS - 1);
+            const idealCol = from.col + rawDc * scale;
+            const idealRow = from.row + rawDr * scale;
+            const error = Math.hypot(candidateCol - idealCol, candidateRow - idealRow);
+            if (error < bestError) { bestError = error; bestCol = candidateCol; bestRow = candidateRow; }
+          }
+        }
+        const target = tileToPos(bestCol, bestRow);
         const start = { ...player.position };
         const distance = Math.max(1, Math.hypot(target.x - start.x, target.y - start.y));
         const duration = Math.max(0.28, Math.min(0.46, distance / (getLinearPixelSpeed(10) * 2.1)));
@@ -1095,7 +1126,12 @@ function executePass(
 
   let passSpd = PASS_SPEED;
   if (player.ability === "bullet_pass") passSpd *= 1.5;
-  if (isLongBall) passSpd *= 1.12;
+  if (isLongBall) {
+    const directDistance = vec2Dist(ball.position, targetPos);
+    // Keep even a full-pitch long ball readable but brisk; it should never
+    // crawl for several seconds and then be snapped to its destination.
+    passSpd = Math.max(passSpd * 1.35, Math.min(360, directDistance / 1.65));
+  }
 
   ball.curveMotion =
     cmd.curvePoints && cmd.curvePoints.length >= 2
@@ -1127,10 +1163,17 @@ function executeShot(
 
   const target = { x: goalX, y: targetY };
   const cmd = player.command;
-  ball.curveMotion =
-    cmd?.curvePoints && cmd.curvePoints.length >= 2
-      ? createCurveMotion(ball.position, cmd.curvePoints, target)
-      : undefined;
+  const shotCurve = sanitizeActionCurve(
+    ball.position,
+    target,
+    cmd?.curvePoints,
+    curvePointLimitForMechanic(player.stats, "shot"),
+    "shot",
+    player.stats.shooting,
+  );
+  ball.curveMotion = shotCurve.length >= 2
+    ? createCurveMotion(ball.position, shotCurve, target)
+    : undefined;
   const firstTarget = ball.curveMotion?.points[0] ?? target;
   const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(dir, shotSpd);

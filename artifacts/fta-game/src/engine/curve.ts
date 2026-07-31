@@ -207,6 +207,54 @@ export function sampleChainedCurve(
   return samples;
 }
 
+
+export function sanitizeActionCurve(
+  start: Vec2,
+  target: Vec2,
+  points: Vec2[] | undefined,
+  limit: number,
+  mechanic: CurveMechanic,
+  stat: number,
+): Vec2[] {
+  const raw = sanitizeCurvePoints(points, limit);
+  if (raw.length < MIN_CURVE_POINTS || !isFinitePoint(start) || !isFinitePoint(target)) return [];
+
+  const direct = { x: target.x - start.x, y: target.y - start.y };
+  const directLength = Math.hypot(direct.x, direct.y);
+  if (directLength < 12) return [];
+  const unit = { x: direct.x / directLength, y: direct.y / directLength };
+  const normal = { x: -unit.y, y: unit.x };
+  const quality = clamp((stat - 1) / 9, 0, 1);
+  const tile = Math.min(PITCH_WIDTH / 17, PITCH_HEIGHT / 9);
+  const maxLateralTiles = mechanic === "move"
+    ? 0.8 + quality * 1.7
+    : mechanic === "groundPass"
+      ? 0.35 + quality * 0.9
+      : mechanic === "longPass"
+        ? 0.45 + quality * 1.15
+        : 0.25 + quality * 0.7;
+  const maxLateral = Math.min(maxLateralTiles * tile, directLength * (mechanic === "move" ? 0.42 : 0.28));
+
+  // Force every handle to progress toward the target. This removes loops,
+  // backwards hooks and impossible S-curves while preserving useful bend.
+  const cleaned = raw.map((point, index) => {
+    const rel = { x: point.x - start.x, y: point.y - start.y };
+    const projected = rel.x * unit.x + rel.y * unit.y;
+    const minProgress = directLength * ((index + 1) / (raw.length + 1) - 0.08);
+    const maxProgress = directLength * ((index + 1) / (raw.length + 1) + 0.08);
+    const progress = clamp(projected, Math.max(2, minProgress), Math.min(directLength - 2, maxProgress));
+    const lateral = clamp(rel.x * normal.x + rel.y * normal.y, -maxLateral, maxLateral);
+    return {
+      x: clamp(start.x + unit.x * progress + normal.x * lateral, 0, PITCH_WIDTH),
+      y: clamp(start.y + unit.y * progress + normal.y * lateral, 0, PITCH_HEIGHT),
+    };
+  });
+
+  const route = curveRouteLength(start, cleaned, target);
+  const maxRatio = mechanic === "move" ? 1.35 + quality * 0.15 : 1.12 + quality * 0.12;
+  return route <= directLength * maxRatio + 2 ? cleaned : [];
+}
+
 export function createCurveMotion(
   start: Vec2,
   controls: Vec2[],
