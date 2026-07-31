@@ -1,11 +1,31 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
-import { CommandType, GameEventType } from "../engine/types";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo } from "react";
+import type { SimPlayer,
+  SimBall,
+  Command,
+  FrameSnapshot,
+  GameEvent,
+  Vec2 } from "../engine/types";
+import { CommandType,
+  GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
-import { getFormationById, getAIFormationById } from "../game/formations";
+import { getFormationById,
+  getAIFormationById } from "../game/formations";
 import {
-  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles, PLAYERS_PER_TEAM,
+  PITCH_WIDTH,
+  PITCH_HEIGHT,
+  MAX_MATCH_TURNS,
+  speedToTiles,
+  PLAYERS_PER_TEAM,
+  PITCH_WIDTH,
+  GOAL_DEPTH,
+  GOAL_TOP_Y,
+  GOAL_WIDTH,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
@@ -114,6 +134,8 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [passTargetMode, setPassTargetMode] = useState(false);
   const [longPassTargetMode, setLongPassTargetMode] = useState(false);
+  // FTA_SHOT_TARGET_MODE
+  const [shotTargetMode, setShotTargetMode] = useState(false);
   const [comboActive, setComboActive] = useState(false);
   const [comboMoveFirst, setComboMoveFirst] = useState(true);
   const [comboStep, setComboStep] = useState<1 | 2>(1);
@@ -130,6 +152,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     setSelectedPlayerId(null);
     setPassTargetMode(false);
     setLongPassTargetMode(false);
+    setShotTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -419,6 +442,40 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       return;
     }
 
+    if (shotTargetMode) {
+      const selected = currentFrame?.players.find(
+        (player) => player.id === selectedPlayerId,
+      );
+      if (!selected) return;
+
+      const goalX = selected.teamId === "player" ? PITCH_WIDTH + GOAL_DEPTH : -GOAL_DEPTH;
+      const target = {
+        x: goalX,
+        y: Math.max(GOAL_TOP_Y, Math.min(GOAL_TOP_Y + GOAL_WIDTH, pos.y)),
+      };
+
+      if (curve.active) {
+        curve.setTargetCommand({
+          type: CommandType.SHOOT,
+          targetPosition: target,
+        });
+        setShotTargetMode(false);
+        return;
+      }
+
+      setPendingCommands((previous) => {
+        const next = new Map(previous);
+        next.set(selectedPlayerId, {
+          type: CommandType.SHOOT,
+          targetPosition: target,
+        });
+        return next;
+      });
+      setShotTargetMode(false);
+      clearSelection();
+      return;
+    }
+
     if (curve.active && !curve.baseCommand) {
       curve.setTargetCommand(
         passTargetMode || longPassTargetMode
@@ -481,16 +538,10 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
-    if (curve.active) {
-      setPassTargetMode(false);
-      setLongPassTargetMode(false);
-      curve.beginAction("shot", { type: CommandType.SHOOT });
-      return;
-    }
-    setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, { type: CommandType.SHOOT }); return n; });
-    clearSelection();
-  }, [selectedPlayerId, clearSelection, curve]);
-
+    setPassTargetMode(false);
+    setLongPassTargetMode(false);
+    setShotTargetMode(true);
+  }, [selectedPlayerId]);
   const setPass = useCallback(() => {
     if (!selectedPlayerId) return;
     if (curve.active) curve.beginAction("groundPass");
@@ -647,9 +698,13 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
             Combo Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
           </div>
         )}
-        {!comboActive && (passTargetMode || longPassTargetMode) && (
+        {!comboActive && (passTargetMode || longPassTargetMode || shotTargetMode) && (
           <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#38bdf8" }}>
-            {longPassTargetMode ? "Tap a tile or player to launch a long ball" : "Tap a tile or player to pass"}
+            {shotTargetMode
+              ? "Tap inside the goal to place the shot"
+              : longPassTargetMode
+                ? "Tap a tile or player to launch a long ball"
+                : "Tap a tile or player to pass"}
           </div>
         )}
         {curve.active && curve.instruction && (

@@ -1152,28 +1152,40 @@ function executeShot(
   ball: SimBall,
   rng: () => number,
 ): void {
-  const goalX = player.teamId === "player" ? GOAL_RIGHT_X : GOAL_LEFT_X;
-
-  const goalMid = PITCH_HEIGHT / 2;
-  const halfGoal = GOAL_WIDTH / 2;
-  const targetY = goalMid + (rng() * 2 - 1) * halfGoal * 0.85;
-
-  let shotSpd = SHOT_SPEED;
-  if (player.ability === "eagle_eye") shotSpd *= 1.15;
-
-  const target = { x: goalX, y: targetY };
   const cmd = player.command;
-  const shotCurve = sanitizeActionCurve(
-    ball.position,
-    target,
-    cmd?.curvePoints,
-    curvePointLimitForMechanic(player.stats, "shot"),
-    "shot",
-    player.stats.shooting,
-  );
-  ball.curveMotion = shotCurve.length >= 2
-    ? createCurveMotion(ball.position, shotCurve, target)
-    : undefined;
+  const goalX = player.teamId === "player" ? GOAL_RIGHT_X + GOAL_DEPTH : GOAL_LEFT_X - GOAL_DEPTH;
+  const desired = cmd?.targetPosition ?? {
+    x: goalX,
+    y: PITCH_HEIGHT / 2,
+  };
+
+  const distanceTiles =
+    vec2Dist(player.position, desired) / Math.max(TILE_W, TILE_H);
+  const shooting = Math.max(1, Math.min(10, player.stats.shooting));
+
+  // Range increases error; shooting skill reduces it.
+  const rangePressure = Math.max(0, distanceTiles - 3) * 0.12;
+  const skillError = (11 - shooting) * 0.08;
+  const maxErrorTiles = Math.min(2.25, rangePressure + skillError);
+  const errorY =
+    (rng() * 2 - 1) * maxErrorTiles * Math.max(TILE_W, TILE_H);
+
+  const target = {
+    x: goalX,
+    y: Math.max(
+      GOAL_TOP_Y,
+      Math.min(GOAL_TOP_Y + GOAL_WIDTH, desired.y + errorY),
+    ),
+  };
+
+  // Shooting controls power. Eagle Eye keeps a modest power bonus.
+  let shotSpd = SHOT_SPEED * (0.72 + shooting * 0.045);
+  if (player.ability === "eagle_eye") shotSpd *= 1.08;
+
+  ball.curveMotion =
+    cmd?.curvePoints && cmd.curvePoints.length >= 2
+      ? createCurveMotion(ball.position, cmd.curvePoints, target)
+      : undefined;
   const firstTarget = ball.curveMotion?.points[0] ?? target;
   const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(dir, shotSpd);

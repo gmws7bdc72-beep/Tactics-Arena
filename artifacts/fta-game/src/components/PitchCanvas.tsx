@@ -882,6 +882,59 @@ export default function PitchCanvas({
       2.4,
     );
 
+    // FTA_GOAL_DEPTH_NET
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i += 1) {
+      const y = goalTop + (GOAL_WIDTH * i) / 4;
+      drawProjectedPath(
+        ctx,
+        view,
+        [
+          { x: -GOAL_DEPTH, y },
+          { x: 0, y },
+        ],
+        "rgba(255,255,255,0.22)",
+        1,
+      );
+      drawProjectedPath(
+        ctx,
+        view,
+        [
+          { x: PITCH_WIDTH, y },
+          { x: PITCH_WIDTH + GOAL_DEPTH, y },
+        ],
+        "rgba(255,255,255,0.22)",
+        1,
+      );
+    }
+    for (let i = 1; i < 3; i += 1) {
+      const leftX = (-GOAL_DEPTH * i) / 3;
+      const rightX = PITCH_WIDTH + (GOAL_DEPTH * i) / 3;
+      drawProjectedPath(
+        ctx,
+        view,
+        [
+          { x: leftX, y: goalTop },
+          { x: leftX, y: goalBottom },
+        ],
+        "rgba(255,255,255,0.18)",
+        1,
+      );
+      drawProjectedPath(
+        ctx,
+        view,
+        [
+          { x: rightX, y: goalTop },
+          { x: rightX, y: goalBottom },
+        ],
+        "rgba(255,255,255,0.18)",
+        1,
+      );
+    }
+    ctx.restore();
+
     ctx.save();
     ctx.globalAlpha = 0.08;
 

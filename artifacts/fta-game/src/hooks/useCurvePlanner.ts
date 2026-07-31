@@ -136,7 +136,7 @@ export function useCurvePlanner({
     if (!selectedPlayer || !active || !baseCommand) return undefined;
     const target =
       baseCommand.type === CommandType.SHOOT
-        ? {
+        ? baseCommand.targetPosition ?? {
             x: selectedPlayer.teamId === "player" ? PITCH_WIDTH : 0,
             y: PITCH_HEIGHT / 2,
           }

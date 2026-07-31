@@ -124,6 +124,30 @@ export default function Customize({ team, onSave, onBack }: Props) {
       </header>
 
       <main className="space-y-7 px-4 pb-28 pt-5">
+
+        {/* FTA_TEAM_NAME_SAVE */}
+        <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+          <label
+            htmlFor="fta-team-name"
+            className="mb-2 block text-xs font-bold uppercase tracking-[0.18em] text-gray-400"
+          >
+            Team Name
+          </label>
+          <input
+            id="fta-team-name"
+            value={current.name}
+            maxLength={28}
+            onChange={(event) =>
+              setCurrent((previous) => ({
+                ...previous,
+                name: event.target.value,
+              }))
+            }
+            className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-base font-bold text-white outline-none focus:border-emerald-400"
+            placeholder="Enter team name"
+          />
+        </section>
+
         <section>
           <label className="mb-3 block text-xs font-bold uppercase tracking-[0.18em] text-gray-400">
             Team Name
@@ -262,7 +286,7 @@ export default function Customize({ team, onSave, onBack }: Props) {
 
       <footer className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-white/10 bg-[#080d18]/95 p-4 backdrop-blur">
         <button
-          onClick={() => onSave(current)}
+          onClick={() => onSave({ ...current, name: current.name.trim() || team.name })}
           className="w-full rounded-2xl py-4 text-sm font-black text-[#03110a] transition-transform active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg, #5cff9a, #00c77a)" }}
         >

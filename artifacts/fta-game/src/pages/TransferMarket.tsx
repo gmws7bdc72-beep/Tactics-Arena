@@ -564,6 +564,28 @@ export default function TransferMarket({
                         </div>
                       </div>
 
+                      {/* FTA_MARKET_STATS */}
+                      <div className="mb-3 rounded-xl border border-white/10 bg-black/15 p-3">
+                        <div className="mb-2 text-[9px] font-black uppercase tracking-wider text-gray-500">
+                          Player Stats
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          {Object.entries(player.stats).map(([key, value]) => (
+                            <div
+                              key={key}
+                              className="rounded-lg bg-white/[0.045] px-2 py-2 text-center"
+                            >
+                              <div className="truncate text-[8px] font-bold uppercase text-gray-500">
+                                {key.replace(/([A-Z])/g, " $1")}
+                              </div>
+                              <div className="mt-0.5 text-sm font-black text-white">
+                                {value}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
                       <div
                         className="mb-3 rounded-lg px-3 py-2"
                         style={{ background: "rgba(255,255,255,.035)" }}
