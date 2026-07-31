@@ -24,24 +24,37 @@ import { generateReservePlayer, getPlayerOverall } from "../game/transferDatabas
 function transformTenAIPlayersForNewSeason(league: LeagueState): {
   league: LeagueState;
   headlines: string[];
+  transformedCount: number;
 } {
   const season = league.season ?? 1;
   const aiSquads = { ...(league.aiSquads ?? {}) };
   const headlines: string[] = [];
 
-  AI_TEAMS.slice(0, 10).forEach((club, clubIndex) => {
+  // Only unsold players who are still transfer-listed at the end of the season
+  // are eligible. Shuffle the full league-wide pool, then transform at most ten.
+  const eligible = AI_TEAMS.flatMap((club) => {
     const squad = [...(aiSquads[club.id] ?? club.players)];
-    if (squad.length === 0) return;
-    const replaceable = squad
-      .map((player, index) => ({ player, index }))
-      .filter(({ player }) => player.role !== "goalkeeper");
-    const chosen = replaceable[(season * 7 + clubIndex * 3) % Math.max(1, replaceable.length)]
-      ?? { player: squad[0], index: 0 };
-    const oldPlayer = chosen.player;
+    return squad
+      .map((player, index) => ({ club, squad, player, index }))
+      .filter(({ player }) => player.marketStatus === "listed");
+  });
+
+  for (let index = eligible.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [eligible[index], eligible[swapIndex]] = [eligible[swapIndex], eligible[index]];
+  }
+
+  eligible.slice(0, 10).forEach(({ club, player: oldPlayer, index }, replacementIndex) => {
+    const squad = [...(aiSquads[club.id] ?? club.players)];
     const oldOverall = getPlayerOverall(oldPlayer);
-    const replacement = generateReservePlayer(club.id, 1000 + season * 20 + clubIndex, club.tier, season);
+    const replacement = generateReservePlayer(
+      club.id,
+      1000 + season * 20 + replacementIndex,
+      club.tier,
+      season,
+    );
     const newOverall = getPlayerOverall(replacement);
-    squad[chosen.index] = replacement;
+    squad[index] = replacement;
     aiSquads[club.id] = squad;
 
     const comparison =
@@ -51,11 +64,15 @@ function transformTenAIPlayersForNewSeason(league: LeagueState): {
           ? `WORSE by ${oldOverall - newOverall} OVR`
           : "THE SAME overall";
     headlines.push(
-      `${club.name}: ${oldPlayer.name} (${oldOverall} OVR) was transformed into ${replacement.name} (${newOverall} OVR) — ${comparison}.`,
+      `${club.name}: unsold transfer-listed player ${oldPlayer.name} (${oldOverall} OVR) was transformed into ${replacement.name} (${newOverall} OVR) — ${comparison}.`,
     );
   });
 
-  return { league: { ...league, aiSquads }, headlines };
+  return {
+    league: { ...league, aiSquads },
+    headlines,
+    transformedCount: headlines.length,
+  };
 }
 
 export function useGameState() {
@@ -164,7 +181,7 @@ export function useGameState() {
       const marketWithTransformations: TransferMarketState = {
         ...prizeMarket,
         news: [
-          `Season ${transformationSeason} player transformations: 10 players were replaced.`,
+          `Season ${transformationSeason} player transformations: ${transformation.transformedCount} unsold transfer-listed players were replaced.`,
           ...transformation.headlines,
           ...prizeMarket.news,
         ].slice(0, 80),
@@ -172,7 +189,7 @@ export function useGameState() {
           {
             id: `season_transform_summary_${transformationSeason}`,
             kind: "system" as const,
-            headline: `Season ${transformationSeason}: the 10 transformed players have been revealed.`,
+            headline: `Season ${transformationSeason}: ${transformation.transformedCount} unsold transfer-listed players were transformed.`,
             season: transformationSeason,
             week: league.trainingWeek ?? prizeMarket.week,
           },
