@@ -113,6 +113,13 @@ export function useGameState() {
         ),
       };
       saveLeague(updated);
+
+      setMarketState((previousMarket) => {
+        const nextMarket = normalizeMarket(previousMarket, normalized, updated);
+        saveTransferMarket(nextMarket);
+        return nextMarket;
+      });
+
       return updated;
     });
   }, []);

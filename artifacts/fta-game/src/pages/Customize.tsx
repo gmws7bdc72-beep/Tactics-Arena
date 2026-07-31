@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import type { TeamConfig } from "../engine/types";
-import { JERSEY_COLORS, SECONDARY_COLORS } from "../game/persistence";
+import { JERSEY_COLORS, SECONDARY_COLORS, saveTeam } from "../game/persistence";
 import {
   KIT_STYLES,
   SLEEVE_STYLES,
@@ -107,6 +107,17 @@ export default function Customize({ team, onSave, onBack }: Props) {
     : current.sleeveStyle === "split"
       ? current.secondaryColor
       : current.jerseyColor;
+
+  // FTA_TEAM_NAME_PERSIST_V2
+  const handleSave = () => {
+    const next = {
+      ...current,
+      name: current.name.trim() || team.name,
+    };
+    saveTeam(next);
+    setCurrent(next);
+    onSave(next);
+  };
 
   return (
     <div className="min-h-screen bg-[#080d18] text-white">
@@ -286,7 +297,7 @@ export default function Customize({ team, onSave, onBack }: Props) {
 
       <footer className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-white/10 bg-[#080d18]/95 p-4 backdrop-blur">
         <button
-          onClick={() => onSave({ ...current, name: current.name.trim() || team.name })}
+          onClick={handleSave}
           className="w-full rounded-2xl py-4 text-sm font-black text-[#03110a] transition-transform active:scale-[0.98]"
           style={{ background: "linear-gradient(135deg, #5cff9a, #00c77a)" }}
         >

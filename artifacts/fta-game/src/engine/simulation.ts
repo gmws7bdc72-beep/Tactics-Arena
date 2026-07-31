@@ -38,6 +38,7 @@ import {
   GRID_ROWS,
   getLinearPixelSpeed,
   speedToTiles,
+  BALL_RADIUS,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
 import {
@@ -1124,14 +1125,10 @@ function executePass(
     }
   }
 
-  let passSpd = PASS_SPEED;
-  if (player.ability === "bullet_pass") passSpd *= 1.5;
-  if (isLongBall) {
-    const directDistance = vec2Dist(ball.position, targetPos);
-    // Keep even a full-pitch long ball readable but brisk; it should never
-    // crawl for several seconds and then be snapped to its destination.
-    passSpd = Math.max(passSpd * 1.35, Math.min(360, directDistance / 1.65));
-  }
+  // FTA_LONG_PASS_SLOW_V2
+  const abilityMultiplier = player.ability === "bullet_pass" ? 1.5 : 1;
+  const passSpd =
+    PASS_SPEED * abilityMultiplier * (isLongBall ? 0.58 : 1);
 
   ball.curveMotion =
     cmd.curvePoints && cmd.curvePoints.length >= 2
@@ -1153,17 +1150,29 @@ function executeShot(
   rng: () => number,
 ): void {
   const cmd = player.command;
-  const goalX = player.teamId === "player" ? GOAL_RIGHT_X + GOAL_DEPTH : GOAL_LEFT_X - GOAL_DEPTH;
+  const attackingRight = player.teamId === "player";
+  const fallbackX = attackingRight
+    ? GOAL_RIGHT_X + GOAL_DEPTH * 0.65
+    : GOAL_LEFT_X - GOAL_DEPTH * 0.65;
   const desired = cmd?.targetPosition ?? {
-    x: goalX,
+    x: fallbackX,
     y: PITCH_HEIGHT / 2,
   };
 
+  const targetX = attackingRight
+    ? clamp(
+        desired.x,
+        GOAL_RIGHT_X + BALL_RADIUS,
+        GOAL_RIGHT_X + GOAL_DEPTH - BALL_RADIUS,
+      )
+    : clamp(
+        desired.x,
+        GOAL_LEFT_X - GOAL_DEPTH + BALL_RADIUS,
+        GOAL_LEFT_X - BALL_RADIUS,
+      );
   const distanceTiles =
     vec2Dist(player.position, desired) / Math.max(TILE_W, TILE_H);
   const shooting = Math.max(1, Math.min(10, player.stats.shooting));
-
-  // Range increases error; shooting skill reduces it.
   const rangePressure = Math.max(0, distanceTiles - 3) * 0.12;
   const skillError = (11 - shooting) * 0.08;
   const maxErrorTiles = Math.min(2.25, rangePressure + skillError);
@@ -1171,14 +1180,10 @@ function executeShot(
     (rng() * 2 - 1) * maxErrorTiles * Math.max(TILE_W, TILE_H);
 
   const target = {
-    x: goalX,
-    y: Math.max(
-      GOAL_TOP_Y,
-      Math.min(GOAL_TOP_Y + GOAL_WIDTH, desired.y + errorY),
-    ),
+    x: targetX,
+    y: clamp(desired.y + errorY, BALL_RADIUS, PITCH_HEIGHT - BALL_RADIUS),
   };
 
-  // Shooting controls power. Eagle Eye keeps a modest power bonus.
   let shotSpd = SHOT_SPEED * (0.72 + shooting * 0.045);
   if (player.ability === "eagle_eye") shotSpd *= 1.08;
 
@@ -1739,43 +1744,50 @@ function constrainToField(players: SimPlayer[], ball: SimBall): void {
 
   if (ball.position.y < 0) {
     ball.velocity.y = Math.abs(ball.velocity.y) * 0.4;
-    ball.position.y = 1;
+    ball.position.y = BALL_RADIUS;
   } else if (ball.position.y > PITCH_HEIGHT) {
     ball.velocity.y = -Math.abs(ball.velocity.y) * 0.4;
-    ball.position.y = PITCH_HEIGHT - 1;
+    ball.position.y = PITCH_HEIGHT - BALL_RADIUS;
   }
 
-  if (!inGoalYRange) {
-    if (ball.position.x < GOAL_LEFT_X) {
-      ball.position.x = GOAL_LEFT_X + GOAL_DEPTH + 5;
-      ball.velocity.x = Math.abs(ball.velocity.x) * 0.3;
-      ball.velocity.y *= 0.3;
-    } else if (ball.position.x > GOAL_RIGHT_X) {
-      ball.position.x = GOAL_RIGHT_X - GOAL_DEPTH - 5;
-      ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
-      ball.velocity.y *= 0.3;
+  if (inGoalYRange) {
+    const leftBack = GOAL_LEFT_X - GOAL_DEPTH + BALL_RADIUS;
+    const rightBack = GOAL_RIGHT_X + GOAL_DEPTH - BALL_RADIUS;
+    if (ball.position.x < leftBack) {
+      ball.position.x = leftBack;
+      ball.velocity.x = Math.abs(ball.velocity.x) * 0.25;
+    } else if (ball.position.x > rightBack) {
+      ball.position.x = rightBack;
+      ball.velocity.x = -Math.abs(ball.velocity.x) * 0.25;
     }
+  } else if (ball.position.x < GOAL_LEFT_X) {
+    ball.position.x = GOAL_LEFT_X + BALL_RADIUS;
+    ball.velocity.x = Math.abs(ball.velocity.x) * 0.3;
+    ball.velocity.y *= 0.3;
+  } else if (ball.position.x > GOAL_RIGHT_X) {
+    ball.position.x = GOAL_RIGHT_X - BALL_RADIUS;
+    ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
+    ball.velocity.y *= 0.3;
   }
 }
 
 function checkGoal(ball: SimBall): "player" | "ai" | null {
   if (ball.ownerId !== null) return null;
 
-  if (
-    ball.position.x >= GOAL_RIGHT_X - GOAL_DEPTH &&
-    ball.position.y >= GOAL_TOP_Y &&
-    ball.position.y <= GOAL_BOTTOM_Y
-  ) {
-    return "player";
-  }
+  const completelyBetweenPosts =
+    ball.position.y - BALL_RADIUS >= GOAL_TOP_Y &&
+    ball.position.y + BALL_RADIUS <= GOAL_BOTTOM_Y;
+  if (!completelyBetweenPosts) return null;
 
-  if (
-    ball.position.x <= GOAL_LEFT_X + GOAL_DEPTH &&
-    ball.position.y >= GOAL_TOP_Y &&
-    ball.position.y <= GOAL_BOTTOM_Y
-  ) {
-    return "ai";
-  }
+  const fullyInsideRightNet =
+    ball.position.x - BALL_RADIUS > GOAL_RIGHT_X &&
+    ball.position.x <= GOAL_RIGHT_X + GOAL_DEPTH;
+  if (fullyInsideRightNet) return "player";
+
+  const fullyInsideLeftNet =
+    ball.position.x + BALL_RADIUS < GOAL_LEFT_X &&
+    ball.position.x >= GOAL_LEFT_X - GOAL_DEPTH;
+  if (fullyInsideLeftNet) return "ai";
 
   return null;
 }

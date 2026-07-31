@@ -112,7 +112,10 @@ function roundedRectPath(
 
 function createView(W: number, H: number, isVertical: boolean): View2_5D {
   // FTA_MOBILE_TOP_DOWN_V3: mobile uses a straight orthographic top-down pitch.
-  const baseH = isVertical ? PITCH_WIDTH : PITCH_HEIGHT;
+  // FTA_GOAL_VIEW_BOUNDS_V2
+  const viewMinX = -GOAL_DEPTH;
+  const viewMaxX = PITCH_WIDTH + GOAL_DEPTH;
+  const baseH = isVertical ? viewMaxX - viewMinX : PITCH_HEIGHT;
 
   // Mobile is a fixed, straight top-down view. Desktop keeps the angled presentation.
   const CAMERA_ZOOM = isVertical ? 1.0: 1.08;
@@ -125,7 +128,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
     isVertical
       ? {
           x: p.y,
-          y: PITCH_WIDTH - p.x,
+          y: viewMaxX - p.x,
         }
       : {
           x: p.x,
@@ -142,10 +145,10 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   };
 
   const corners = [
-    raw({ x: 0, y: 0 }),
-    raw({ x: PITCH_WIDTH, y: 0 }),
-    raw({ x: PITCH_WIDTH, y: PITCH_HEIGHT }),
-    raw({ x: 0, y: PITCH_HEIGHT }),
+    raw({ x: viewMinX, y: 0 }),
+    raw({ x: viewMaxX, y: 0 }),
+    raw({ x: viewMaxX, y: PITCH_HEIGHT }),
+    raw({ x: viewMinX, y: PITCH_HEIGHT }),
   ];
 
   const minX = Math.min(...corners.map((p) => p.x));
@@ -188,7 +191,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
 
     const pitch = isVertical
       ? {
-          x: PITCH_WIDTH - by,
+          x: viewMaxX - by,
           y: bx,
         }
       : {
@@ -197,8 +200,8 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
         };
 
     return {
-      x: clamp(pitch.x, 0, PITCH_WIDTH - 1),
-      y: clamp(pitch.y, 0, PITCH_HEIGHT - 1),
+      x: clamp(pitch.x, viewMinX, viewMaxX),
+      y: clamp(pitch.y, 0, PITCH_HEIGHT),
     };
   };
 
@@ -1162,13 +1165,15 @@ export default function PitchCanvas({
         } else if (cmd.type === CommandType.SHOOT) {
           drawArrow(
             pf.position,
-            {
-              x: pf.teamId === "player" ? PITCH_WIDTH : 0,
+            cmd.targetPosition ?? {
+              x: pf.teamId === "player"
+                ? PITCH_WIDTH + GOAL_DEPTH * 0.65
+                : -GOAL_DEPTH * 0.65,
               y: PITCH_HEIGHT / 2,
             },
             "#ff6b35",
             true,
-            true,
+            false,
             cmd.curvePoints,
           );
         }
@@ -1566,6 +1571,23 @@ export default function PitchCanvas({
 
       if (!selPlayer) return;
       if (selPlayer.teamId !== selectableTeam) return;
+
+      // FTA_PASS_INTO_NET_V2
+      const insideGoalDepth =
+        (pos.x < 0 || pos.x > PITCH_WIDTH) &&
+        pos.y >= GOAL_TOP_Y &&
+        pos.y <= GOAL_TOP_Y + GOAL_WIDTH;
+
+      if (passTargetMode && insideGoalDepth) {
+        onTileClick(
+          {
+            x: clamp(pos.x, -GOAL_DEPTH + BALL_RADIUS, PITCH_WIDTH + GOAL_DEPTH - BALL_RADIUS),
+            y: clamp(pos.y, GOAL_TOP_Y + BALL_RADIUS, GOAL_TOP_Y + GOAL_WIDTH - BALL_RADIUS),
+          },
+          false,
+        );
+        return;
+      }
 
       const clickedCol = clamp(Math.floor(pos.x / TILE_W), 0, GRID_COLS - 1);
       const clickedRow = clamp(Math.floor(pos.y / TILE_H), 0, GRID_ROWS - 1);

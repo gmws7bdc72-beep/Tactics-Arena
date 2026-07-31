@@ -22,10 +22,10 @@ import {
   MAX_MATCH_TURNS,
   speedToTiles,
   PLAYERS_PER_TEAM,
-  PITCH_WIDTH,
   GOAL_DEPTH,
   GOAL_TOP_Y,
   GOAL_WIDTH,
+  BALL_RADIUS,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
@@ -448,10 +448,24 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       );
       if (!selected) return;
 
-      const goalX = selected.teamId === "player" ? PITCH_WIDTH + GOAL_DEPTH : -GOAL_DEPTH;
+      const attackingRight = selected.teamId === "player";
+      const fallbackX = attackingRight
+        ? PITCH_WIDTH + GOAL_DEPTH * 0.65
+        : -GOAL_DEPTH * 0.65;
       const target = {
-        x: goalX,
-        y: Math.max(GOAL_TOP_Y, Math.min(GOAL_TOP_Y + GOAL_WIDTH, pos.y)),
+        x: attackingRight
+          ? Math.max(
+              PITCH_WIDTH + BALL_RADIUS,
+              Math.min(PITCH_WIDTH + GOAL_DEPTH - BALL_RADIUS, pos.x > PITCH_WIDTH ? pos.x : fallbackX),
+            )
+          : Math.min(
+              -BALL_RADIUS,
+              Math.max(-GOAL_DEPTH + BALL_RADIUS, pos.x < 0 ? pos.x : fallbackX),
+            ),
+        y: Math.max(
+          GOAL_TOP_Y + BALL_RADIUS,
+          Math.min(GOAL_TOP_Y + GOAL_WIDTH - BALL_RADIUS, pos.y),
+        ),
       };
 
       if (curve.active) {
@@ -661,7 +675,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
           onCurvePointClick={curve.addControl}
-          passTargetMode={passTargetMode || longPassTargetMode}
+          passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}

@@ -21,7 +21,8 @@ import type { AdaptiveAIState } from "../engine/ai";
 import type { AITeamDef } from "../game/league";
 import { getAIFormationById,
   getFormationById } from "../game/formations";
-import { PITCH_WIDTH,
+import {
+  PITCH_WIDTH,
   PITCH_HEIGHT,
   MAX_MATCH_TURNS,
   GOALS_TO_WIN,
@@ -29,10 +30,10 @@ import { PITCH_WIDTH,
   TILE_H,
   GRID_ROWS,
   PLAYERS_PER_TEAM,
-  PITCH_WIDTH,
   GOAL_DEPTH,
   GOAL_TOP_Y,
   GOAL_WIDTH,
+  BALL_RADIUS,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
@@ -693,10 +694,24 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       );
       if (!selected) return;
 
-      const goalX = selected.teamId === "player" ? PITCH_WIDTH + GOAL_DEPTH : -GOAL_DEPTH;
+      const attackingRight = selected.teamId === "player";
+      const fallbackX = attackingRight
+        ? PITCH_WIDTH + GOAL_DEPTH * 0.65
+        : -GOAL_DEPTH * 0.65;
       const target = {
-        x: goalX,
-        y: Math.max(GOAL_TOP_Y, Math.min(GOAL_TOP_Y + GOAL_WIDTH, pos.y)),
+        x: attackingRight
+          ? Math.max(
+              PITCH_WIDTH + BALL_RADIUS,
+              Math.min(PITCH_WIDTH + GOAL_DEPTH - BALL_RADIUS, pos.x > PITCH_WIDTH ? pos.x : fallbackX),
+            )
+          : Math.min(
+              -BALL_RADIUS,
+              Math.max(-GOAL_DEPTH + BALL_RADIUS, pos.x < 0 ? pos.x : fallbackX),
+            ),
+        y: Math.max(
+          GOAL_TOP_Y + BALL_RADIUS,
+          Math.min(GOAL_TOP_Y + GOAL_WIDTH - BALL_RADIUS, pos.y),
+        ),
       };
 
       if (curve.active) {
@@ -954,7 +969,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           aiTeamSecondaryColor={effectiveAiSecondaryColor}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
-          passTargetMode={passTargetMode || longPassTargetMode}
+          passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           passOriginPos={
