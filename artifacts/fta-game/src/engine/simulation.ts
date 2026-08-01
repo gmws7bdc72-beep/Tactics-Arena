@@ -6,6 +6,7 @@ import type {
   GameEvent,
   Vec2,
   PlayerStats,
+  DuelEffectSnapshot,
 } from "./types";
 import { PlayerState, CommandType, GameEventType } from "./types";
 import {
@@ -40,7 +41,7 @@ import {
   speedToTiles,
   BALL_RADIUS,
 } from "./constants";
-import { posToTile, tileToPos, getGoalkeeperDiveRange } from "./grid";
+import { posToTile, tileToPos } from "./grid";
 import {
   advanceCurveMotion,
   createCurveMotion,
@@ -192,43 +193,40 @@ export function getOffsidePlayers(players: SimPlayer[]): Set<string> {
   const aiTeam = players.filter((p) => p.teamId === "ai");
   const offside = new Set<string>();
 
-  // Offside only applies inside the attacking third (Baller League rules):
-  //   player team attacks rightward → offside zone: x > 2/3 of pitch
-  //   AI team attacks leftward      → offside zone: x < 1/3 of pitch
-  // The middle third is a free zone — no offside there.
+  // Baller-League attacking-third rule still applies. The defender now sets
+  // the line at the GOAL-SIDE EDGE of their tile, not at their centre. An
+  // attacker sharing that tile remains onside until their body crosses the
+  // leading edge nearest the goal.
   const ATTACK_LINE = (PITCH_WIDTH * 2) / 3;
   const DEFEND_LINE = PITCH_WIDTH / 3;
+  const EPSILON = 0.001;
 
-  // Player team: offside only when past the 2/3 line AND ahead of 2nd-to-last AI defender.
   if (aiTeam.length > 0) {
     const sortedAI = [...aiTeam].sort((a, b) => b.position.x - a.position.x);
-    const lineX =
-      sortedAI.length >= 2 ? sortedAI[1].position.x : sortedAI[0].position.x;
+    const defender = sortedAI.length >= 2 ? sortedAI[1] : sortedAI[0];
+    const defenderTile = posToTile(defender.position);
+    const lineX = (defenderTile.col + 1) * TILE_W;
     for (const p of playerTeam) {
       if (
         p.role !== "goalkeeper" &&
         p.position.x > ATTACK_LINE &&
-        p.position.x > lineX
+        p.position.x > lineX + EPSILON
       ) {
         offside.add(p.id);
       }
     }
   }
 
-  // AI team: offside only when past the 1/3 line AND ahead of 2nd-to-last player defender.
   if (playerTeam.length > 0) {
-    const sortedPlayer = [...playerTeam].sort(
-      (a, b) => a.position.x - b.position.x,
-    );
-    const lineX =
-      sortedPlayer.length >= 2
-        ? sortedPlayer[1].position.x
-        : sortedPlayer[0].position.x;
+    const sortedPlayer = [...playerTeam].sort((a, b) => a.position.x - b.position.x);
+    const defender = sortedPlayer.length >= 2 ? sortedPlayer[1] : sortedPlayer[0];
+    const defenderTile = posToTile(defender.position);
+    const lineX = defenderTile.col * TILE_W;
     for (const p of aiTeam) {
       if (
         p.role !== "goalkeeper" &&
         p.position.x < DEFEND_LINE &&
-        p.position.x < lineX
+        p.position.x < lineX - EPSILON
       ) {
         offside.add(p.id);
       }
@@ -353,6 +351,16 @@ interface BallTracker {
   offsideIds: Set<string>;
 }
 
+interface ActiveDuelEffect extends Omit<DuelEffectSnapshot, "progress"> {
+  startTick: number;
+  durationTicks: number;
+}
+
+function duelDirection(from: Vec2, to: Vec2): Vec2 {
+  const direction = vec2Normalize(vec2Sub(to, from));
+  return vec2Len(direction) > 0 ? direction : { x: 1, y: 0 };
+}
+
 function normalizeSimulationCommand(
   player: SimPlayer,
   command: Command | null,
@@ -428,6 +436,8 @@ export function runSimulation(
           points: ball.curveMotion.points.map((point) => ({ ...point })),
         }
       : undefined,
+    travelSpeed: ball.travelSpeed,
+    flightPeakHeight: ball.flightPeakHeight,
   };
 
   // Snap all players to tile centers at start of turn
@@ -464,6 +474,9 @@ export function runSimulation(
   let previousPositions = new Map(
     simPlayers.map((player) => [player.id, { ...player.position }]),
   );
+  const activeDuelEffects: ActiveDuelEffect[] = [];
+  const lastDuelEffectTick = new Map<string, number>();
+  let duelEffectSerial = 0;
   for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
@@ -486,7 +499,30 @@ export function runSimulation(
       passTracker,
     );
     constrainToField(simPlayers, simBall);
-    separateOverlapping(simPlayers, simBall, rng);
+    separateOverlapping(simPlayers, simBall, rng, tickEvents, tick);
+
+    for (const event of tickEvents) {
+      if (!event.visualEffect || !event.effectPosition || !event.effectDirection) continue;
+      const pair = [event.playerId ?? "", event.targetId ?? ""].sort().join(":");
+      const cooldownKey = `${event.visualEffect}:${pair}`;
+      const durationTicks = event.visualEffect === "outmuscled" ? 9 : 11;
+      const previousTick = lastDuelEffectTick.get(cooldownKey) ?? -999;
+      if (tick - previousTick < durationTicks) continue;
+      lastDuelEffectTick.set(cooldownKey, tick);
+      activeDuelEffects.push({
+        id: `duel-${tick}-${duelEffectSerial++}`,
+        kind: event.visualEffect,
+        position: { ...event.effectPosition },
+        direction: { ...event.effectDirection },
+        intensity: clamp(event.effectIntensity ?? 0.5, 0.2, 1),
+        startTick: tick,
+        durationTicks,
+      });
+    }
+    for (let index = activeDuelEffects.length - 1; index >= 0; index -= 1) {
+      const effect = activeDuelEffects[index];
+      if (tick - effect.startTick >= effect.durationTicks) activeDuelEffects.splice(index, 1);
+    }
 
     // FTA_STALL_RESOLUTION_V3
     const pendingPlayers = simPlayers.filter(
@@ -531,13 +567,16 @@ export function runSimulation(
         if (player.command && !player.commandExecuted) endPlannedContribution(player);
       }
       if (simBall.passTarget) {
-        simBall.position = { ...simBall.passTarget };
+        // Never spawn a stalled ball at its destination. If the absolute safety
+        // ceiling is ever reached, settle it where it physically is.
         simBall.velocity = { x: 0, y: 0 };
         simBall.passTarget = undefined;
         simBall.passStart = undefined;
         simBall.passStyle = undefined;
         simBall.height = 0;
         simBall.curveMotion = undefined;
+        simBall.travelSpeed = undefined;
+        simBall.flightPeakHeight = undefined;
       }
     }
 
@@ -557,12 +596,12 @@ export function runSimulation(
             : "GOAL! Opponent scores!",
       });
       allEvents.push(...tickEvents);
-      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
+      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
       break;
     }
 
     allEvents.push(...tickEvents);
-    frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
+    frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
 
     const actionsResolved = simPlayers.every((player) => {
       const activeAction =
@@ -725,8 +764,11 @@ export function runSimulation(
         velocity: { ...simBall.velocity },
         ownerId: simBall.ownerId,
         passTarget: simBall.passTarget ? { ...simBall.passTarget } : undefined,
+        passStart: simBall.passStart ? { ...simBall.passStart } : undefined,
         height: simBall.height ?? 0,
         passStyle: simBall.passStyle,
+        travelSpeed: simBall.travelSpeed,
+        flightPeakHeight: simBall.flightPeakHeight,
       },
       players: lastF.players.map((fp) => {
         const sp = simPlayers.find((p) => p.id === fp.id);
@@ -745,6 +787,8 @@ function separateOverlapping(
   players: SimPlayer[],
   ball: SimBall,
   rng: () => number,
+  events: GameEvent[],
+  tick: number,
 ): void {
   const minDist = PLAYER_RADIUS * 2.4;
   for (let i = 0; i < players.length; i += 1) {
@@ -798,11 +842,33 @@ function separateOverlapping(
       const awayX = aWins ? nx : -nx;
       const awayY = aWins ? ny : -ny;
 
+      const collisionPoint = {
+        x: (winner.position.x + loser.position.x) / 2,
+        y: (winner.position.y + loser.position.y) / 2,
+      };
+      const strengthDifference = Math.abs(physiqueStat(winner) - physiqueStat(loser));
+      const wasAlreadyRecovering = loser.state === PlayerState.RECOVERING;
+
       winner.position.x -= awayX * overlap * 0.08;
       winner.position.y -= awayY * overlap * 0.08;
       loser.position.x += awayX * (overlap * 0.92 + 3);
       loser.position.y += awayY * (overlap * 0.92 + 3);
       endPlannedContribution(loser);
+
+      if (!wasAlreadyRecovering) {
+        events.push({
+          type: GameEventType.LOOSE_BALL,
+          tick,
+          playerId: winner.id,
+          targetId: loser.id,
+          teamId: winner.teamId,
+          message: `${winner.name} outmuscles ${loser.name}`,
+          visualEffect: "outmuscled",
+          effectPosition: collisionPoint,
+          effectDirection: duelDirection(winner.position, loser.position),
+          effectIntensity: clamp(0.28 + strengthDifference / 9, 0.28, 1),
+        });
+      }
     }
   }
 }
@@ -811,6 +877,7 @@ function snapshotFrame(
   players: SimPlayer[],
   ball: SimBall,
   events: GameEvent[],
+  activeDuelEffects: ActiveDuelEffect[],
 ): FrameSnapshot {
   const offsidePlayers = getOffsidePlayers(players);
   return {
@@ -832,10 +899,25 @@ function snapshotFrame(
       velocity: { ...ball.velocity },
       ownerId: ball.ownerId,
       passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
+      passStart: ball.passStart ? { ...ball.passStart } : undefined,
       height: ball.height ?? 0,
       passStyle: ball.passStyle,
+      travelSpeed: ball.travelSpeed,
+      flightPeakHeight: ball.flightPeakHeight,
     },
     events: [...events],
+    duelEffects: activeDuelEffects.map((effect) => ({
+      id: effect.id,
+      kind: effect.kind,
+      position: { ...effect.position },
+      direction: { ...effect.direction },
+      intensity: effect.intensity,
+      progress: clamp(
+        (tick - effect.startTick) / Math.max(1, effect.durationTicks - 1),
+        0,
+        1,
+      ),
+    })),
   };
 }
 
@@ -1078,7 +1160,7 @@ function updatePlayerMovement(
       if (player.role === "goalkeeper" && ball.ownerId !== player.id && cmd.targetPosition) {
         const from = posToTile(player.position);
         const wanted = posToTile(cmd.targetPosition);
-        const maxTiles = getGoalkeeperDiveRange(player.stats.defense, player.stats.speed);
+        const maxTiles = Math.max(player.stats.defense, player.stats.speed) >= 9 ? 2 : 1;
         const rawDc = wanted.col - from.col;
         const rawDr = wanted.row - from.row;
         const rawLength = Math.hypot(rawDc, rawDr);
@@ -1233,7 +1315,6 @@ function executePass(
   }
 
   const abilityMultiplier = player.ability === "bullet_pass" ? 1.5 : 1;
-  const passSpeed = PASS_SPEED * abilityMultiplier * (isLongBall ? 0.58 : 1);
   const curveStat = isLongBall
     ? player.stats.longPassing
     : player.stats.passing;
@@ -1248,9 +1329,22 @@ function executePass(
   ball.curveMotion = legalCurve
     ? createCurveMotion(ball.position, legalCurve, targetPos)
     : undefined;
+  const routeDistance = ball.curveMotion?.totalLength ?? vec2Dist(ball.position, targetPos);
+  const distanceTiles = routeDistance / Math.max(TILE_W, TILE_H);
+  const groundPassSpeed = PASS_SPEED * abilityMultiplier;
+  // Long balls scale up with distance so very long deliveries never stall, but
+  // remain slower than the same player's ground pass at every distance.
+  const longBallRatio = clamp(0.70 + distanceTiles * 0.016, 0.72, 0.94);
+  const passSpeed = isLongBall
+    ? groundPassSpeed * longBallRatio
+    : groundPassSpeed;
   const firstTarget = ball.curveMotion?.points[0] ?? targetPos;
   const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(direction, passSpeed);
+  ball.travelSpeed = passSpeed;
+  ball.flightPeakHeight = isLongBall
+    ? clamp(22 + distanceTiles * 2.15, 28, 58)
+    : 0;
   ball.passTarget = { ...targetPos };
   ball.passStart = { ...ball.position };
   ball.passStyle = isLongBall ? "long" : "ground";
@@ -1313,6 +1407,8 @@ function executeShot(
   const firstTarget = ball.curveMotion?.points[0] ?? target;
   const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
   ball.velocity = vec2Scale(direction, shotSpeed);
+  ball.travelSpeed = shotSpeed;
+  ball.flightPeakHeight = 0;
   ball.passTarget = target;
   ball.passStart = { ...ball.position };
   ball.ownerId = null;
@@ -1325,12 +1421,16 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
     ball.passStyle = undefined;
     ball.passStart = undefined;
     ball.curveMotion = undefined;
+    ball.travelSpeed = undefined;
+    ball.flightPeakHeight = undefined;
     return;
   }
 
   if (ball.passTarget) {
-    ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
-    const speed = vec2Len(ball.velocity);
+    // A targeted kick keeps a constant, distance-aware travel speed. Friction
+    // only applies after a kick becomes loose; it can no longer freeze a long
+    // ball mid-flight and force a destination teleport.
+    const speed = Math.max(1, ball.travelSpeed ?? vec2Len(ball.velocity));
     let arrived = false;
 
     if (ball.curveMotion) {
@@ -1345,10 +1445,18 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
         : vec2Scale(advanced.direction, speed);
       arrived = advanced.arrived;
     } else {
-      const distBefore = vec2Dist(ball.position, ball.passTarget);
-      ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
-      const distAfter = vec2Dist(ball.position, ball.passTarget);
-      arrived = distAfter >= distBefore || distAfter < 4;
+      const toTarget = vec2Sub(ball.passTarget, ball.position);
+      const distance = vec2Len(toTarget);
+      const step = speed * dt;
+      if (distance <= step || distance < 0.5) {
+        ball.position = { ...ball.passTarget };
+        ball.velocity = { x: 0, y: 0 };
+        arrived = true;
+      } else {
+        const direction = vec2Normalize(toTarget);
+        ball.velocity = vec2Scale(direction, speed);
+        ball.position = vec2Add(ball.position, vec2Scale(direction, step));
+      }
     }
 
     if (ball.passStyle === "long" && ball.passStart) {
@@ -1360,12 +1468,12 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
             0,
             1,
           );
-      ball.height = Math.sin(progress * Math.PI) * 34;
+      ball.height = Math.sin(progress * Math.PI) * (ball.flightPeakHeight ?? 34);
     } else {
       ball.height = 0;
     }
 
-    if (arrived || speed < 2) {
+    if (arrived) {
       ball.position = { ...ball.passTarget };
       ball.velocity = { x: 0, y: 0 };
       ball.passTarget = undefined;
@@ -1373,6 +1481,8 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
       ball.passStyle = undefined;
       ball.passStart = undefined;
       ball.curveMotion = undefined;
+      ball.travelSpeed = undefined;
+      ball.flightPeakHeight = undefined;
     }
   } else {
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
@@ -1385,6 +1495,8 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
       ball.passStart = undefined;
       ball.height = 0;
       ball.curveMotion = undefined;
+      ball.travelSpeed = undefined;
+      ball.flightPeakHeight = undefined;
     }
   }
 }
@@ -1403,6 +1515,13 @@ function sameTile(a: { col: number; row: number }, b: { col: number; row: number
 function longBallDirectionalContestAllowed(player: SimPlayer, ball: SimBall, distToBall: number): boolean {
   if (ball.passStyle !== "long") return true;
   if (!ball.passStart || !ball.passTarget) return true;
+
+  // A curved delivery cannot be collected from the floor while it is still
+  // high in the air. Better aerial players gain a slightly larger playable
+  // window, but nobody can touch the ball near the top of its arc.
+  const aerial = statValue(player.stats.aerial, statValue(player.stats.attack, 5));
+  const playableHeight = 10 + aerial * 0.75;
+  if ((ball.height ?? 0) > playableHeight) return false;
 
   const startTile = posToTile(ball.passStart);
   const targetTile = posToTile(ball.passTarget);
@@ -1811,8 +1930,29 @@ function detectAndResolveEvents(
           type: GameEventType.LOOSE_BALL,
           tick,
           playerId: owner.id,
+          targetId: other.id,
           teamId: owner.teamId,
-          message: `${owner.name} holds off ${other.name}`,
+          message: `${owner.name} dribbles past ${other.name}`,
+          visualEffect: "dribbled",
+          effectPosition: {
+            x: (owner.position.x + other.position.x) / 2,
+            y: (owner.position.y + other.position.y) / 2,
+          },
+          effectDirection:
+            vec2Len(owner.velocity) > 5
+              ? vec2Normalize(owner.velocity)
+              : duelDirection(other.position, owner.position),
+          effectIntensity: clamp(
+            0.3 +
+              Math.max(
+                0,
+                statValue(owner.stats.dribbling, owner.stats.attack) -
+                  defenderBallWinStat(other),
+              ) /
+                8,
+            0.3,
+            1,
+          ),
         });
       } else {
         // Tackler wins the ball.

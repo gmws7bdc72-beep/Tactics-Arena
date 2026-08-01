@@ -27,7 +27,6 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
-import { getGoalkeeperDiveRange } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -154,7 +153,6 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setShotTargetMode(false);
-    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -622,20 +620,10 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     selectedSimPlayer.role === "goalkeeper" &&
     currentFrame?.ball.ownerId !== selectedSimPlayer.id;
 
-  const selectedDiveRange =
-    curvePlayer?.role === "goalkeeper"
-      ? getGoalkeeperDiveRange(curvePlayer.stats.defense, curvePlayer.stats.speed)
-      : 1;
-
   const beginGoalkeeperDive = useCallback(() => {
     if (!selectedPlayerId || !goalkeeperCanDive) return;
-    setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setShotTargetMode(false);
-    setComboActive(false);
-    curve.reset();
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive, curve]);
+  }, [selectedPlayerId, goalkeeperCanDive]);
 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
@@ -688,8 +676,6 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           onTileClick={handleTileClick}
           onCurvePointClick={curve.addControl}
           passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
-          diveTargetMode={diveTargetMode}
-          diveRange={selectedDiveRange}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}
@@ -720,42 +706,6 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           paddingBottom: "max(8px, env(safe-area-inset-bottom))",
         }}
       >
-        {/* Combo banner */}
-        {comboActive && (
-          <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#a78bfa" }}>
-            Combo Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-          </div>
-        )}
-        {!comboActive && (passTargetMode || longPassTargetMode || shotTargetMode) && (
-          <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#38bdf8" }}>
-            {shotTargetMode
-              ? "Tap inside the goal to place the shot"
-              : longPassTargetMode
-                ? "Tap a tile or player to launch a long ball"
-                : "Tap a tile or player to pass"}
-          </div>
-        )}
-        {curve.active && curve.instruction && (
-          <div
-            className="text-center text-xs mb-2 font-semibold"
-            style={{ color: curve.error ? "#fca5a5" : "#67e8f9" }}
-          >
-            {curve.error ?? curve.instruction}
-          </div>
-        )}
-
-        {/* Hint text */}
-        <p className="hidden sm:block text-center text-xs mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
-          {phase === "planning" && selectedPlayerId && !passTargetMode && !longPassTargetMode && !comboActive && !curve.active && "Tap green tile to move · ⚔ orange = tackle"}
-          {phase === "planning" && !comboActive && (passTargetMode || longPassTargetMode) && (longPassTargetMode ? "Tap a tile or player to launch a long ball" : "Tap a tile or player to pass")}
-          {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
-          {phase === "planning" && comboActive && comboMoveFirst && comboStep === 2 && "Now tap pass target (tile or player)"}
-          {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 1 && "Tap pass target (tile or player)"}
-          {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 2 && "Now tap move destination tile"}
-          {phase === "waiting" && `Submitted! Waiting for ${oppTeam.name}…`}
-          {phase === "simulating" && "Simulating…"}
-        </p>
-
         {phase === "planning" && !comboActive && (
           <MechanicPad
             onCancel={cancelAction}

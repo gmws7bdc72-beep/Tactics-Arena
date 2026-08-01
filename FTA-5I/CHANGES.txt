@@ -1,0 +1,8 @@
+FTA-5I
+- Removes action helper tips and button hover tips.
+- Distance-scaled, continuously animated long-ball flight.
+- Preserves long-ball vision while keeping long passes slower than ground passes.
+- Prevents high curved long balls from being collected before they descend.
+- Adds text-free animated outmuscling and dribble effects.
+- Uses the goal-side edge of the defender tile for offside.
+- Allows AI passes, long balls, Move+Pass and Pass+Move to target the goal.

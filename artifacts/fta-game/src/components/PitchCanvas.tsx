@@ -17,12 +17,7 @@ import {
   GRID_COLS,
   GRID_ROWS,
 } from "../engine/constants";
-import {
-  posToTile,
-  getReachableTiles,
-  getDiveReachableTiles,
-  tileToPos,
-} from "../engine/grid";
+import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
 import { sampleChainedCurve } from "../engine/curve";
 
 interface Props {
@@ -33,8 +28,6 @@ interface Props {
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
   passTargetMode: boolean;
-  diveTargetMode?: boolean;
-  diveRange?: number;
   passOriginPos?: Vec2;
   curveDraft?: {
     origin: Vec2;
@@ -634,8 +627,6 @@ export default function PitchCanvas({
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
-  diveTargetMode = false,
-  diveRange = 1,
   curveDraft,
   curveControlMode = false,
   phase,
@@ -700,7 +691,7 @@ export default function PitchCanvas({
 
     const pt = posToTile(selPlayer.position);
     const isGK = selPlayer.role === "goalkeeper";
-    const range = diveTargetMode ? diveRange : selPlayer.tileRange;
+    const range = selPlayer.tileRange;
 
     map.set(`${pt.col},${pt.row}`, "current");
 
@@ -716,15 +707,13 @@ export default function PitchCanvas({
       );
     }
 
-    const reachable = diveTargetMode
-      ? getDiveReachableTiles(pt.col, pt.row, range, selPlayer.teamId)
-      : getReachableTiles(
-          pt.col,
-          pt.row,
-          range,
-          isGK,
-          selPlayer.teamId,
-        );
+    const reachable = getReachableTiles(
+      pt.col,
+      pt.row,
+      range,
+      isGK,
+      selPlayer.teamId,
+    );
 
     for (const t of reachable) {
       const key = `${t.col},${t.row}`;
@@ -736,7 +725,7 @@ export default function PitchCanvas({
     }
 
     return map;
-  }, [frame, selectedPlayerId, passTargetMode, diveTargetMode, diveRange]);
+  }, [frame, selectedPlayerId, passTargetMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1445,6 +1434,110 @@ export default function PitchCanvas({
         ctx.restore();
       }
     }
+    // Whimsical, text-free duel signifiers. Strength collisions use a warm
+    // angular burst; successful dribbles use a flowing teal swoosh and stars.
+    for (const effect of frame.duelEffects ?? []) {
+      const center = view.project(effect.position);
+      const ahead = view.project({
+        x: effect.position.x + effect.direction.x * TILE_W * 0.6,
+        y: effect.position.y + effect.direction.y * TILE_H * 0.6,
+      });
+      const angle = Math.atan2(ahead.y - center.y, ahead.x - center.x);
+      const progress = clamp(effect.progress, 0, 1);
+      const opacity = Math.pow(1 - progress, 1.25);
+      const bloom = Math.sin(Math.min(1, progress * 1.8) * Math.PI * 0.5);
+      const size = view.radius((12 + effect.intensity * 14) * (0.65 + bloom * 0.55), effect.position.y);
+
+      if (effect.kind === "outmuscled") {
+        ctx.save();
+        ctx.translate(center.x, center.y);
+        ctx.rotate(angle);
+        ctx.globalAlpha = opacity;
+
+        const flash = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 1.2);
+        flash.addColorStop(0, "rgba(255,255,210,0.9)");
+        flash.addColorStop(0.35, "rgba(255,190,55,0.48)");
+        flash.addColorStop(1, "rgba(255,92,40,0)");
+        ctx.fillStyle = flash;
+        ctx.beginPath();
+        ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255,222,92,0.9)";
+        ctx.lineWidth = Math.max(1.5, size * 0.09);
+        ctx.beginPath();
+        ctx.arc(0, 0, size * (0.25 + progress * 0.85), 0, Math.PI * 2);
+        ctx.stroke();
+
+        const shardCount = 6;
+        for (let shard = 0; shard < shardCount; shard += 1) {
+          const shardAngle = (Math.PI * 2 * shard) / shardCount + (effect.id.length % 5) * 0.08;
+          const inner = size * (0.3 + progress * 0.35);
+          const outer = size * (0.8 + effect.intensity * 0.45 + progress * 0.25);
+          const width = size * 0.14;
+          ctx.save();
+          ctx.rotate(shardAngle);
+          ctx.fillStyle = shard % 2 === 0 ? "rgba(255,104,54,0.95)" : "rgba(255,214,72,0.95)";
+          ctx.beginPath();
+          ctx.moveTo(inner, -width);
+          ctx.lineTo(outer, 0);
+          ctx.lineTo(inner, width);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.restore();
+      } else {
+        ctx.save();
+        ctx.translate(center.x, center.y);
+        ctx.rotate(angle);
+        ctx.globalAlpha = opacity;
+        ctx.lineCap = "round";
+
+        const sweep = size * (1.1 + progress * 0.45);
+        ctx.strokeStyle = "rgba(45,230,220,0.92)";
+        ctx.lineWidth = Math.max(2, size * 0.15);
+        ctx.beginPath();
+        ctx.moveTo(-sweep * 0.75, size * 0.25);
+        ctx.quadraticCurveTo(-sweep * 0.05, -size * 0.9, sweep * 0.8, -size * 0.05);
+        ctx.stroke();
+
+        ctx.strokeStyle = "rgba(116,246,255,0.68)";
+        ctx.lineWidth = Math.max(1.2, size * 0.07);
+        ctx.beginPath();
+        ctx.moveTo(-sweep * 0.55, size * 0.52);
+        ctx.quadraticCurveTo(0, -size * 0.35, sweep * 0.7, size * 0.18);
+        ctx.stroke();
+
+        const starPoints = [
+          { x: -sweep * 0.18, y: -size * 0.78 },
+          { x: sweep * 0.32, y: -size * 0.48 },
+          { x: sweep * 0.7, y: size * 0.12 },
+        ];
+        for (let star = 0; star < starPoints.length; star += 1) {
+          const point = starPoints[star];
+          const radius = size * (0.13 + star * 0.025) * (0.8 + bloom * 0.4);
+          ctx.save();
+          ctx.translate(point.x, point.y);
+          ctx.rotate(progress * 1.8 + star * 0.45);
+          ctx.fillStyle = star % 2 === 0 ? "rgba(138,255,244,0.96)" : "rgba(85,190,255,0.95)";
+          ctx.beginPath();
+          for (let pointIndex = 0; pointIndex < 8; pointIndex += 1) {
+            const starAngle = (Math.PI * pointIndex) / 4;
+            const starRadius = pointIndex % 2 === 0 ? radius : radius * 0.3;
+            const x = Math.cos(starAngle) * starRadius;
+            const y = Math.sin(starAngle) * starRadius;
+            if (pointIndex === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+    }
+
     const visualBall = frame.ball as typeof frame.ball & {
       height?: number;
       passStyle?: string;
@@ -1608,16 +1701,14 @@ export default function PitchCanvas({
 
       if (!passTargetMode) {
         const isGK = selPlayer.role === "goalkeeper";
-        const range = diveTargetMode ? diveRange : selPlayer.tileRange;
-        const reachable = diveTargetMode
-          ? getDiveReachableTiles(selTile.col, selTile.row, range, selPlayer.teamId)
-          : getReachableTiles(
-              selTile.col,
-              selTile.row,
-              range,
-              isGK,
-              selPlayer.teamId,
-            );
+        const range = selPlayer.tileRange;
+        const reachable = getReachableTiles(
+          selTile.col,
+          selTile.row,
+          range,
+          isGK,
+          selPlayer.teamId,
+        );
         const isReachable = reachable.some(
           (t) => t.col === clickedCol && t.row === clickedRow,
         );
@@ -1648,8 +1739,6 @@ export default function PitchCanvas({
       onPlayerClick,
       onTileClick,
       passTargetMode,
-      diveTargetMode,
-      diveRange,
       curveControlMode,
       onCurvePointClick,
       activePlanningTeam,

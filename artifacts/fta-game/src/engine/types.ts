@@ -228,6 +228,21 @@ export interface SimBall {
     travelled: number;
     totalLength: number;
   };
+  /** Constant speed used while a targeted pass or shot is in flight. */
+  travelSpeed?: number;
+  /** Peak visual height for a long ball, scaled to its route distance. */
+  flightPeakHeight?: number;
+}
+
+export type DuelEffectKind = "outmuscled" | "dribbled";
+
+export interface DuelEffectSnapshot {
+  id: string;
+  kind: DuelEffectKind;
+  position: Vec2;
+  direction: Vec2;
+  intensity: number;
+  progress: number;
 }
 
 export enum GameEventType {
@@ -251,6 +266,11 @@ export interface GameEvent {
   targetId?: string;
   teamId?: "player" | "ai";
   message: string;
+  /** Optional non-text pitch effect attached to a physical duel. */
+  visualEffect?: DuelEffectKind;
+  effectPosition?: Vec2;
+  effectDirection?: Vec2;
+  effectIntensity?: number;
 }
 
 export interface FrameSnapshot {
@@ -277,10 +297,14 @@ export interface FrameSnapshot {
     ownerId: string | null;
     /** Preserved from the previous turn when a pass was still in flight at turn end. */
     passTarget?: Vec2;
+    passStart?: Vec2;
     height?: number;
     passStyle?: PassStyle;
+    travelSpeed?: number;
+    flightPeakHeight?: number;
   };
   events: GameEvent[];
+  duelEffects?: DuelEffectSnapshot[];
 }
 
 export interface Formation {

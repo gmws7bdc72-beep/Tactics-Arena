@@ -35,7 +35,6 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
-import { getGoalkeeperDiveRange } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -310,7 +309,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setShotTargetMode(false);
-    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -393,14 +391,19 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         ? { position: { ...concedingGK.position }, velocity: { x: 0, y: 0 }, ownerId: concedingGK.id, height: 0 }
         : { position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 }, velocity: { x: 0, y: 0 }, ownerId: null, height: 0 };
     } else {
-      // Zero velocity so the planning phase always starts with a stationary ball.
-      // If the simulation ended with the ball still rolling (a pass that didn't
-      // reach its target in 60 ticks), snap it to passTarget immediately so the
-      // planning UI always shows the ball at the correct destination tile.
-      newBall = { ...lastFrame.ball, velocity: { x: 0, y: 0 }, height: 0, passStyle: undefined, passStart: undefined };
-      if (newBall.passTarget) {
-        newBall = { ...newBall, position: { ...newBall.passTarget }, passTarget: undefined };
-      }
+      // The phase waits for targeted kicks to resolve. If an emergency safety
+      // stop ever leaves a ball loose, keep it at the position it physically
+      // reached instead of spawning it at the old destination.
+      newBall = {
+        ...lastFrame.ball,
+        velocity: { x: 0, y: 0 },
+        height: 0,
+        passStyle: undefined,
+        passStart: undefined,
+        passTarget: undefined,
+        travelSpeed: undefined,
+        flightPeakHeight: undefined,
+      };
     }
 
     setPlayers(newSimPlayers);
@@ -479,15 +482,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       }));
     } else {
       const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
-      // Give the AI the player's planned actions before it chooses its response.
-      // This is essential for goalkeepers to anticipate shots/through balls.
-      const playerPlayersList = currentPlayers
-        .filter(x => x.teamId === "player")
-        .map((player) => ({
-          ...player,
-          command: currentPending.get(player.id) ?? null,
-          commandExecuted: false,
-        }));
+      const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
       const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current, opponentTeamDef.tactic);
       withCommands = currentPlayers.map(p => {
         const cmd = p.teamId === "player"
@@ -905,20 +900,10 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     selectedSimPlayer.role === "goalkeeper" &&
     currentFrame?.ball.ownerId !== selectedSimPlayer.id;
 
-  const selectedDiveRange =
-    curvePlayer?.role === "goalkeeper"
-      ? getGoalkeeperDiveRange(curvePlayer.stats.defense, curvePlayer.stats.speed)
-      : 1;
-
   const beginGoalkeeperDive = useCallback(() => {
     if (!selectedPlayerId || !goalkeeperCanDive) return;
-    setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setShotTargetMode(false);
-    setComboActive(false);
-    curve.reset();
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive, curve]);
+  }, [selectedPlayerId, goalkeeperCanDive]);
 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
@@ -990,8 +975,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
-          diveTargetMode={diveTargetMode}
-          diveRange={selectedDiveRange}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           passOriginPos={
@@ -1009,40 +992,6 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         {isMobile && (
           <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
             <span className="text-[10px] text-white/40 font-semibold tracking-wide">▼ Your Goal</span>
-          </div>
-        )}
-
-        {/* Combo hint banner */}
-        {comboActive && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-            <div className="bg-purple-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center whitespace-nowrap">
-              {comboMoveFirst
-                ? comboStep === 1 ? "Combo: tap move destination" : "Combo: tap pass target"
-                : comboStep === 1 ? "Combo: tap pass target" : "Combo: tap move destination"}
-            </div>
-          </div>
-        )}
-
-        {!comboActive && (passTargetMode || longPassTargetMode || shotTargetMode) && (
-          <div
-            className="absolute top-2 left-1/2 -translate-x-1/2 text-xs font-bold px-3 py-1.5 rounded-full pointer-events-none shadow-lg"
-            style={{
-              background: longPassTargetMode ? "rgba(14,165,233,0.94)" : "rgba(250,204,21,0.94)",
-              color: longPassTargetMode ? "white" : "black",
-            }}
-          >
-            {longPassTargetMode ? "Tap tile or teammate to launch long ball" : "Tap tile or teammate to pass"}
-          </div>
-        )}
-
-        {curve.active && curve.instruction && (
-          <div className="absolute top-12 left-1/2 -translate-x-1/2 z-10 pointer-events-none max-w-[92%]">
-            <div
-              className="text-white text-[11px] sm:text-xs font-bold px-3 py-1.5 rounded-full shadow-lg text-center"
-              style={{ background: curve.error ? "rgba(185,28,28,0.95)" : "rgba(8,145,178,0.95)" }}
-            >
-              {curve.error ?? curve.instruction}
-            </div>
           </div>
         )}
 
@@ -1080,18 +1029,14 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           />
         )}
 
-        {/* Combo in-progress: show cancel */}
         {comboActive && phase === "planning" && (
-          <div className="flex gap-1.5 px-2 sm:px-4 pt-1.5 sm:pt-2.5">
+          <div className="flex justify-center px-2 sm:px-4 pt-1.5 sm:pt-2.5">
             <button
               onClick={cancelAction}
               className="px-3 py-2 rounded-xl text-gray-500 text-sm font-medium hover:text-white transition-colors"
             >
               ✕ Cancel
             </button>
-            <div className="flex-1 flex items-center justify-center text-xs text-purple-400 font-semibold">
-              Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
-            </div>
           </div>
         )}
 
