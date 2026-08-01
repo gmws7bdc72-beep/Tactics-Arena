@@ -1434,108 +1434,145 @@ export default function PitchCanvas({
         ctx.restore();
       }
     }
-    // Whimsical, text-free duel signifiers. Strength collisions use a warm
-    // angular burst; successful dribbles use a flowing teal swoosh and stars.
+    // Refined, text-free duel feedback. Effects stay compact and directional:
+    // a soft compression wave for physical wins and a clean motion ribbon for
+    // successful dribbles. No comic bursts, stars or floating labels.
     for (const effect of frame.duelEffects ?? []) {
-      const center = view.project(effect.position);
-      const ahead = view.project({
-        x: effect.position.x + effect.direction.x * TILE_W * 0.6,
-        y: effect.position.y + effect.direction.y * TILE_H * 0.6,
+      const origin = view.project(effect.position);
+      const directionPoint = view.project({
+        x: effect.position.x + effect.direction.x * TILE_W * 0.55,
+        y: effect.position.y + effect.direction.y * TILE_H * 0.55,
       });
-      const angle = Math.atan2(ahead.y - center.y, ahead.x - center.x);
+      const angle = Math.atan2(directionPoint.y - origin.y, directionPoint.x - origin.x);
       const progress = clamp(effect.progress, 0, 1);
-      const opacity = Math.pow(1 - progress, 1.25);
-      const bloom = Math.sin(Math.min(1, progress * 1.8) * Math.PI * 0.5);
-      const size = view.radius((12 + effect.intensity * 14) * (0.65 + bloom * 0.55), effect.position.y);
+      const easedOut = 1 - Math.pow(1 - progress, 3);
+      const easedInOut = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const alpha = Math.pow(1 - progress, 1.8);
+      const size = view.radius(8 + effect.intensity * 9, effect.position.y);
+
+      ctx.save();
+      ctx.translate(origin.x, origin.y);
+      ctx.rotate(angle);
+      ctx.globalCompositeOperation = "lighter";
 
       if (effect.kind === "outmuscled") {
-        ctx.save();
-        ctx.translate(center.x, center.y);
-        ctx.rotate(angle);
-        ctx.globalAlpha = opacity;
+        // A compressed pair of curved pressure waves opens away from contact.
+        // The blurred under-layer gives depth; the crisp inner line keeps it
+        // readable without looking like a retro comic-book impact graphic.
+        const opening = size * (0.18 + easedOut * 0.82);
+        const waveHeight = size * (0.55 + effect.intensity * 0.18);
+        const stroke = Math.max(1.2, size * 0.09);
+        const waveGradient = ctx.createLinearGradient(-opening, 0, opening, 0);
+        waveGradient.addColorStop(0, "rgba(255,118,70,0)");
+        waveGradient.addColorStop(0.35, `rgba(255,151,84,${0.55 * alpha})`);
+        waveGradient.addColorStop(0.68, `rgba(255,215,132,${0.8 * alpha})`);
+        waveGradient.addColorStop(1, "rgba(255,238,190,0)");
 
-        const flash = ctx.createRadialGradient(0, 0, 0, 0, 0, size * 1.2);
-        flash.addColorStop(0, "rgba(255,255,210,0.9)");
-        flash.addColorStop(0.35, "rgba(255,190,55,0.48)");
-        flash.addColorStop(1, "rgba(255,92,40,0)");
-        ctx.fillStyle = flash;
-        ctx.beginPath();
-        ctx.arc(0, 0, size * 1.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "rgba(255,222,92,0.9)";
-        ctx.lineWidth = Math.max(1.5, size * 0.09);
-        ctx.beginPath();
-        ctx.arc(0, 0, size * (0.25 + progress * 0.85), 0, Math.PI * 2);
-        ctx.stroke();
-
-        const shardCount = 6;
-        for (let shard = 0; shard < shardCount; shard += 1) {
-          const shardAngle = (Math.PI * 2 * shard) / shardCount + (effect.id.length % 5) * 0.08;
-          const inner = size * (0.3 + progress * 0.35);
-          const outer = size * (0.8 + effect.intensity * 0.45 + progress * 0.25);
-          const width = size * 0.14;
+        const drawPressureWave = (offset: number, blur: number, widthScale: number) => {
           ctx.save();
-          ctx.rotate(shardAngle);
-          ctx.fillStyle = shard % 2 === 0 ? "rgba(255,104,54,0.95)" : "rgba(255,214,72,0.95)";
+          ctx.filter = blur > 0 ? `blur(${blur}px)` : "none";
+          ctx.strokeStyle = waveGradient;
+          ctx.lineWidth = stroke * widthScale;
+          ctx.lineCap = "round";
           ctx.beginPath();
-          ctx.moveTo(inner, -width);
-          ctx.lineTo(outer, 0);
-          ctx.lineTo(inner, width);
-          ctx.closePath();
-          ctx.fill();
+          ctx.moveTo(-opening * 0.9, offset);
+          ctx.bezierCurveTo(
+            -opening * 0.2,
+            offset - waveHeight,
+            opening * 0.55,
+            offset - waveHeight * 0.38,
+            opening,
+            offset,
+          );
+          ctx.stroke();
           ctx.restore();
-        }
+        };
+
+        drawPressureWave(size * 0.13, 5, 2.4);
+        drawPressureWave(size * 0.13, 0, 1);
+
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.72;
+        ctx.strokeStyle = "rgba(255,230,184,0.9)";
+        ctx.lineWidth = Math.max(1, stroke * 0.7);
+        ctx.beginPath();
+        ctx.ellipse(
+          -size * 0.03,
+          size * 0.08,
+          size * (0.18 + easedOut * 0.18),
+          size * (0.08 + easedOut * 0.07),
+          0,
+          0,
+          Math.PI * 2,
+        );
+        ctx.stroke();
         ctx.restore();
+
+        // A few tiny fading motes suggest turf/contact without becoming noisy.
+        for (let mote = 0; mote < 3; mote += 1) {
+          const phase = (mote + 1) / 4;
+          const distance = size * (0.28 + easedOut * (0.45 + phase * 0.28));
+          const y = size * (0.18 + (mote - 1) * 0.18);
+          ctx.globalAlpha = alpha * (0.46 - mote * 0.08);
+          ctx.fillStyle = mote === 1 ? "rgba(255,210,144,0.9)" : "rgba(255,139,82,0.85)";
+          ctx.beginPath();
+          ctx.arc(distance, y, Math.max(0.8, size * (0.045 - mote * 0.006)), 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
-        ctx.save();
-        ctx.translate(center.x, center.y);
-        ctx.rotate(angle);
-        ctx.globalAlpha = opacity;
-        ctx.lineCap = "round";
+        // A narrow ribbon follows the successful dribbler's exit line. The
+        // effect moves forward as it fades, reading as footwork rather than an
+        // explosion at the defender.
+        const travel = size * easedOut * 0.72;
+        ctx.translate(travel, 0);
+        const ribbonLength = size * (1.05 + effect.intensity * 0.34);
+        const ribbonHeight = size * (0.38 + effect.intensity * 0.12);
+        const ribbonGradient = ctx.createLinearGradient(-ribbonLength, 0, ribbonLength, 0);
+        ribbonGradient.addColorStop(0, "rgba(58,214,226,0)");
+        ribbonGradient.addColorStop(0.35, `rgba(64,225,220,${0.38 * alpha})`);
+        ribbonGradient.addColorStop(0.72, `rgba(154,250,239,${0.78 * alpha})`);
+        ribbonGradient.addColorStop(1, "rgba(216,255,250,0)");
 
-        const sweep = size * (1.1 + progress * 0.45);
-        ctx.strokeStyle = "rgba(45,230,220,0.92)";
-        ctx.lineWidth = Math.max(2, size * 0.15);
-        ctx.beginPath();
-        ctx.moveTo(-sweep * 0.75, size * 0.25);
-        ctx.quadraticCurveTo(-sweep * 0.05, -size * 0.9, sweep * 0.8, -size * 0.05);
-        ctx.stroke();
-
-        ctx.strokeStyle = "rgba(116,246,255,0.68)";
-        ctx.lineWidth = Math.max(1.2, size * 0.07);
-        ctx.beginPath();
-        ctx.moveTo(-sweep * 0.55, size * 0.52);
-        ctx.quadraticCurveTo(0, -size * 0.35, sweep * 0.7, size * 0.18);
-        ctx.stroke();
-
-        const starPoints = [
-          { x: -sweep * 0.18, y: -size * 0.78 },
-          { x: sweep * 0.32, y: -size * 0.48 },
-          { x: sweep * 0.7, y: size * 0.12 },
-        ];
-        for (let star = 0; star < starPoints.length; star += 1) {
-          const point = starPoints[star];
-          const radius = size * (0.13 + star * 0.025) * (0.8 + bloom * 0.4);
+        const drawRibbon = (verticalOffset: number, blur: number, width: number) => {
           ctx.save();
-          ctx.translate(point.x, point.y);
-          ctx.rotate(progress * 1.8 + star * 0.45);
-          ctx.fillStyle = star % 2 === 0 ? "rgba(138,255,244,0.96)" : "rgba(85,190,255,0.95)";
+          ctx.filter = blur > 0 ? `blur(${blur}px)` : "none";
+          ctx.strokeStyle = ribbonGradient;
+          ctx.lineWidth = width;
+          ctx.lineCap = "round";
           ctx.beginPath();
-          for (let pointIndex = 0; pointIndex < 8; pointIndex += 1) {
-            const starAngle = (Math.PI * pointIndex) / 4;
-            const starRadius = pointIndex % 2 === 0 ? radius : radius * 0.3;
-            const x = Math.cos(starAngle) * starRadius;
-            const y = Math.sin(starAngle) * starRadius;
-            if (pointIndex === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
-          ctx.closePath();
-          ctx.fill();
+          ctx.moveTo(-ribbonLength * 0.72, verticalOffset + ribbonHeight * 0.28);
+          ctx.bezierCurveTo(
+            -ribbonLength * 0.26,
+            verticalOffset - ribbonHeight,
+            ribbonLength * 0.2,
+            verticalOffset + ribbonHeight * 0.55,
+            ribbonLength * 0.82,
+            verticalOffset - ribbonHeight * 0.16,
+          );
+          ctx.stroke();
           ctx.restore();
+        };
+
+        drawRibbon(0, 5, Math.max(3, size * 0.24));
+        drawRibbon(0, 0, Math.max(1.25, size * 0.09));
+        drawRibbon(size * 0.24, 0, Math.max(0.8, size * 0.052));
+
+        // Two restrained lens-like glints replace the old rotating stars.
+        for (let glint = 0; glint < 2; glint += 1) {
+          const gx = ribbonLength * (0.18 + glint * 0.38);
+          const gy = ribbonHeight * (-0.45 + glint * 0.72);
+          const glintRadius = size * (0.055 + (1 - easedInOut) * 0.025);
+          ctx.globalAlpha = alpha * (0.7 - glint * 0.14);
+          ctx.fillStyle = glint === 0 ? "rgba(201,255,249,0.95)" : "rgba(90,224,235,0.85)";
+          ctx.beginPath();
+          ctx.arc(gx, gy, glintRadius, 0, Math.PI * 2);
+          ctx.fill();
         }
-        ctx.restore();
       }
+
+      ctx.restore();
     }
 
     const visualBall = frame.ball as typeof frame.ball & {

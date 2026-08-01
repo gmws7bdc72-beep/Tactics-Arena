@@ -1,0 +1,1 @@
+Physical duel winner now continues untouched while only the loser is pushed aside and stopped. Replaced duel effects with compact modern pressure-wave and motion-ribbon animation.

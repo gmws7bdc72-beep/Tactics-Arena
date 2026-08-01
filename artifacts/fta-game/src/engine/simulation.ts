@@ -672,6 +672,11 @@ export function runSimulation(
     };
 
     const chooseWinner = (a: SimPlayer, b: SimPlayer): SimPlayer => {
+      // Preserve an in-turn physical-duel result during end-of-turn snapping.
+      // The recovering player already lost and must yield the tile.
+      if (a.state === PlayerState.RECOVERING && b.state !== PlayerState.RECOVERING) return b;
+      if (b.state === PlayerState.RECOVERING && a.state !== PlayerState.RECOVERING) return a;
+
       const aOwns = a.id === simBall.ownerId;
       const bOwns = b.id === simBall.ownerId;
 
@@ -834,13 +839,17 @@ function separateOverlapping(
         continue;
       }
 
-      // Opposing paths are decided primarily by Strength/physicality. Every
-      // point of difference changes the odds, while equal players are 50/50.
-      const aWins = rng() < noBallTileWinChance(a, b);
+      // One player wins the lane and continues their planned movement. The
+      // loser yields sideways and their contribution ends. A player already
+      // recovering from this duel can never immediately re-win it on a later
+      // tick, which previously caused both players to stop.
+      const aRecovering = a.state === PlayerState.RECOVERING;
+      const bRecovering = b.state === PlayerState.RECOVERING;
+      const aWins = aRecovering !== bRecovering
+        ? !aRecovering
+        : rng() < noBallTileWinChance(a, b);
       const winner = aWins ? a : b;
       const loser = aWins ? b : a;
-      const awayX = aWins ? nx : -nx;
-      const awayY = aWins ? ny : -ny;
 
       const collisionPoint = {
         x: (winner.position.x + loser.position.x) / 2,
@@ -849,10 +858,25 @@ function separateOverlapping(
       const strengthDifference = Math.abs(physiqueStat(winner) - physiqueStat(loser));
       const wasAlreadyRecovering = loser.state === PlayerState.RECOVERING;
 
-      winner.position.x -= awayX * overlap * 0.08;
-      winner.position.y -= awayY * overlap * 0.08;
-      loser.position.x += awayX * (overlap * 0.92 + 3);
-      loser.position.y += awayY * (overlap * 0.92 + 3);
+      const winnerTravel = vec2Len(winner.velocity) > 1
+        ? vec2Normalize(winner.velocity)
+        : duelDirection(loser.position, winner.position);
+      const side = { x: -winnerTravel.y, y: winnerTravel.x };
+      const loserRelative = vec2Sub(loser.position, winner.position);
+      const sideSign = loserRelative.x * side.x + loserRelative.y * side.y >= 0 ? 1 : -1;
+      const radial = vec2Len(loserRelative) > 0.01
+        ? vec2Normalize(loserRelative)
+        : { x: side.x * sideSign, y: side.y * sideSign };
+      const yieldDirection = vec2Normalize({
+        x: side.x * sideSign * 0.82 + radial.x * 0.18,
+        y: side.y * sideSign * 0.82 + radial.y * 0.18,
+      });
+      const yieldDistance = overlap + PLAYER_RADIUS * (0.65 + strengthDifference * 0.035);
+
+      // Winner is deliberately untouched: they keep their exact position,
+      // velocity, curve and destination. Only the loser is pushed aside.
+      loser.position.x += yieldDirection.x * yieldDistance;
+      loser.position.y += yieldDirection.y * yieldDistance;
       endPlannedContribution(loser);
 
       if (!wasAlreadyRecovering) {
