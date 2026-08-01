@@ -12,7 +12,7 @@ import type { SimPlayer,
   Vec2 } from "../engine/types";
 import { CommandType,
   GameEventType } from "../engine/types";
-import type { PlayerCard } from "../engine/types";
+import type { KitStyle, PlayerCard, SleeveStyle } from "../engine/types";
 import { runSimulation } from "../engine/simulation";
 import { getFormationById,
   getAIFormationById } from "../game/formations";
@@ -33,12 +33,15 @@ import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
 import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { getSocket, disconnectSocket } from "../lib/socket";
+import { deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 
 export interface TeamSummary {
   rulesVersion: number;
   name: string;
   jerseyColor: string;
   secondaryColor?: string;
+  kitStyle?: KitStyle;
+  sleeveStyle?: SleeveStyle;
   crestIcon?: string;
   formationId: string;
   players: PlayerCard[];
@@ -218,25 +221,33 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     goalsDelta: { p1: number; p2: number },
   ) => {
     let idx = 0;
-    let last = 0;
+    let startedAt: number | null = null;
     const frameMs = 1000 / PLAYBACK_FPS;
     stopAnim();
 
     const animate = (time: number) => {
-      if (last === 0) last = time;
-      if (time - last >= frameMs) {
-        if (idx < frames.length) {
-          const frame = frames[idx];
-          setCurrentFrame(frame);
-          if (frame.events.length > 0) {
-            setAllEvents(prev => [...prev, ...frame.events]);
-          }
-          idx++;
-          last = time;
-        } else {
-          finishSimulation(frames[frames.length - 1], goalsDelta);
-          return;
-        }
+      if (startedAt === null) startedAt = time;
+      const targetIndex = Math.min(
+        frames.length,
+        Math.floor((time - startedAt) / frameMs) + 1,
+      );
+      let latestFrame: FrameSnapshot | null = null;
+      const elapsedEvents: GameEvent[] = [];
+
+      while (idx < targetIndex) {
+        latestFrame = frames[idx];
+        if (latestFrame.events.length > 0) elapsedEvents.push(...latestFrame.events);
+        idx += 1;
+      }
+
+      if (latestFrame) setCurrentFrame(latestFrame);
+      if (elapsedEvents.length > 0) {
+        setAllEvents((previous) => [...previous, ...elapsedEvents]);
+      }
+
+      if (idx >= frames.length) {
+        finishSimulation(frames[frames.length - 1], goalsDelta);
+        return;
       }
       animRef.current = requestAnimationFrame(animate);
     };
@@ -667,9 +678,16 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center overflow-hidden">
         <PitchCanvas
           frame={displayFrame}
-          playerTeam={{ jerseyColor: myTeam.jerseyColor, secondaryColor: myTeam.secondaryColor } as any}
+          playerTeam={{
+            jerseyColor: myTeam.jerseyColor,
+            secondaryColor: myTeam.secondaryColor ?? "#ffffff",
+            kitStyle: myTeam.kitStyle ?? deriveKitStyle(myTeam.name),
+            sleeveStyle: myTeam.sleeveStyle ?? deriveSleeveStyle(myTeam.name),
+          } as any}
           aiTeamColor={oppTeam.jerseyColor}
           aiTeamSecondaryColor={oppTeam.secondaryColor}
+          aiTeamKitStyle={oppTeam.kitStyle ?? deriveKitStyle(oppTeam.name)}
+          aiTeamSleeveStyle={oppTeam.sleeveStyle ?? deriveSleeveStyle(oppTeam.name)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           onPlayerClick={handlePlayerClick}

@@ -1,6 +1,13 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import type { MouseEvent } from "react";
-import type { FrameSnapshot, TeamConfig, Vec2, Command } from "../engine/types";
+import type {
+  FrameSnapshot,
+  TeamConfig,
+  Vec2,
+  Command,
+  KitStyle,
+  SleeveStyle,
+} from "../engine/types";
 import { CommandType } from "../engine/types";
 import {
   PITCH_WIDTH,
@@ -19,12 +26,20 @@ import {
 } from "../engine/constants";
 import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
 import { sampleChainedCurve } from "../engine/curve";
+import {
+  deriveKitStyle,
+  deriveSleeveStyle,
+  normalizeKitStyle,
+  normalizeSleeveStyle,
+} from "../game/visuals";
 
 interface Props {
   frame: FrameSnapshot | null;
   playerTeam: TeamConfig;
   aiTeamColor?: string;
   aiTeamSecondaryColor?: string;
+  aiTeamKitStyle?: KitStyle;
+  aiTeamSleeveStyle?: SleeveStyle;
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
   passTargetMode: boolean;
@@ -624,6 +639,8 @@ export default function PitchCanvas({
   playerTeam,
   aiTeamColor = "#e53935",
   aiTeamSecondaryColor = "#ffffff",
+  aiTeamKitStyle,
+  aiTeamSleeveStyle,
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
@@ -884,6 +901,26 @@ export default function PitchCanvas({
       "rgba(255,255,255,0.72)",
       2.4,
     );
+
+    // Draw the four posts from the exact same goal-mouth coordinates as the
+    // net box. This removes the visual offset that appeared after adding depth.
+    for (const post of [
+      { x: 0, y: goalTop },
+      { x: 0, y: goalBottom },
+      { x: PITCH_WIDTH, y: goalTop },
+      { x: PITCH_WIDTH, y: goalBottom },
+    ]) {
+      const screenPost = view.project(post);
+      ctx.save();
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "rgba(15,23,42,0.65)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(screenPost.x, screenPost.y, Math.max(2.2, view.radius(3.2, post.y)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // FTA_GOAL_DEPTH_NET
     ctx.save();
@@ -1210,6 +1247,16 @@ export default function PitchCanvas({
       }
     }
 
+    // Match shirts use the same saved pattern and sleeve choices shown in Customize.
+    const playerKitStyle = normalizeKitStyle(playerTeam.kitStyle);
+    const playerSleeveStyle = normalizeSleeveStyle(playerTeam.sleeveStyle);
+    const resolvedAiKitStyle = normalizeKitStyle(
+      aiTeamKitStyle ?? deriveKitStyle(`${aiTeamColor}:${aiTeamSecondaryColor}`),
+    );
+    const resolvedAiSleeveStyle = normalizeSleeveStyle(
+      aiTeamSleeveStyle ?? deriveSleeveStyle(`${aiTeamColor}:${aiTeamSecondaryColor}`),
+    );
+
     // FTA_POLISHED_ACTION_PLAYERS
     const players = [...frame.players].sort(
       (a, b) => view.project(a.position).y - view.project(b.position).y,
@@ -1258,6 +1305,12 @@ export default function PitchCanvas({
       const isGK = p.role === "goalkeeper";
       const baseColor = isPlayerTeam ? playerTeam.jerseyColor : aiTeamColor;
       const secColor = isPlayerTeam ? playerTeam.secondaryColor : aiTeamSecondaryColor;
+      const kitStyle = isPlayerTeam ? playerKitStyle : resolvedAiKitStyle;
+      const sleeveStyle = isPlayerTeam ? playerSleeveStyle : resolvedAiSleeveStyle;
+      const leftSleeveColor = sleeveStyle === "secondary" ? secColor : baseColor;
+      const rightSleeveColor = sleeveStyle === "secondary" || sleeveStyle === "split"
+        ? secColor
+        : baseColor;
       const skin = p.appearance?.skinTone ?? "#c98b6b";
       const hair = p.appearance?.hairColor ?? "#211915";
       const ringColor = isSelected ? "#00e5ff" : frame.ball.ownerId === p.id ? "#ffd700" : rgba(baseColor, 0.9);
@@ -1265,7 +1318,9 @@ export default function PitchCanvas({
       const t = animationTick * 0.19 + playerIndex * 0.81;
       const speed = Math.hypot(p.velocity.x, p.velocity.y);
       const diving = p.state === "DIVING";
-      const moving = p.state === "MOVING" || p.state === "DRIBBLING" || (speed > 4 && !diving);
+      // Receiving the ball while stationary must keep the idle pose. State alone
+      // is not proof of movement; the player must actually have velocity.
+      const moving = !diving && speed > 4 && (p.state === "MOVING" || p.state === "DRIBBLING");
       const passing = p.state === "PASSING";
       const shooting = p.state === "SHOOTING";
       const longPass = passing && p.actionPassStyle === "long";
@@ -1333,28 +1388,85 @@ export default function PitchCanvas({
 
       drawLimb(leftHip, leftKnee, leftFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
       drawLimb(rightHip, rightKnee, rightFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
-      drawLimb(leftShoulder, leftElbow, leftHand, Math.max(3, r * 0.18), baseColor, skin);
-      drawLimb(rightShoulder, rightElbow, rightHand, Math.max(3, r * 0.18), baseColor, skin);
+      drawLimb(leftShoulder, leftElbow, leftHand, Math.max(3, r * 0.18), leftSleeveColor, skin);
+      drawLimb(rightShoulder, rightElbow, rightHand, Math.max(3, r * 0.18), rightSleeveColor, skin);
 
       const torsoTopLeft = { x: leftShoulder.x, y: shoulderY - r * 0.08 };
       const torsoTopRight = { x: rightShoulder.x, y: shoulderY - r * 0.08 };
       const torsoBottomRight = { x: rightHip.x + r * 0.08, y: hip.y + r * 0.04 };
       const torsoBottomLeft = { x: leftHip.x - r * 0.08, y: hip.y + r * 0.04 };
-      const jerseyGrad = ctx.createLinearGradient(torsoTopLeft.x, torsoTopLeft.y, torsoBottomRight.x, torsoBottomRight.y);
+      const traceTorso = () => {
+        ctx.beginPath();
+        ctx.moveTo(torsoTopLeft.x, torsoTopLeft.y);
+        ctx.quadraticCurveTo(
+          torsoCenter.x,
+          shoulderY - r * 0.18,
+          torsoTopRight.x,
+          torsoTopRight.y,
+        );
+        ctx.lineTo(torsoBottomRight.x, torsoBottomRight.y);
+        ctx.quadraticCurveTo(
+          torsoCenter.x,
+          hip.y + r * 0.16,
+          torsoBottomLeft.x,
+          torsoBottomLeft.y,
+        );
+        ctx.closePath();
+      };
+
+      const jerseyGrad = ctx.createLinearGradient(
+        torsoTopLeft.x,
+        torsoTopLeft.y,
+        torsoBottomRight.x,
+        torsoBottomRight.y,
+      );
       jerseyGrad.addColorStop(0, rgba("#ffffff", 0.2));
       jerseyGrad.addColorStop(0.24, baseColor);
       jerseyGrad.addColorStop(1, rgba(baseColor, 0.72));
       ctx.save();
       ctx.fillStyle = jerseyGrad;
+      traceTorso();
+      ctx.fill();
+      ctx.restore();
+
+      // Clip the pattern to the animated torso so stripes and sashes deform
+      // with the body instead of appearing as a flat badge over it.
+      if (kitStyle !== "solid") {
+        const minX = Math.min(torsoTopLeft.x, torsoBottomLeft.x);
+        const maxX = Math.max(torsoTopRight.x, torsoBottomRight.x);
+        const minY = Math.min(torsoTopLeft.y, torsoTopRight.y);
+        const maxY = Math.max(torsoBottomLeft.y, torsoBottomRight.y);
+        const width = Math.max(1, maxX - minX);
+        const height = Math.max(1, maxY - minY);
+
+        ctx.save();
+        traceTorso();
+        ctx.clip();
+        ctx.fillStyle = rgba(secColor, 0.9);
+
+        if (kitStyle === "vertical-stripes") {
+          const stripeWidth = width / 5;
+          for (let stripe = 0; stripe < 5; stripe += 2) {
+            ctx.fillRect(minX + stripe * stripeWidth, minY - 2, stripeWidth, height + 4);
+          }
+        } else if (kitStyle === "horizontal-stripes") {
+          const bandHeight = height / 5;
+          for (let band = 1; band < 5; band += 2) {
+            ctx.fillRect(minX - 2, minY + band * bandHeight, width + 4, bandHeight);
+          }
+        } else if (kitStyle === "diagonal-sash") {
+          const sash = Math.max(r * 0.3, width * 0.28);
+          ctx.translate(torsoCenter.x, torsoCenter.y);
+          ctx.rotate(-0.62);
+          ctx.fillRect(-sash / 2, -height, sash, height * 2);
+        }
+        ctx.restore();
+      }
+
+      ctx.save();
       ctx.strokeStyle = isGK ? "#ffd700" : "rgba(0,0,0,.55)";
       ctx.lineWidth = isGK ? 2.2 : 1.25;
-      ctx.beginPath();
-      ctx.moveTo(torsoTopLeft.x, torsoTopLeft.y);
-      ctx.quadraticCurveTo(torsoCenter.x, shoulderY - r * 0.18, torsoTopRight.x, torsoTopRight.y);
-      ctx.lineTo(torsoBottomRight.x, torsoBottomRight.y);
-      ctx.quadraticCurveTo(torsoCenter.x, hip.y + r * 0.16, torsoBottomLeft.x, torsoBottomLeft.y);
-      ctx.closePath();
-      ctx.fill();
+      traceTorso();
       ctx.stroke();
       ctx.restore();
 
@@ -1669,6 +1781,8 @@ export default function PitchCanvas({
     playerTeam,
     aiTeamColor,
     aiTeamSecondaryColor,
+    aiTeamKitStyle,
+    aiTeamSleeveStyle,
     pendingCommands,
     selectedPlayerId,
     passTargetMode,

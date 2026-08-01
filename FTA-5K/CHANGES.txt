@@ -1,0 +1,4 @@
+- Aligns goal posts and penalty box around the goal mouth.
+- Shows saved shirt patterns and sleeve styles during matches.
+- Keeps match playback at full speed on lower-FPS mobile devices.
+- Prevents stationary receivers from triggering the running animation.

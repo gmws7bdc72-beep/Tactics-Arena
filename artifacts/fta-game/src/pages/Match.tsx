@@ -39,6 +39,7 @@ import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
+import { deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
 
@@ -436,28 +437,40 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
   const playbackFrames = useCallback((frames: FrameSnapshot[], allNewEvents: GameEvent[]) => {
     let idx = 0;
-    let last = 0;
+    let startedAt: number | null = null;
     const frameMs = 1000 / PLAYBACK_FPS;
 
     const animate = (time: number) => {
-      if (last === 0) last = time;
-      if (time - last >= frameMs) {
-        if (idx < frames.length) {
-          const frame = frames[idx];
-          setCurrentFrame(frame);
-          if (frame.events.length > 0) {
-            setAllEvents(prev => {
-              const next = [...prev, ...frame.events];
-              allEventsRef.current = next;
-              return next;
-            });
-          }
-          idx++;
-          last = time;
-        } else {
-          finishSimulation(frames[frames.length - 1], allNewEvents);
-          return;
-        }
+      if (startedAt === null) startedAt = time;
+
+      // Advance by elapsed wall-clock time, not one frame per render. Mobile
+      // browsers often render below 60 FPS; skipping already-expired snapshots
+      // keeps match movement at the same speed without losing their events.
+      const targetIndex = Math.min(
+        frames.length,
+        Math.floor((time - startedAt) / frameMs) + 1,
+      );
+      let latestFrame: FrameSnapshot | null = null;
+      const elapsedEvents: GameEvent[] = [];
+
+      while (idx < targetIndex) {
+        latestFrame = frames[idx];
+        if (latestFrame.events.length > 0) elapsedEvents.push(...latestFrame.events);
+        idx += 1;
+      }
+
+      if (latestFrame) setCurrentFrame(latestFrame);
+      if (elapsedEvents.length > 0) {
+        setAllEvents((previous) => {
+          const next = [...previous, ...elapsedEvents];
+          allEventsRef.current = next;
+          return next;
+        });
+      }
+
+      if (idx >= frames.length) {
+        finishSimulation(frames[frames.length - 1], allNewEvents);
+        return;
       }
       animRef.current = requestAnimationFrame(animate);
     };
@@ -972,6 +985,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           playerTeam={twoPlayer && p1TeamDef ? { ...team, jerseyColor: p1TeamDef.jerseyColor, secondaryColor: p1TeamDef.secondaryColor, crestIcon: p1TeamDef.crestIcon } : team}
           aiTeamColor={effectiveAiColor}
           aiTeamSecondaryColor={effectiveAiSecondaryColor}
+          aiTeamKitStyle={deriveKitStyle(opponentTeamDef.id)}
+          aiTeamSleeveStyle={deriveSleeveStyle(opponentTeamDef.id)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}

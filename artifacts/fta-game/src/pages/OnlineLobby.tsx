@@ -26,6 +26,8 @@ function toTeamSummary(team: TeamConfig): TeamSummary {
     name: team.name,
     jerseyColor: team.jerseyColor ?? "#1565c0",
     secondaryColor: team.secondaryColor,
+    kitStyle: team.kitStyle,
+    sleeveStyle: team.sleeveStyle,
     crestIcon: team.crestIcon,
     formationId: team.formationId,
     players: team.players,

@@ -15,7 +15,7 @@ export const GOAL_TOP_Y = (PITCH_HEIGHT - GOAL_WIDTH) / 2;
 export const GOAL_BOTTOM_Y = GOAL_TOP_Y + GOAL_WIDTH;
 
 export const PENALTY_AREA_WIDTH = 128;
-export const PENALTY_AREA_HEIGHT = 200;
+export const PENALTY_AREA_HEIGHT = GOAL_WIDTH + TILE_H * 2;
 
 export const TICKS_PER_TURN = 60;
 export const DELTA = 0.05;
