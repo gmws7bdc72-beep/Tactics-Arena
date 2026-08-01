@@ -78,7 +78,7 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
   };
 }
 
-const PLAYBACK_FPS = 60;
+const PLAYBACK_FPS = 54;
 
 function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
   return {

@@ -1,0 +1,3 @@
+- Slows live match playback from 60 to 54 simulation frames per second.
+- Applies to offline and online matches.
+- Keeps the mobile frame-skipping fix, so low-FPS devices remain synchronized.
