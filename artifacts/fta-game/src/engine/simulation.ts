@@ -46,11 +46,7 @@ import {
   createCurveMotion,
   curveMotionProgress,
   curvePointLimitForCommand,
-  curvePointLimitForMechanic,
-  curveMechanicForCommand,
-  curveStatForMechanic,
   sanitizeCurvePoints,
-  sanitizeActionCurve,
 } from "./curve";
 
 function vec2Add(a: Vec2, b: Vec2): Vec2 {
@@ -77,66 +73,116 @@ function vec2Dot(a: Vec2, b: Vec2): number {
   return a.x * b.x + a.y * b.y;
 }
 
+type BallCurveKind = "ground" | "long" | "shot";
+
 function sanitizeBallCurve(
   start: Vec2,
   rawPoints: Vec2[] | undefined,
   finalTarget: Vec2,
-  rng: () => number,
+  curveStat: number,
+  kind: BallCurveKind,
 ): Vec2[] | undefined {
-  if (!rawPoints?.length) return undefined;
-
-  const points = [...rawPoints.map((p) => ({ ...p }))];
-  points[points.length - 1] = { ...finalTarget };
+  if (!rawPoints || rawPoints.length < 2) return undefined;
 
   const direct = vec2Sub(finalTarget, start);
-  const directLen = Math.max(1, vec2Len(direct));
+  const directLength = vec2Len(direct);
+  if (directLength < 8) return undefined;
+
   const forward = vec2Normalize(direct);
   const normal = { x: -forward.y, y: forward.x };
+  const quality = clamp((curveStat - 1) / 9, 0, 1);
+  const tile = Math.max(TILE_W, TILE_H);
 
-  // A legal ball curve can bend one way, but cannot reverse, loop, or form an S.
-  let side = 0;
-  let lastProgress = 0;
+  // Ball actions stay football-realistic. Movement and dribbling never call
+  // this function, so their drawn routes remain unrestricted.
+  const maxLateralTiles =
+    kind === "ground"
+      ? 0.35 + quality * 0.75
+      : kind === "long"
+        ? 0.45 + quality * 0.95
+        : 0.25 + quality * 0.65;
+  const maxRelativeBend = kind === "shot" ? 0.22 : kind === "ground" ? 0.28 : 0.32;
+  const maxLateral = Math.min(
+    maxLateralTiles * tile,
+    directLength * maxRelativeBend,
+  );
+
+  const points = rawPoints.map((point) => ({ ...point }));
+
   const legal: Vec2[] = [];
-  for (const point of points) {
-    const rel = vec2Sub(point, start);
-    const progress = vec2Dot(rel, forward);
-    const lateral = vec2Dot(rel, normal);
-    if (progress <= lastProgress + 2 || progress > directLen * 1.08) continue;
+  let bendSide = 0;
+  let lastProgress = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const relative = vec2Sub(point, start);
+    const expected = (index + 1) / (points.length + 1);
+    const projected = vec2Dot(relative, forward);
+    const minProgress = Math.min(
+      directLength * 0.9,
+      Math.max(lastProgress + 3, directLength * Math.max(0.06, expected - 0.13)),
+    );
+    const maxProgress = Math.max(
+      minProgress,
+      directLength * Math.min(0.94, expected + 0.13),
+    );
+    const progress = clamp(projected, minProgress, maxProgress);
+
+    let lateral = clamp(vec2Dot(relative, normal), -maxLateral, maxLateral);
     const pointSide = Math.sign(lateral);
-    if (pointSide !== 0 && side !== 0 && pointSide !== side) continue;
-    if (pointSide !== 0) side = pointSide;
+    if (bendSide === 0 && pointSide !== 0) bendSide = pointSide;
+    if (bendSide !== 0 && pointSide !== 0 && pointSide !== bendSide) lateral = 0;
+
+    legal.push({
+      x: clamp(
+        start.x + forward.x * progress + normal.x * lateral,
+        -GOAL_DEPTH,
+        PITCH_WIDTH + GOAL_DEPTH,
+      ),
+      y: clamp(
+        start.y + forward.y * progress + normal.y * lateral,
+        0,
+        PITCH_HEIGHT,
+      ),
+    });
     lastProgress = progress;
-    legal.push(point);
   }
 
-  if (!legal.length || vec2Dist(legal[legal.length - 1], finalTarget) > 4) {
-    legal.push({ ...finalTarget });
-  }
+  if (legal.length < 2) return undefined;
 
-  // Only PASS/LONG/SHOT routes call this helper. Movement/dribble curves stay untouched.
-  const tileDistance = directLen / Math.max(TILE_W, TILE_H);
-  if (tileDistance > 7) {
-    const maxLateral = legal.reduce((m, p) => {
-      const rel = vec2Sub(p, start);
-      return Math.max(m, Math.abs(vec2Dot(rel, normal)));
-    }, 0);
-    const bendTiles = maxLateral / Math.max(TILE_W, TILE_H);
-    const distancePenalty = clamp((tileDistance - 7) / 8, 0, 1);
-    const bendPenalty = clamp(bendTiles / 4, 0, 1);
-    const errorTiles = distancePenalty * (0.25 + bendPenalty * 1.75);
-    if (errorTiles > 0.05) {
-      const miss = (rng() * 2 - 1) * errorTiles * Math.max(TILE_W, TILE_H);
-      const end = legal[legal.length - 1];
-      legal[legal.length - 1] = {
-        x: clamp(end.x + normal.x * miss, 4, PITCH_WIDTH - 4),
-        y: clamp(end.y + normal.y * miss, 4, PITCH_HEIGHT - 4),
+  // A final route-length guard prevents giant hooks even when every individual
+  // handle is technically forward-facing.
+  let routeLength = 0;
+  let previous = start;
+  for (const point of legal) {
+    routeLength += vec2Dist(previous, point);
+    previous = point;
+  }
+  routeLength += vec2Dist(previous, finalTarget);
+  const maxRatio = kind === "shot" ? 1.16 : kind === "ground" ? 1.22 : 1.28;
+  if (routeLength > directLength * maxRatio) {
+    const shrink = clamp((directLength * maxRatio) / routeLength, 0.35, 1);
+    for (let index = 0; index < legal.length; index += 1) {
+      const relative = vec2Sub(legal[index], start);
+      const progress = vec2Dot(relative, forward);
+      const lateral = vec2Dot(relative, normal) * shrink;
+      legal[index] = {
+        x: clamp(
+          start.x + forward.x * progress + normal.x * lateral,
+          -GOAL_DEPTH,
+          PITCH_WIDTH + GOAL_DEPTH,
+        ),
+        y: clamp(
+          start.y + forward.y * progress + normal.y * lateral,
+          0,
+          PITCH_HEIGHT,
+        ),
       };
     }
   }
 
   return legal;
 }
-
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
@@ -272,13 +318,21 @@ function carrierKeepChance(carrier: SimPlayer, defender: SimPlayer): number {
 }
 
 function noBallTileWinChance(a: SimPlayer, b: SimPlayer): number {
-  const aPhys = physiqueStat(a);
-  const bPhys = physiqueStat(b);
-  if (aPhys === bPhys) return 0.5;
-  return aPhys > bPhys ? 0.85 : 0.15;
+  const difference = physiqueStat(a) - physiqueStat(b);
+  let chance = 0.5 + difference * 0.075;
+  if (a.ability === "powerhouse") chance += 0.07;
+  if (b.ability === "powerhouse") chance -= 0.07;
+  return clamp(chance, 0.05, 0.95);
 }
 
-// Clamp target tile for GK role
+function endPlannedContribution(player: SimPlayer): void {
+  player.command = null;
+  player.commandExecuted = true;
+  player.curveMotion = undefined;
+  player.velocity = { x: 0, y: 0 };
+  player.state = PlayerState.RECOVERING;
+  player.recoveryTimer = Math.max(player.recoveryTimer, 0.45);
+}
 function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
   const t = posToTile(target);
   let col = t.col;
@@ -307,17 +361,15 @@ function normalizeSimulationCommand(
   const targetPosition = command.targetPosition
     ? { ...command.targetPosition }
     : undefined;
-  const mechanic = curveMechanicForCommand(command);
-  const limit = curvePointLimitForCommand(player.stats, command);
-  const target = targetPosition ?? player.position;
-  const curvePoints = sanitizeActionCurve(
-    player.position,
-    target,
+
+  // Do not tame MOVE curves here. This preserves intentionally wild dribbles
+  // and off-ball movement. Passes, long balls and shots are constrained only
+  // when the ball is actually kicked.
+  const curvePoints = sanitizeCurvePoints(
     command.curvePoints,
-    limit,
-    mechanic,
-    curveStatForMechanic(player.stats, mechanic),
+    curvePointLimitForCommand(player.stats, command),
   );
+
   return {
     ...command,
     targetPosition,
@@ -327,7 +379,6 @@ function normalizeSimulationCommand(
       : undefined,
   };
 }
-
 export function runSimulation(
   players: SimPlayer[],
   ball: SimBall,
@@ -407,7 +458,12 @@ export function runSimulation(
   // Run for TICKS_PER_TURN, but extend while a pass is still in flight so the
   // ball always reaches its destination within the same turn. Safety ceiling at
   // 5× the normal budget to prevent runaway loops.
-  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 20;
+  // FTA_PHASE_RESOLUTION_V3
+  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 12;
+  let stalledTicks = 0;
+  let previousPositions = new Map(
+    simPlayers.map((player) => [player.id, { ...player.position }]),
+  );
   for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
@@ -432,6 +488,63 @@ export function runSimulation(
     constrainToField(simPlayers, simBall);
     separateOverlapping(simPlayers, simBall, rng);
 
+    // FTA_STALL_RESOLUTION_V3
+    const pendingPlayers = simPlayers.filter(
+      (player) => player.command !== null && !player.commandExecuted,
+    );
+    const activeTimedAction = simPlayers.some(
+      (player) =>
+        (player.state === PlayerState.PASSING ||
+          player.state === PlayerState.SHOOTING ||
+          player.state === PlayerState.DIVING) &&
+        player.stateTimer > 0,
+    );
+    let positionalProgress = 0;
+    for (const player of simPlayers) {
+      const previous = previousPositions.get(player.id) ?? player.position;
+      positionalProgress += vec2Dist(previous, player.position);
+    }
+    const ballProgressing = vec2Len(simBall.velocity) >= 0.5;
+
+    if (
+      pendingPlayers.length > 0 &&
+      !activeTimedAction &&
+      !ballProgressing &&
+      positionalProgress < 0.2
+    ) {
+      stalledTicks += 1;
+    } else {
+      stalledTicks = 0;
+    }
+
+    // A physically blocked command is resolved instead of keeping the phase
+    // alive forever. Its contribution for this turn is simply over.
+    if (stalledTicks >= Math.max(12, Math.round(0.75 / DELTA))) {
+      for (const player of pendingPlayers) endPlannedContribution(player);
+      stalledTicks = 0;
+    }
+
+    // Absolute emergency exit: finish every unresolved contribution and any
+    // remaining ball flight before the safety ceiling can soft-lock the match.
+    if (tick === ABSOLUTE_MAX_TICKS - 1) {
+      for (const player of simPlayers) {
+        if (player.command && !player.commandExecuted) endPlannedContribution(player);
+      }
+      if (simBall.passTarget) {
+        simBall.position = { ...simBall.passTarget };
+        simBall.velocity = { x: 0, y: 0 };
+        simBall.passTarget = undefined;
+        simBall.passStart = undefined;
+        simBall.passStyle = undefined;
+        simBall.height = 0;
+        simBall.curveMotion = undefined;
+      }
+    }
+
+    previousPositions = new Map(
+      simPlayers.map((player) => [player.id, { ...player.position }]),
+    );
+
     const goalResult = checkGoal(simBall);
     if (goalResult) {
       tickEvents.push({
@@ -451,17 +564,15 @@ export function runSimulation(
     allEvents.push(...tickEvents);
     frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
 
-    // A playing phase ends only after every planned action has genuinely
-    // resolved. The normal tick budget is a minimum, not a cutoff. This lets
-    // long AI runs, chained actions, dives and long balls finish naturally.
-    const actionsResolved = simPlayers.every((planned) => {
+    const actionsResolved = simPlayers.every((player) => {
       const activeAction =
-        planned.state === PlayerState.PASSING ||
-        planned.state === PlayerState.SHOOTING ||
-        planned.state === PlayerState.DIVING;
-      return !activeAction && (!planned.command || planned.commandExecuted);
+        player.state === PlayerState.PASSING ||
+        player.state === PlayerState.SHOOTING ||
+        player.state === PlayerState.DIVING;
+      return !activeAction && (!player.command || player.commandExecuted);
     });
-    const ballResolved = !simBall.passTarget && vec2Len(simBall.velocity) < 2;
+    const ballResolved =
+      simBall.passTarget === undefined && vec2Len(simBall.velocity) < 2;
     if (tick >= TICKS_PER_TURN - 1 && actionsResolved && ballResolved) break;
   }
 
@@ -576,8 +687,8 @@ export function runSimulation(
         loser.state = PlayerState.RECOVERING;
         loser.recoveryTimer = Math.max(loser.recoveryTimer, 0.7);
       }
-
       pushToFreeTile(loser, winner);
+      if (loser.teamId !== winner.teamId) endPlannedContribution(loser);
     }
   }
 
@@ -636,23 +747,23 @@ function separateOverlapping(
   rng: () => number,
 ): void {
   const minDist = PLAYER_RADIUS * 2.4;
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
+  for (let i = 0; i < players.length; i += 1) {
+    for (let j = i + 1; j < players.length; j += 1) {
       const a = players[i];
       const b = players[j];
       const dx = b.position.x - a.position.x;
       const dy = b.position.y - a.position.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist >= minDist) continue;
+      const distance = Math.hypot(dx, dy);
+      if (distance >= minDist) continue;
+
       const aOwns = a.id === ball.ownerId;
       const bOwns = b.id === ball.ownerId;
-      const overlap = dist > 0.01 ? minDist - dist : minDist;
-      const nx = dist > 0.01 ? dx / dist : 0;
-      const ny = dist > 0.01 ? dy / dist : 1;
+      const overlap = distance > 0.01 ? minDist - distance : minDist;
+      const nx = distance > 0.01 ? dx / distance : 0;
+      const ny = distance > 0.01 ? dy / distance : 1;
 
-      // Cross-team collisions involving the carrier are handled entirely by the
-      // tackle system — skip separation physics so opponents can actually enter
-      // the carrier's tile and trigger the tackle check.
+      // Cross-team carrier collisions continue through the tackle system, which
+      // already compares dribbling, defending and strength.
       if (
         (aOwns && b.teamId !== a.teamId) ||
         (bOwns && a.teamId !== b.teamId)
@@ -661,50 +772,40 @@ function separateOverlapping(
       }
 
       if (aOwns) {
-        // Same-team: carrier pushes friendly out of the way
         b.position.x += nx * overlap;
         b.position.y += ny * overlap;
-      } else if (bOwns) {
+        continue;
+      }
+      if (bOwns) {
         a.position.x -= nx * overlap;
         a.position.y -= ny * overlap;
-      } else if (a.teamId === b.teamId) {
-        // Same team, no ball: share equally
+        continue;
+      }
+
+      if (a.teamId === b.teamId) {
         a.position.x -= nx * overlap * 0.5;
         a.position.y -= ny * overlap * 0.5;
         b.position.x += nx * overlap * 0.5;
         b.position.y += ny * overlap * 0.5;
-      } else {
-        // Cross-team physical contest — faster mover is "the pusher"
-        const aSpeed = Math.sqrt(a.velocity.x ** 2 + a.velocity.y ** 2);
-        const bSpeed = Math.sqrt(b.velocity.x ** 2 + b.velocity.y ** 2);
-        const isPusherA = aSpeed >= bSpeed;
-        const pusher = isPusherA ? a : b;
-        const blocker = isPusherA ? b : a;
-        // Attacker stat for the pusher (trying to force through), defense for blocker
-        let pusherScore = pusher.stats.attack / 10 + rng() * 0.35;
-        let blockerScore = blocker.stats.defense / 10 + rng() * 0.35;
-        if (blocker.ability === "iron_tackle") blockerScore += 0.25;
-        if (blocker.ability === "powerhouse") blockerScore += 0.15;
-        if (pusher.ability === "ghost_run") pusherScore += 0.2;
-        if (pusher.ability === "powerhouse") pusherScore += 0.15;
-        if (pusherScore > blockerScore) {
-          // Pusher wins: mostly pushes blocker aside, small self slowdown
-          a.position.x -= nx * overlap * (isPusherA ? 0.2 : 0.8);
-          a.position.y -= ny * overlap * (isPusherA ? 0.2 : 0.8);
-          b.position.x += nx * overlap * (isPusherA ? 0.8 : 0.2);
-          b.position.y += ny * overlap * (isPusherA ? 0.8 : 0.2);
-        } else {
-          // Blocker wins: pusher bounces back, blocker barely moves
-          a.position.x -= nx * overlap * (isPusherA ? 0.8 : 0.2);
-          a.position.y -= ny * overlap * (isPusherA ? 0.8 : 0.2);
-          b.position.x += nx * overlap * (isPusherA ? 0.2 : 0.8);
-          b.position.y += ny * overlap * (isPusherA ? 0.2 : 0.8);
-        }
+        continue;
       }
+
+      // Opposing paths are decided primarily by Strength/physicality. Every
+      // point of difference changes the odds, while equal players are 50/50.
+      const aWins = rng() < noBallTileWinChance(a, b);
+      const winner = aWins ? a : b;
+      const loser = aWins ? b : a;
+      const awayX = aWins ? nx : -nx;
+      const awayY = aWins ? ny : -ny;
+
+      winner.position.x -= awayX * overlap * 0.08;
+      winner.position.y -= awayY * overlap * 0.08;
+      loser.position.x += awayX * (overlap * 0.92 + 3);
+      loser.position.y += awayY * (overlap * 0.92 + 3);
+      endPlannedContribution(loser);
     }
   }
 }
-
 function snapshotFrame(
   tick: number,
   players: SimPlayer[],
@@ -1111,8 +1212,14 @@ function executePass(
   };
 
   if (isLongBall && !cmd.coordinated) {
-    const longPassing = typeof player.stats.longPassing === "number" ? player.stats.longPassing : player.stats.passing;
-    const vision = typeof player.stats.vision === "number" ? player.stats.vision : player.stats.passing;
+    const longPassing =
+      typeof player.stats.longPassing === "number"
+        ? player.stats.longPassing
+        : player.stats.passing;
+    const vision =
+      typeof player.stats.vision === "number"
+        ? player.stats.vision
+        : player.stats.passing;
     const errorTiles = Math.max(0, 3 - Math.floor((longPassing + vision) / 5));
     if (errorTiles > 0) {
       const targetTile = posToTile(targetPos);
@@ -1125,25 +1232,31 @@ function executePass(
     }
   }
 
-  // FTA_LONG_PASS_SLOW_V2
   const abilityMultiplier = player.ability === "bullet_pass" ? 1.5 : 1;
-  const passSpd =
-    PASS_SPEED * abilityMultiplier * (isLongBall ? 0.58 : 1);
+  const passSpeed = PASS_SPEED * abilityMultiplier * (isLongBall ? 0.58 : 1);
+  const curveStat = isLongBall
+    ? player.stats.longPassing
+    : player.stats.passing;
+  const legalCurve = sanitizeBallCurve(
+    ball.position,
+    cmd.curvePoints,
+    targetPos,
+    curveStat,
+    isLongBall ? "long" : "ground",
+  );
 
-  ball.curveMotion =
-    cmd.curvePoints && cmd.curvePoints.length >= 2
-      ? createCurveMotion(ball.position, cmd.curvePoints, targetPos)
-      : undefined;
+  ball.curveMotion = legalCurve
+    ? createCurveMotion(ball.position, legalCurve, targetPos)
+    : undefined;
   const firstTarget = ball.curveMotion?.points[0] ?? targetPos;
-  const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
-  ball.velocity = vec2Scale(dir, passSpd);
+  const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
+  ball.velocity = vec2Scale(direction, passSpeed);
   ball.passTarget = { ...targetPos };
   ball.passStart = { ...ball.position };
   ball.passStyle = isLongBall ? "long" : "ground";
   ball.height = isLongBall ? 1 : 0;
   ball.ownerId = null;
 }
-
 function executeShot(
   player: SimPlayer,
   ball: SimBall,
@@ -1184,23 +1297,28 @@ function executeShot(
     y: clamp(desired.y + errorY, BALL_RADIUS, PITCH_HEIGHT - BALL_RADIUS),
   };
 
-  let shotSpd = SHOT_SPEED * (0.72 + shooting * 0.045);
-  if (player.ability === "eagle_eye") shotSpd *= 1.08;
+  let shotSpeed = SHOT_SPEED * (0.72 + shooting * 0.045);
+  if (player.ability === "eagle_eye") shotSpeed *= 1.08;
 
-  ball.curveMotion =
-    cmd?.curvePoints && cmd.curvePoints.length >= 2
-      ? createCurveMotion(ball.position, cmd.curvePoints, target)
-      : undefined;
+  const legalCurve = sanitizeBallCurve(
+    ball.position,
+    cmd?.curvePoints,
+    target,
+    shooting,
+    "shot",
+  );
+  ball.curveMotion = legalCurve
+    ? createCurveMotion(ball.position, legalCurve, target)
+    : undefined;
   const firstTarget = ball.curveMotion?.points[0] ?? target;
-  const dir = vec2Normalize(vec2Sub(firstTarget, ball.position));
-  ball.velocity = vec2Scale(dir, shotSpd);
+  const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
+  ball.velocity = vec2Scale(direction, shotSpeed);
   ball.passTarget = target;
   ball.passStart = { ...ball.position };
   ball.ownerId = null;
   ball.height = 0;
   ball.passStyle = undefined;
 }
-
 function updateBallPhysics(ball: SimBall, dt: number): void {
   if (ball.ownerId !== null) {
     ball.height = 0;
