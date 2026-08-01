@@ -24,6 +24,7 @@ interface Props {
     team?: TeamConfig,
     league?: LeagueState,
   ) => void;
+  onTutorial?: () => void;
 }
 
 type Tab = "market" | "offers" | "finance" | "news" | "reports";
@@ -86,6 +87,7 @@ export default function TransferMarket({
   league,
   market,
   onChange,
+  onTutorial,
 }: Props) {
   const [tab, setTab] = useState<Tab>("market");
   const [query, setQuery] = useState("");
@@ -226,6 +228,7 @@ export default function TransferMarket({
           </div>
           <div>
             <h1 className="text-xl font-black text-white">Transfer Market</h1>
+            {onTutorial && <button type="button" onClick={onTutorial} className="ml-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[.08] px-2 py-1 text-[10px] font-black text-cyan-300">Guide</button>}
             <p className="text-xs text-gray-400">
               Season {seasonNumber} · Week {league.trainingWeek ?? 0}
             </p>

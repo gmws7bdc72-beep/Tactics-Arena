@@ -17,6 +17,8 @@ import OnlineMatch from "./pages/OnlineMatch";
 import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
 import TransferMarket from "./pages/TransferMarket";
+import TransferTutorial from "./pages/TransferTutorial";
+import TutorialWelcome from "./components/TutorialWelcome";
 import { processTransferWeek } from "./game/transferMarket";
 import { formatMoney } from "./game/transferDatabase";
 import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
@@ -29,10 +31,12 @@ import {
   applyPlayoffResult,
   autoSimPlayoffStage,
   getPlayerPlayoffMatch,
+  AI_TEAMS,
 } from "./game/league";
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
 import { advanceTeamTraining } from "./game/training";
+import { completeMarketTutorial, completeMatchTutorial, dismissTutorialWelcome, shouldShowTutorialWelcome } from "./game/tutorial";
 
 type Screen =
   | "home"
@@ -45,7 +49,9 @@ type Screen =
   | "two-player-match"
   | "online-lobby"
   | "online-match"
-  | "pitch3d-preview";
+  | "pitch3d-preview"
+  | "tutorial-match"
+  | "transfer-tutorial";
 
 interface OnlineGameConfig {
   myRole: "p1" | "p2";
@@ -138,6 +144,9 @@ export default function App() {
   );
   const [profileTeamId, setProfileTeamId] =
     useState<string>(PLAYER_TEAM_ID_CONST);
+  const [showTutorialWelcome, setShowTutorialWelcome] = useState(() =>
+    shouldShowTutorialWelcome(),
+  );
   const knownIncomingOfferIds = useRef(
     new Set(
       market.offers
@@ -543,6 +552,7 @@ export default function App() {
             if (nextTeam && nextLeague)
               updateTeamAndLeague(nextTeam, nextLeague);
           }}
+          onTutorial={() => setScreen("transfer-tutorial")}
         />
       );
     } else {
@@ -558,6 +568,7 @@ export default function App() {
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
+          onTutorial={() => setScreen("tutorial-match")}
         />
       );
     }
@@ -569,7 +580,55 @@ export default function App() {
       >
         {content}
         <BottomMenuNav active={screen as MenuTab} onChange={goToMenuTab} />
+        {showTutorialWelcome && (
+          <TutorialWelcome
+            onStart={() => {
+              setShowTutorialWelcome(false);
+              setScreen("tutorial-match");
+            }}
+            onSkip={() => {
+              dismissTutorialWelcome();
+              setShowTutorialWelcome(false);
+            }}
+          />
+        )}
       </div>
+    );
+  }
+
+  if (screen === "tutorial-match") {
+    const tutorialOpponent = AI_TEAMS.find((entry) => entry.tier === 3) ?? AI_TEAMS[0];
+    return (
+      <div className="mx-auto min-h-screen max-w-2xl" style={{ maxWidth: "min(100vw, 760px)" }}>
+        <Match
+          team={team}
+          opponentTeamDef={tutorialOpponent}
+          isHome={true}
+          tutorialMode={true}
+          onMatchEnd={() => {
+            completeMatchTutorial();
+            setScreen("transfer-tutorial");
+          }}
+          onTutorialComplete={() => {
+            completeMatchTutorial();
+            setScreen("transfer-tutorial");
+          }}
+          onForfeit={() => setScreen("home")}
+        />
+      </div>
+    );
+  }
+
+  if (screen === "transfer-tutorial") {
+    return (
+      <TransferTutorial
+        team={team}
+        onBack={() => setScreen("home")}
+        onComplete={() => {
+          completeMarketTutorial();
+          setScreen("transfer-market");
+        }}
+      />
     );
   }
 
@@ -705,6 +764,7 @@ export default function App() {
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}
         onOnline={() => setScreen("online-lobby")}
+        onTutorial={() => setScreen("tutorial-match")}
       />
     </div>
   );

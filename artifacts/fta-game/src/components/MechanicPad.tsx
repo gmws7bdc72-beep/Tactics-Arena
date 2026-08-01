@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, SVGProps } from "react";
+import type { TutorialFocus } from "./TutorialCoach";
 
 interface Props {
   onCancel: () => void;
@@ -17,6 +18,7 @@ interface Props {
   curvePointLimit: number;
   actionsDisabled?: boolean;
   active: boolean;
+  tutorialFocus?: TutorialFocus;
 }
 
 type ChordKey = "pass" | "movePass";
@@ -115,6 +117,7 @@ export default function MechanicPad({
   actionsDisabled = false,
   active,
   goalkeeperCanDive = false,
+  tutorialFocus = "none",
 }: Props) {
   const pressed = useRef(new Map<number, ChordKey>());
   const holdTimer = useRef<number | null>(null);
@@ -176,6 +179,7 @@ export default function MechanicPad({
   }, []);
 
   const clickAllowed = () => performance.now() >= suppressClicksUntil.current;
+  const focusClass = (name: TutorialFocus) => tutorialFocus === name ? " ring-2 ring-cyan-300 ring-offset-2 ring-offset-[#07101c] animate-pulse" : "";
   const actionClass = `h-12 min-w-0 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] disabled:opacity-30 disabled:active:scale-100 [&>svg]:h-full [&>svg]:w-full ${active ? "" : "invisible pointer-events-none"}`;
   const chordStyle = { touchAction: "none", userSelect: "none" as const, WebkitUserSelect: "none" as const, WebkitTouchCallout: "none" as const };
 
@@ -184,11 +188,11 @@ export default function MechanicPad({
       <button onClick={() => active && onCancel()} className={`h-12 w-9 min-w-9 rounded-xl border border-white/10 text-lg font-bold text-gray-400 transition-colors hover:text-white ${active ? "" : "invisible pointer-events-none"}`} aria-label="Cancel selected action">×</button>
       <div className="grid min-w-0 flex-1 grid-cols-4 gap-1.5">
         <button onPointerDown={(event) => handlePointerDown(event, "pass")} onClick={() => { if (active && clickAllowed() && !actionsDisabled) onPass(); }} disabled={actionsDisabled || !active} className={actionClass} style={{ ...chordStyle, background: "linear-gradient(145deg,#facc15,#ca8a04)", color: "#111827" }} aria-label="Inside-foot pass"><PassIcon /></button>
-        <button onClick={() => active && onLongPass()} disabled={actionsDisabled || !active} className={actionClass} style={{ background: "linear-gradient(145deg,#38bdf8,#1d4ed8)" }} aria-label="Long pass"><LongBallIcon /></button>
-        <button onPointerDown={(event) => handlePointerDown(event, "movePass")} onContextMenu={(event) => event.preventDefault()} onClick={() => { if (active && clickAllowed() && !actionsDisabled) onMovePass(); }} disabled={actionsDisabled || !active} className={actionClass} style={{ ...chordStyle, background: holdingCombo ? "linear-gradient(145deg,#14b8a6,#115e59)" : "linear-gradient(145deg,#c026d3,#6b21a8)" }} aria-label={holdingCombo ? "Pass then move" : "Move then pass"}><ComboIcon reversed={holdingCombo} /></button>
-        <button onClick={() => active && (goalkeeperCanDive ? onDive?.() : onShoot())} disabled={actionsDisabled || !active} className={actionClass} style={{ background: goalkeeperCanDive ? "linear-gradient(145deg,#22d3ee,#0369a1)" : "linear-gradient(145deg,#ef4444,#991b1b)" }} aria-label={goalkeeperCanDive ? "Dive" : "Shoot"}>{goalkeeperCanDive ? <DiveIcon /> : <ShotIcon />}</button>
+        <button onClick={() => active && onLongPass()} disabled={actionsDisabled || !active} className={`${actionClass}${focusClass("longPass")}`} style={{ background: "linear-gradient(145deg,#38bdf8,#1d4ed8)" }} aria-label="Long pass"><LongBallIcon /></button>
+        <button onPointerDown={(event) => handlePointerDown(event, "movePass")} onContextMenu={(event) => event.preventDefault()} onClick={() => { if (active && clickAllowed() && !actionsDisabled) onMovePass(); }} disabled={actionsDisabled || !active} className={`${actionClass}${focusClass("combo")}`} style={{ ...chordStyle, background: holdingCombo ? "linear-gradient(145deg,#14b8a6,#115e59)" : "linear-gradient(145deg,#c026d3,#6b21a8)" }} aria-label={holdingCombo ? "Pass then move" : "Move then pass"}><ComboIcon reversed={holdingCombo} /></button>
+        <button onClick={() => active && (goalkeeperCanDive ? onDive?.() : onShoot())} disabled={actionsDisabled || !active} className={`${actionClass}${focusClass(goalkeeperCanDive ? "dive" : "shoot")}`} style={{ background: goalkeeperCanDive ? "linear-gradient(145deg,#22d3ee,#0369a1)" : "linear-gradient(145deg,#ef4444,#991b1b)" }} aria-label={goalkeeperCanDive ? "Dive" : "Shoot"}>{goalkeeperCanDive ? <DiveIcon /> : <ShotIcon />}</button>
       </div>
-      <button onClick={() => active && onCurve()} className={`relative h-12 w-14 min-w-14 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] ${active ? "" : "invisible pointer-events-none"}`} style={{ background: curveActive ? (curveCanFinish ? "linear-gradient(145deg,#22d3ee,#2563eb)" : "linear-gradient(145deg,#0e7490,#1e3a8a)") : "linear-gradient(145deg,#0891b2,#4338ca)", boxShadow: curveActive ? "0 0 14px rgba(34,211,238,.28)" : "none" }} aria-label={curveActive && curveCanFinish ? "Finish curve" : curveActive ? "Curve active" : "Add curve"} aria-pressed={curveActive}><CurveIcon active={curveActive} />{curveActive && <span className="absolute bottom-0.5 right-1 rounded bg-black/45 px-1 text-[8px] font-bold leading-3">{curvePointCount}/{curvePointLimit}</span>}</button>
+      <button onClick={() => active && onCurve()} className={`relative h-12 w-14 min-w-14 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] ${active ? "" : "invisible pointer-events-none"}${focusClass("curve")}`} style={{ background: curveActive ? (curveCanFinish ? "linear-gradient(145deg,#22d3ee,#2563eb)" : "linear-gradient(145deg,#0e7490,#1e3a8a)") : "linear-gradient(145deg,#0891b2,#4338ca)", boxShadow: curveActive ? "0 0 14px rgba(34,211,238,.28)" : "none" }} aria-label={curveActive && curveCanFinish ? "Finish curve" : curveActive ? "Curve active" : "Add curve"} aria-pressed={curveActive}><CurveIcon active={curveActive} />{curveActive && <span className="absolute bottom-0.5 right-1 rounded bg-black/45 px-1 text-[8px] font-bold leading-3">{curvePointCount}/{curvePointLimit}</span>}</button>
     </div>
   );
 }

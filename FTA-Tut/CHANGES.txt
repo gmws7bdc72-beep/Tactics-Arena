@@ -1,0 +1,9 @@
+Playable match tutorial plus transfer-market tutorial.
+
+- First-run Start Tutorial / Skip prompt
+- Replay tutorial from the ? button on Home
+- Guided selection, movement, confirmation, passing, long balls, curves, combination actions, shooting, goalkeeper diving, offside, and final scoring challenge
+- Curve lesson teaches endpoint before control points and automatic correction of impossible ball paths
+- Long-ball lesson preserves arc and landing vision
+- Transfer tutorial covers player stats, buying, selling, statuses, budgets, negotiations, and up to 10 unsold transfer-listed player transformations
+- Transfer Market includes a Guide button

@@ -42,6 +42,8 @@ import { useIsMobile } from "../hooks/use-mobile";
 import { deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
+import TutorialCoach from "../components/TutorialCoach";
+import { MATCH_TUTORIAL_STEPS, type TutorialRequirement } from "../game/matchTutorial";
 
 interface Props {
   team: TeamConfig;
@@ -51,6 +53,8 @@ interface Props {
   p1TeamDef?: AITeamDef;
   onMatchEnd: (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => void;
   onForfeit: () => void;
+  tutorialMode?: boolean;
+  onTutorialComplete?: () => void;
 }
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
@@ -129,7 +133,7 @@ function pickContrasting(againstColor: string): string {
   return CONTRAST_POOL.reduce((best, c) => rgbDist(againstColor, c) > rgbDist(againstColor, best) ? c : best, CONTRAST_POOL[0]);
 }
 
-export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer = false, p1TeamDef, onMatchEnd, onForfeit }: Props) {
+export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer = false, p1TeamDef, onMatchEnd, onForfeit, tutorialMode = false, onTutorialComplete }: Props) {
   const p1Source = twoPlayer && p1TeamDef ? p1TeamDef : null;
   const playerFormation = p1Source ? getFormationById(p1Source.formationId) : getFormationById(team.formationId);
   const aiFormation = getAIFormationById(opponentTeamDef.formationId);
@@ -144,7 +148,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     : rawAiColor;
   const effectiveAiSecondaryColor = effectiveAiColor !== rawAiColor ? "#ffffff" : (opponentTeamDef.secondaryColor ?? "#ffffff");
 
-  const savedMatch = loadMatch();
+  const savedMatch = tutorialMode ? null : loadMatch();
   const initState = useRef((() => {
     if (savedMatch && savedMatch.version === 1 && savedMatch.twoPlayer === twoPlayer && savedMatch.isHome === isHome) {
       return {
@@ -159,11 +163,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     const ai = opponentTeamDef.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
       makeSimPlayer(card, "ai", aiFormation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
     );
-    // 50/50 kickoff — random regardless of home/away
-    const kickoffGK = Math.random() < 0.5
-      ? pl.find(p => p.role === "goalkeeper") ?? pl[0]
-      : ai.find(p => p.role === "goalkeeper") ?? ai[0];
-    const ball: SimBall = { position: { ...kickoffGK.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffGK.id, height: 0 };
+    // Tutorial kickoff is deterministic and starts with an outfield player. Normal matches remain 50/50.
+    const kickoffPlayer = tutorialMode
+      ? pl.find(p => p.role === "midfielder") ?? pl.find(p => p.role !== "goalkeeper") ?? pl[0]
+      : Math.random() < 0.5
+        ? pl.find(p => p.role === "goalkeeper") ?? pl[0]
+        : ai.find(p => p.role === "goalkeeper") ?? ai[0];
+    const ball: SimBall = { position: { ...kickoffPlayer.position }, velocity: { x: 0, y: 0 }, ownerId: kickoffPlayer.id, height: 0 };
     return { players: [...pl, ...ai], ball };
   })());
 
@@ -225,6 +231,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const turnSaveCountRef = useRef(savedMatch?.turnSaveCount ?? 0);
 
   const persistMatch = useCallback(() => {
+    if (tutorialMode) return;
     saveMatch({
       version: 1,
       twoPlayer,
@@ -251,7 +258,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       replayPlaying,
       turnSaveCount: turnSaveCountRef.current,
     });
-  }, [twoPlayer, isHome, currentFrame, matchEndResult, selectedPlayerId, passTargetMode, comboMoveFirst, comboActive, comboStep, comboStoredMove, comboStoredPass, replayMode, replayIdx, replaySpeed, replayPlaying]);
+  }, [tutorialMode, twoPlayer, isHome, currentFrame, matchEndResult, selectedPlayerId, passTargetMode, comboMoveFirst, comboActive, comboStep, comboStoredMove, comboStoredPass, replayMode, replayIdx, replaySpeed, replayPlaying]);
 
   useEffect(() => {
     if (!savedMatch) return;
@@ -294,9 +301,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     return () => {
       persistMatch();
       window.removeEventListener("beforeunload", onBeforeUnload);
-      saveMatch(null);
+      if (!tutorialMode) saveMatch(null);
     };
-  }, [persistMatch]);
+  }, [persistMatch, tutorialMode]);
 
   const stopAnim = () => {
     if (animRef.current !== null) {
@@ -918,6 +925,51 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     setDiveTargetMode(true);
   }, [selectedPlayerId, goalkeeperCanDive]);
 
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [tutorialStepStartTurn, setTutorialStepStartTurn] = useState(turnRef.current);
+  const [tutorialFinalStartTurn, setTutorialFinalStartTurn] = useState<number | null>(null);
+  const tutorial = MATCH_TUTORIAL_STEPS[tutorialStep];
+
+  const tutorialRequirementMet = useMemo(() => {
+    if (!tutorialMode || !tutorial) return true;
+    const commands = [...pendingCommands.values()];
+    const meets = (requirement: TutorialRequirement): boolean => {
+      switch (requirement) {
+        case "none": return true;
+        case "selected": return !!selectedPlayerId;
+        case "move": return commands.some((command) => command.type === CommandType.MOVE && !command.followUp);
+        case "confirmed": return turn > tutorialStepStartTurn && phase === "planning";
+        case "pass": return commands.some((command) => command.type === CommandType.PASS && command.passStyle !== "long" && !command.followUp);
+        case "longPass": return commands.some((command) => command.type === CommandType.PASS && command.passStyle === "long");
+        case "curve": return curve.controls.length >= 2 || commands.some((command) => (command.curvePoints?.length ?? 0) >= 2);
+        case "combo": return commands.some((command) => !!command.followUp);
+        case "shoot": return commands.some((command) => command.type === CommandType.SHOOT);
+        case "final": return score.player > 0 || (tutorialFinalStartTurn !== null && turn - tutorialFinalStartTurn >= 3);
+        default: return true;
+      }
+    };
+    return meets(tutorial.requirement);
+  }, [tutorialMode, tutorial, pendingCommands, selectedPlayerId, turn, tutorialStepStartTurn, phase, curve.controls.length, score.player, tutorialFinalStartTurn]);
+
+  const nextTutorialStep = useCallback(() => {
+    if (!tutorialRequirementMet) return;
+    if (tutorialStep >= MATCH_TUTORIAL_STEPS.length - 1) {
+      onTutorialComplete?.();
+      return;
+    }
+    const next = tutorialStep + 1;
+    setTutorialStep(next);
+    setTutorialStepStartTurn(turnRef.current);
+    if (MATCH_TUTORIAL_STEPS[next]?.requirement === "final") {
+      setTutorialFinalStartTurn(turnRef.current);
+    }
+  }, [tutorialRequirementMet, tutorialStep, onTutorialComplete]);
+
+  const previousTutorialStep = useCallback(() => {
+    setTutorialStep((current) => Math.max(0, current - 1));
+    setTutorialStepStartTurn(turnRef.current);
+  }, []);
+
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
@@ -952,6 +1004,21 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         </div>
         <div className="w-8" />
       </div>
+
+      {tutorialMode && tutorial && (
+        <TutorialCoach
+          step={tutorialStep}
+          total={MATCH_TUTORIAL_STEPS.length}
+          title={tutorial.title}
+          body={tutorial.body}
+          hint={tutorial.hint}
+          canContinue={tutorialRequirementMet}
+          final={tutorialStep === MATCH_TUTORIAL_STEPS.length - 1}
+          onBack={previousTutorialStep}
+          onNext={nextTutorialStep}
+          onSkip={onForfeit}
+        />
+      )}
 
       {/* Goal banner */}
       {showGoalBanner && (
@@ -1041,6 +1108,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             curvePointLimit={curve.limit}
             actionsDisabled={curve.placingControls}
             active={!!selectedPlayerId}
+            tutorialFocus={tutorialMode ? tutorial?.focus : "none"}
           />
         )}
 
@@ -1075,7 +1143,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           <button
             onClick={confirmTurn}
             disabled={phase !== "planning"}
-            className="w-full px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40"
+            className={`w-full px-5 py-2.5 rounded-xl text-white text-sm font-black transition-all active:scale-95 disabled:opacity-40 ${tutorialMode && tutorial?.focus === "confirm" ? "ring-2 ring-cyan-300 ring-offset-2 ring-offset-black animate-pulse" : ""}`}
             style={{
               background: phase === "planning"
                 ? twoPlayer && twoPlayerTurn === "p2"
