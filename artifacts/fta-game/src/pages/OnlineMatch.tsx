@@ -56,7 +56,7 @@ interface Props {
   onLeave: () => void;
 }
 
-const PLAYBACK_FPS = 54;
+const PLAYBACK_FPS = 48;
 const ONLINE_TURN_TIME = 25;
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {

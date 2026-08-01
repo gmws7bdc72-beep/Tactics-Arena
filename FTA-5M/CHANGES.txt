@@ -1,0 +1,3 @@
+- Sets offline and online match playback to 48 FPS.
+- Slower than 5L's 54 FPS, but still substantially faster than the old slow mobile behavior.
+- Keeps the mobile frame-synchronization fix intact.
