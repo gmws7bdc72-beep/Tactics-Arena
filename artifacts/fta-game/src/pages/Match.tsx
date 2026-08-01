@@ -35,6 +35,7 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
+import { getGoalkeeperDiveRange } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -309,6 +310,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setShotTargetMode(false);
+    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -477,7 +479,15 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       }));
     } else {
       const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
-      const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
+      // Give the AI the player's planned actions before it chooses its response.
+      // This is essential for goalkeepers to anticipate shots/through balls.
+      const playerPlayersList = currentPlayers
+        .filter(x => x.teamId === "player")
+        .map((player) => ({
+          ...player,
+          command: currentPending.get(player.id) ?? null,
+          commandExecuted: false,
+        }));
       const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current, opponentTeamDef.tactic);
       withCommands = currentPlayers.map(p => {
         const cmd = p.teamId === "player"
@@ -895,10 +905,20 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     selectedSimPlayer.role === "goalkeeper" &&
     currentFrame?.ball.ownerId !== selectedSimPlayer.id;
 
+  const selectedDiveRange =
+    curvePlayer?.role === "goalkeeper"
+      ? getGoalkeeperDiveRange(curvePlayer.stats.defense, curvePlayer.stats.speed)
+      : 1;
+
   const beginGoalkeeperDive = useCallback(() => {
     if (!selectedPlayerId || !goalkeeperCanDive) return;
+    setPassTargetMode(false);
+    setLongPassTargetMode(false);
+    setShotTargetMode(false);
+    setComboActive(false);
+    curve.reset();
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive]);
+  }, [selectedPlayerId, goalkeeperCanDive, curve]);
 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
@@ -970,6 +990,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
           passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
+          diveTargetMode={diveTargetMode}
+          diveRange={selectedDiveRange}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           passOriginPos={

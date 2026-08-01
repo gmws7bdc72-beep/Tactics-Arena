@@ -1,8 +1,15 @@
 import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
-import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
+import {
+  posToTile,
+  getReachableTiles,
+  getDiveReachableTiles,
+  getGoalkeeperDiveRange,
+  tileToPos,
+  tileKey,
+} from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_TOP_Y, GOAL_WIDTH } from "./constants";
 import {
   curvePointLimitForCommand,
   curveRouteFitsMoveBudget,
@@ -1416,6 +1423,161 @@ function addTacticalCurve(
   return primary;
 }
 
+
+function closestPointOnSegment(point: Vec2, start: Vec2, end: Vec2): Vec2 {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq <= 0.0001) return { ...start };
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+  return { x: start.x + dx * t, y: start.y + dy * t };
+}
+
+function planAIGoalkeeperDive(
+  goalkeeper: SimPlayer,
+  opponents: SimPlayer[],
+  ball: SimBall,
+): Command | null {
+  const attacker = opponents.find((player) => player.id === ball.ownerId);
+  const command = attacker?.command;
+  if (!attacker || !command) return null;
+
+  const isShot = command.type === CommandType.SHOOT;
+  const isDangerousPass =
+    command.type === CommandType.PASS &&
+    !!command.targetPosition &&
+    command.targetPosition.x >= PITCH_WIDTH - TILE_W * 2.5;
+  if (!isShot && !isDangerousPass) return null;
+
+  const intendedTarget = command.targetPosition ?? {
+    x: PITCH_WIDTH,
+    y: PITCH_HEIGHT / 2,
+  };
+
+  // Ignore shots/passes that are visibly going away from the AI goal.
+  if (intendedTarget.x <= attacker.position.x + TILE_W * 0.25) return null;
+  if (isShot && (intendedTarget.y < GOAL_TOP_Y - TILE_H || intendedTarget.y > GOAL_TOP_Y + GOAL_WIDTH + TILE_H)) {
+    return null;
+  }
+
+  const keeperTile = posToTile(goalkeeper.position);
+  const range = getGoalkeeperDiveRange(goalkeeper.stats.defense, goalkeeper.stats.speed);
+  const closest = closestPointOnSegment(goalkeeper.position, attacker.position, intendedTarget);
+  const interceptTile = posToTile(closest);
+  // A ball already travelling through the keeper's current tile should be held,
+  // not answered with a needless dive away from it.
+  if (interceptTile.col === keeperTile.col && interceptTile.row === keeperTile.row) return null;
+
+  const reachable = getDiveReachableTiles(keeperTile.col, keeperTile.row, range, goalkeeper.teamId);
+  const candidate = reachable
+    .map((tile) => ({
+      tile,
+      distance: Math.hypot(tile.col - interceptTile.col, tile.row - interceptTile.row),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  if (!candidate || candidate.distance > 1.05) return null;
+
+  const pixelReach = range * Math.max(TILE_W, TILE_H) + Math.max(TILE_W, TILE_H) * 0.35;
+  if (eucDist(goalkeeper.position, closest) > pixelReach) return null;
+
+  return {
+    type: CommandType.DIVE,
+    targetPosition: tileToPos(candidate.tile.col, candidate.tile.row),
+  };
+}
+
+function hasClearForwardCarry(player: SimPlayer, opponents: SimPlayer[]): boolean {
+  const from = posToTile(player.position);
+  const maxStep = Math.max(1, Math.min(2, speedToTiles(player.stats.speed)));
+  for (let step = maxStep; step >= 1; step -= 1) {
+    const tile = { col: Math.max(0, from.col - step), row: from.row };
+    const blocked = opponents.some((opponent) => {
+      const ot = posToTile(opponent.position);
+      return Math.abs(ot.col - tile.col) <= 1 && Math.abs(ot.row - tile.row) <= 1;
+    });
+    if (!blocked) return true;
+  }
+  return false;
+}
+
+function controlledForwardTile(player: SimPlayer, opponents: SimPlayer[]): TilePos {
+  const from = posToTile(player.position);
+  const maxStep = Math.max(1, Math.min(2, speedToTiles(player.stats.speed)));
+  const rows = [from.row, from.row - 1, from.row + 1];
+  for (let step = maxStep; step >= 1; step -= 1) {
+    for (const row of rows) {
+      const tile = { col: Math.max(0, from.col - step), row: Math.max(0, Math.min(GRID_ROWS - 1, row)) };
+      if (!isThreatened(tile, opponents)) return tile;
+    }
+  }
+  return { col: Math.max(0, from.col - 1), row: from.row };
+}
+
+function enforceAttackingIntent(
+  player: SimPlayer,
+  command: Command,
+  aiPlayers: SimPlayer[],
+  opponents: SimPlayer[],
+  tactic: TeamTactic,
+): Command {
+  const from = posToTile(player.position);
+  const target = command.targetPosition ? posToTile(command.targetPosition) : null;
+  const isBackward = !!target && target.col > from.col;
+  const hardPressed = isHardPressed(from, opponents);
+  const forwardPass = bestForwardPass(player, aiPlayers, opponents, tactic.progression === "slow" ? 7 : 11);
+  const clearCarry = hasClearForwardCarry(player, opponents);
+
+  // Backwards is a reset under pressure, never the default response to empty grass.
+  if (isBackward && !hardPressed && (forwardPass || clearCarry)) {
+    if (forwardPass) return passTo(forwardPass, player.position);
+    const tile = controlledForwardTile(player, opponents);
+    return { type: CommandType.MOVE, targetPosition: tileToPos(tile.col, tile.row) };
+  }
+
+  // Patient teams advance calmly when there is no pressure instead of treating
+  // possession as an instruction to move away from goal.
+  if (tactic.progression === "slow" && !hardPressed) {
+    if (forwardPass && command.type !== CommandType.SHOOT && Math.random() < 0.78) {
+      return passTo(forwardPass, player.position);
+    }
+    if (clearCarry && command.type === CommandType.MOVE && target && target.col >= from.col) {
+      const tile = controlledForwardTile(player, opponents);
+      return { type: CommandType.MOVE, targetPosition: tileToPos(tile.col, tile.row) };
+    }
+  }
+
+  return command;
+}
+
+function applyTacticComboPreference(
+  player: SimPlayer,
+  command: Command,
+  aiPlayers: SimPlayer[],
+  opponents: SimPlayer[],
+  tactic: TeamTactic,
+): Command {
+  if (player.role === "goalkeeper" || command.type === CommandType.SHOOT || command.passStyle === "long") return command;
+
+  const direct = tactic.progression === "direct" || tactic.progression === "counter";
+  const patient = tactic.progression === "slow";
+  const comboChance = direct ? 0.68 : patient ? 0.64 : 0.58;
+  if (Math.random() >= comboChance) return command;
+
+  const target = bestForwardPass(player, aiPlayers, opponents, direct ? 11 : 8)
+    ?? bestLateralPass(player, aiPlayers, opponents, 6);
+  if (!target) return command;
+
+  const from = posToTile(player.position);
+  const passMoveChance = direct ? 0.70 : patient ? 0.30 : 0.50;
+  if (Math.random() < passMoveChance) {
+    return passAndRun(target, pickRunAfterPassTile(player, from, opponents), player.position);
+  }
+
+  const moveTile = controlledForwardTile(player, opponents);
+  return moveAndPass(moveTile, target);
+}
+
 export function generateAICommands(
   aiPlayers: SimPlayer[],
   playerPlayers: SimPlayer[],
@@ -1538,6 +1700,14 @@ export function generateAICommands(
   for (const player of sorted) {
     const pt = posToTile(player.position);
     const hasBall = player.id === ball.ownerId;
+
+    if (!aiHasBall && player.role === "goalkeeper") {
+      const dive = planAIGoalkeeperDive(player, activePlayerPlayers, ball);
+      if (dive) {
+        commands.set(player.id, dive);
+        continue;
+      }
+    }
 
     // Offside AI players retreat to get onside — invisible to all other logic.
     if (!hasBall && aiOffsideSet.has(player.id)) {
@@ -1817,6 +1987,11 @@ export function generateAICommands(
         tactic,
         planRef,
       );
+    }
+
+    if (player.role !== "goalkeeper" && aiHasBall && hasBall) {
+      cmd = enforceAttackingIntent(player, cmd, aiPlayers, playerPlayers, tactic);
+      cmd = applyTacticComboPreference(player, cmd, aiPlayers, playerPlayers, tactic);
     }
 
     logCommand(player.id, cmd);
@@ -2102,9 +2277,10 @@ function tacticBuffCommand(
 
     if (tactic.id === "slow_possession") {
       if (currentCmd.type === CommandType.MOVE && pt.col > 4) {
-        const safeShort = bestLateralPass(player, aiPlayers, playerPlayers, 4)
-          ?? bestBackwardPass(player, aiPlayers, playerPlayers, 5)
-          ?? bestForwardPass(player, aiPlayers, playerPlayers, 4);
+        const hardPressed = isHardPressed(pt, playerPlayers);
+        const safeShort = bestForwardPass(player, aiPlayers, playerPlayers, 7)
+          ?? bestLateralPass(player, aiPlayers, playerPlayers, 5)
+          ?? (hardPressed ? bestBackwardPass(player, aiPlayers, playerPlayers, 5) : null);
         if (safeShort) {
           const tile = posToTile(safeShort.position);
           if (planRef) planRef.current = { runnerId: safeShort.id, runTile: tile };
@@ -2957,11 +3133,12 @@ function scoreCreativeCarryTile(
     score += hardPressed ? 6.2 : -0.4;
   }
 
-  // Slow possession should pass/recycle instead of carrying forward.
+  // Patient possession means controlled progress, not retreating from empty space.
   if (tactic.id === "slow_possession") {
-    score += lateral > 0 ? 3.2 : 0;
-    score += backward > 0 ? 3.4 : 0;
-    score -= Math.max(0, progress - 1) * 1.65;
+    score += lateral > 0 ? 2.2 : 0;
+    score += progress > 0 && progress <= 3 ? 4.0 : 0;
+    score -= backward > 0 ? (hardPressed ? 0.5 : 7.5) : 0;
+    score -= Math.max(0, progress - 3) * 0.8;
   }
 
   // Counter teams may still drive forward, but not every possession.

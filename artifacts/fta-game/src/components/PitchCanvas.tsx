@@ -17,7 +17,12 @@ import {
   GRID_COLS,
   GRID_ROWS,
 } from "../engine/constants";
-import { posToTile, getReachableTiles, tileToPos } from "../engine/grid";
+import {
+  posToTile,
+  getReachableTiles,
+  getDiveReachableTiles,
+  tileToPos,
+} from "../engine/grid";
 import { sampleChainedCurve } from "../engine/curve";
 
 interface Props {
@@ -28,6 +33,8 @@ interface Props {
   pendingCommands: Map<string, Command>;
   selectedPlayerId: string | null;
   passTargetMode: boolean;
+  diveTargetMode?: boolean;
+  diveRange?: number;
   passOriginPos?: Vec2;
   curveDraft?: {
     origin: Vec2;
@@ -627,6 +634,8 @@ export default function PitchCanvas({
   pendingCommands,
   selectedPlayerId,
   passTargetMode,
+  diveTargetMode = false,
+  diveRange = 1,
   curveDraft,
   curveControlMode = false,
   phase,
@@ -691,7 +700,7 @@ export default function PitchCanvas({
 
     const pt = posToTile(selPlayer.position);
     const isGK = selPlayer.role === "goalkeeper";
-    const range = selPlayer.tileRange;
+    const range = diveTargetMode ? diveRange : selPlayer.tileRange;
 
     map.set(`${pt.col},${pt.row}`, "current");
 
@@ -707,13 +716,15 @@ export default function PitchCanvas({
       );
     }
 
-    const reachable = getReachableTiles(
-      pt.col,
-      pt.row,
-      range,
-      isGK,
-      selPlayer.teamId,
-    );
+    const reachable = diveTargetMode
+      ? getDiveReachableTiles(pt.col, pt.row, range, selPlayer.teamId)
+      : getReachableTiles(
+          pt.col,
+          pt.row,
+          range,
+          isGK,
+          selPlayer.teamId,
+        );
 
     for (const t of reachable) {
       const key = `${t.col},${t.row}`;
@@ -725,7 +736,7 @@ export default function PitchCanvas({
     }
 
     return map;
-  }, [frame, selectedPlayerId, passTargetMode]);
+  }, [frame, selectedPlayerId, passTargetMode, diveTargetMode, diveRange]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1597,14 +1608,16 @@ export default function PitchCanvas({
 
       if (!passTargetMode) {
         const isGK = selPlayer.role === "goalkeeper";
-        const range = selPlayer.tileRange;
-        const reachable = getReachableTiles(
-          selTile.col,
-          selTile.row,
-          range,
-          isGK,
-          selPlayer.teamId,
-        );
+        const range = diveTargetMode ? diveRange : selPlayer.tileRange;
+        const reachable = diveTargetMode
+          ? getDiveReachableTiles(selTile.col, selTile.row, range, selPlayer.teamId)
+          : getReachableTiles(
+              selTile.col,
+              selTile.row,
+              range,
+              isGK,
+              selPlayer.teamId,
+            );
         const isReachable = reachable.some(
           (t) => t.col === clickedCol && t.row === clickedRow,
         );
@@ -1635,6 +1648,8 @@ export default function PitchCanvas({
       onPlayerClick,
       onTileClick,
       passTargetMode,
+      diveTargetMode,
+      diveRange,
       curveControlMode,
       onCurvePointClick,
       activePlanningTeam,

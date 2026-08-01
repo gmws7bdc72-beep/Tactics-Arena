@@ -528,6 +528,7 @@ export default function App() {
             updateTeam(t);
             goToMenuTab("home");
           }}
+          onPersist={updateTeam}
           onBack={() => goToMenuTab("home")}
         />
       );

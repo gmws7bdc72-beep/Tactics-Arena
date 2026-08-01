@@ -7,6 +7,7 @@ import { createLeague } from "./league";
 import { ensurePlayerDevelopment, ensureTeamDevelopment } from "./training";
 
 const TEAM_KEY = "fta_team_clean_6v6_v1";
+const TEAM_NAME_KEY = "fta_team_name_v1";
 const LEAGUE_KEY = "fta_league_clean_6v6_v1";
 const MATCH_KEY = "fta_match_clean_6v6_v1";
 
@@ -52,7 +53,12 @@ export function loadTeam(): TeamConfig {
     const raw = localStorage.getItem(TEAM_KEY);
 
     if (raw) {
-      const t = JSON.parse(raw) as TeamConfig;
+      const parsed = JSON.parse(raw) as TeamConfig;
+      const savedName = localStorage.getItem(TEAM_NAME_KEY)?.trim();
+      const t: TeamConfig = {
+        ...parsed,
+        name: savedName || parsed.name || "My Team",
+      };
 
       if (
         t.players &&
@@ -79,10 +85,15 @@ export function loadTeam(): TeamConfig {
 }
 
 export function saveTeam(team: TeamConfig): void {
-  localStorage.setItem(
-    TEAM_KEY,
-    JSON.stringify(normalizeTeamForCurrentRules(team)),
-  );
+  const normalized = normalizeTeamForCurrentRules({
+    ...team,
+    name: team.name.trim() || "My Team",
+  });
+  localStorage.setItem(TEAM_KEY, JSON.stringify(normalized));
+  // Keep the club name in its own tiny key as well. This prevents another
+  // screen holding an older TeamConfig object from silently restoring the old
+  // name when the full team save is normalized later.
+  localStorage.setItem(TEAM_NAME_KEY, normalized.name);
 }
 
 export function loadLeague(teamName: string): LeagueState {
@@ -93,7 +104,25 @@ export function loadLeague(teamName: string): LeagueState {
       const l = JSON.parse(raw) as LeagueState;
 
       if (l.teams && l.schedule) {
-        return l;
+        const renameMatch = <T extends { homeId: string; awayId: string; homeName: string; awayName: string }>(match: T): T => ({
+          ...match,
+          homeName: match.homeId === PLAYER_TEAM_ID ? teamName : match.homeName,
+          awayName: match.awayId === PLAYER_TEAM_ID ? teamName : match.awayName,
+        });
+        return {
+          ...l,
+          teams: l.teams.map((entry) =>
+            entry.id === PLAYER_TEAM_ID ? { ...entry, name: teamName } : entry,
+          ),
+          playoff: l.playoff
+            ? {
+                ...l.playoff,
+                sf1: renameMatch(l.playoff.sf1),
+                sf2: renameMatch(l.playoff.sf2),
+                final: l.playoff.final ? renameMatch(l.playoff.final) : undefined,
+              }
+            : l.playoff,
+        };
       }
     }
   } catch {}
@@ -177,18 +206,8 @@ export const JERSEY_COLORS = [
   "#3a86ff",
 ];
 
-export const SECONDARY_COLORS = [
-  "#ffffff",
-  "#000000",
-  "#ffd60a",
-  "#c8e6c9",
-  "#fce4ec",
-  "#e3f2fd",
-  "#f3e5f5",
-  "#fff9c4",
-  "#ffe0b2",
-  "#e0f2f1",
-];
+// Secondary gets the exact same choices as primary.
+export const SECONDARY_COLORS = [...JERSEY_COLORS];
 
 export const PLAYER_TEAM_ID_CONST = PLAYER_TEAM_ID;
 export { CREST_ICONS };

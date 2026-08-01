@@ -75,6 +75,30 @@ function transformTenAIPlayersForNewSeason(league: LeagueState): {
   };
 }
 
+
+function renamePlayerTeamReferences(league: LeagueState, teamName: string): LeagueState {
+  const renameMatch = <T extends { homeId: string; awayId: string; homeName: string; awayName: string }>(match: T): T => ({
+    ...match,
+    homeName: match.homeId === PLAYER_TEAM_ID_CONST ? teamName : match.homeName,
+    awayName: match.awayId === PLAYER_TEAM_ID_CONST ? teamName : match.awayName,
+  });
+
+  return {
+    ...league,
+    teams: league.teams.map((entry) =>
+      entry.id === PLAYER_TEAM_ID_CONST ? { ...entry, name: teamName } : entry,
+    ),
+    playoff: league.playoff
+      ? {
+          ...league.playoff,
+          sf1: renameMatch(league.playoff.sf1),
+          sf2: renameMatch(league.playoff.sf2),
+          final: league.playoff.final ? renameMatch(league.playoff.final) : undefined,
+        }
+      : league.playoff,
+  };
+}
+
 export function useGameState() {
   const [team, setTeamState] = useState<TeamConfig>(() => loadTeam());
   const [league, setLeagueState] = useState<LeagueState>(() => {
@@ -99,19 +123,15 @@ export function useGameState() {
   }, []);
 
   const updateTeam = useCallback((nextTeam: TeamConfig) => {
-    const normalized = ensureTeamDevelopment(nextTeam);
+    const normalized = ensureTeamDevelopment({
+      ...nextTeam,
+      name: nextTeam.name.trim() || team.name || "My Team",
+    });
     setTeamState(normalized);
     saveTeam(normalized);
 
     setLeagueState((previous) => {
-      const updated = {
-        ...previous,
-        teams: previous.teams.map((entry) =>
-          entry.id === PLAYER_TEAM_ID_CONST
-            ? { ...entry, name: normalized.name }
-            : entry,
-        ),
-      };
+      const updated = renamePlayerTeamReferences(previous, normalized.name);
       saveLeague(updated);
 
       setMarketState((previousMarket) => {
@@ -122,7 +142,7 @@ export function useGameState() {
 
       return updated;
     });
-  }, []);
+  }, [team.name]);
 
   const updateLeague = useCallback((nextLeague: LeagueState) => {
     const migrated = migrateLeague(nextLeague);
@@ -136,14 +156,9 @@ export function useGameState() {
         nextTeam,
         nextLeague.season ?? 1,
       );
-      const normalizedLeague = migrateLeague({
-        ...nextLeague,
-        teams: nextLeague.teams.map((entry) =>
-          entry.id === PLAYER_TEAM_ID_CONST
-            ? { ...entry, name: normalizedTeam.name }
-            : entry,
-        ),
-      });
+      const normalizedLeague = migrateLeague(
+        renamePlayerTeamReferences(nextLeague, normalizedTeam.name),
+      );
 
       setTeamState(normalizedTeam);
       setLeagueState(normalizedLeague);

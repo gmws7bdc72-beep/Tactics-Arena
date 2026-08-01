@@ -40,7 +40,7 @@ import {
   speedToTiles,
   BALL_RADIUS,
 } from "./constants";
-import { posToTile, tileToPos } from "./grid";
+import { posToTile, tileToPos, getGoalkeeperDiveRange } from "./grid";
 import {
   advanceCurveMotion,
   createCurveMotion,
@@ -1078,7 +1078,7 @@ function updatePlayerMovement(
       if (player.role === "goalkeeper" && ball.ownerId !== player.id && cmd.targetPosition) {
         const from = posToTile(player.position);
         const wanted = posToTile(cmd.targetPosition);
-        const maxTiles = Math.max(player.stats.defense, player.stats.speed) >= 9 ? 2 : 1;
+        const maxTiles = getGoalkeeperDiveRange(player.stats.defense, player.stats.speed);
         const rawDc = wanted.col - from.col;
         const rawDr = wanted.row - from.row;
         const rawLength = Math.hypot(rawDc, rawDr);

@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import type { TeamConfig } from "../engine/types";
-import { JERSEY_COLORS, SECONDARY_COLORS, saveTeam } from "../game/persistence";
+import { JERSEY_COLORS, saveTeam } from "../game/persistence";
 import {
   KIT_STYLES,
   SLEEVE_STYLES,
@@ -12,6 +12,7 @@ import {
 interface Props {
   team: TeamConfig;
   onSave: (team: TeamConfig) => void;
+  onPersist?: (team: TeamConfig) => void;
   onBack: () => void;
 }
 
@@ -94,7 +95,7 @@ function ColorPicker({
   );
 }
 
-export default function Customize({ team, onSave, onBack }: Props) {
+export default function Customize({ team, onSave, onPersist, onBack }: Props) {
   const [current, setCurrent] = useState<TeamConfig>({
     ...team,
     kitStyle: normalizeKitStyle(team.kitStyle),
@@ -108,12 +109,28 @@ export default function Customize({ team, onSave, onBack }: Props) {
       ? current.secondaryColor
       : current.jerseyColor;
 
-  // FTA_TEAM_NAME_PERSIST_V2
+  const [savedNotice, setSavedNotice] = useState(false);
+
+  useEffect(() => {
+    setCurrent((previous) => ({ ...previous, name: team.name }));
+  }, [team.name]);
+
+  const normalizedCurrent = (): TeamConfig => ({
+    ...current,
+    name: current.name.trim() || team.name || "My Team",
+  });
+
+  const handleSaveName = () => {
+    const next = normalizedCurrent();
+    saveTeam(next);
+    setCurrent(next);
+    onPersist?.(next);
+    setSavedNotice(true);
+    window.setTimeout(() => setSavedNotice(false), 1600);
+  };
+
   const handleSave = () => {
-    const next = {
-      ...current,
-      name: current.name.trim() || team.name,
-    };
+    const next = normalizedCurrent();
     saveTeam(next);
     setCurrent(next);
     onSave(next);
@@ -136,7 +153,7 @@ export default function Customize({ team, onSave, onBack }: Props) {
 
       <main className="space-y-7 px-4 pb-28 pt-5">
 
-        {/* FTA_TEAM_NAME_SAVE */}
+        {/* FTA_TEAM_NAME_SAVE_V3 */}
         <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
           <label
             htmlFor="fta-team-name"
@@ -144,34 +161,29 @@ export default function Customize({ team, onSave, onBack }: Props) {
           >
             Team Name
           </label>
-          <input
-            id="fta-team-name"
-            value={current.name}
-            maxLength={28}
-            onChange={(event) =>
-              setCurrent((previous) => ({
-                ...previous,
-                name: event.target.value,
-              }))
-            }
-            className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-base font-bold text-white outline-none focus:border-emerald-400"
-            placeholder="Enter team name"
-          />
+          <div className="flex gap-2">
+            <input
+              id="fta-team-name"
+              value={current.name}
+              maxLength={28}
+              onChange={(event) => {
+                setSavedNotice(false);
+                setCurrent((previous) => ({ ...previous, name: event.target.value }));
+              }}
+              className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-base font-bold text-white outline-none focus:border-emerald-400"
+              placeholder="Enter team name"
+            />
+            <button
+              type="button"
+              onClick={handleSaveName}
+              className="shrink-0 rounded-xl bg-emerald-400 px-4 text-xs font-black text-[#04130b] active:scale-95"
+            >
+              {savedNotice ? "Saved ✓" : "Save"}
+            </button>
+          </div>
+          <p className="mt-2 text-[10px] text-gray-500">Save applies the club name immediately without leaving this page.</p>
         </section>
 
-        <section>
-          <label className="mb-3 block text-xs font-bold uppercase tracking-[0.18em] text-gray-400">
-            Team Name
-          </label>
-          <input
-            type="text"
-            value={current.name}
-            maxLength={28}
-            onChange={(event) => setCurrent((previous) => ({ ...previous, name: event.target.value }))}
-            className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-bold text-white outline-none focus:border-emerald-400/60"
-            placeholder="Team name"
-          />
-        </section>
         <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] p-6">
           <div
             className="absolute inset-0 opacity-20"
@@ -288,7 +300,7 @@ export default function Customize({ team, onSave, onBack }: Props) {
 
         <ColorPicker
           label="Pattern / Number Color"
-          colors={SECONDARY_COLORS}
+          colors={JERSEY_COLORS}
           value={current.secondaryColor}
           selectedBorder="#00e676"
           onChange={(secondaryColor) => setCurrent((previous) => ({ ...previous, secondaryColor }))}

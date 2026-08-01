@@ -27,6 +27,7 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
+import { getGoalkeeperDiveRange } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -153,6 +154,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setShotTargetMode(false);
+    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -620,10 +622,20 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     selectedSimPlayer.role === "goalkeeper" &&
     currentFrame?.ball.ownerId !== selectedSimPlayer.id;
 
+  const selectedDiveRange =
+    curvePlayer?.role === "goalkeeper"
+      ? getGoalkeeperDiveRange(curvePlayer.stats.defense, curvePlayer.stats.speed)
+      : 1;
+
   const beginGoalkeeperDive = useCallback(() => {
     if (!selectedPlayerId || !goalkeeperCanDive) return;
+    setPassTargetMode(false);
+    setLongPassTargetMode(false);
+    setShotTargetMode(false);
+    setComboActive(false);
+    curve.reset();
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive]);
+  }, [selectedPlayerId, goalkeeperCanDive, curve]);
 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
@@ -676,6 +688,8 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
           onTileClick={handleTileClick}
           onCurvePointClick={curve.addControl}
           passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
+          diveTargetMode={diveTargetMode}
+          diveRange={selectedDiveRange}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}

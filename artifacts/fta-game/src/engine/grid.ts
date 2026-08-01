@@ -76,3 +76,32 @@ export function clampToGKZone(col: number, row: number, teamId: "player" | "ai")
   }
   return { col: Math.max(GK_COLS_AI_MIN, Math.min(GK_COLS_AI_MAX, col)), row };
 }
+
+
+export function getGoalkeeperDiveRange(defense: number, speed: number): number {
+  return Math.max(defense, speed) >= 9 ? 2 : 1;
+}
+
+// Dive reach is a true circular radius, matching simulation physics. A 2-tile
+// keeper therefore cannot secretly reach a 2x2 diagonal (2.83 tiles).
+export function getDiveReachableTiles(
+  col: number,
+  row: number,
+  range: number,
+  teamId: "player" | "ai",
+): { col: number; row: number }[] {
+  const tiles: { col: number; row: number }[] = [];
+  for (let dc = -range; dc <= range; dc += 1) {
+    for (let dr = -range; dr <= range; dr += 1) {
+      if (dc === 0 && dr === 0) continue;
+      if (Math.hypot(dc, dr) > range + 0.001) continue;
+      const nc = col + dc;
+      const nr = row + dr;
+      if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
+      if (teamId === "player" && (nc < GK_COLS_PLAYER_MIN || nc > GK_COLS_PLAYER_MAX)) continue;
+      if (teamId === "ai" && (nc < GK_COLS_AI_MIN || nc > GK_COLS_AI_MAX)) continue;
+      tiles.push({ col: nc, row: nr });
+    }
+  }
+  return tiles;
+}
