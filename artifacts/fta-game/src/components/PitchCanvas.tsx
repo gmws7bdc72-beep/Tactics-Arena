@@ -120,6 +120,8 @@ type PlayerAnimMemory = {
   state: string;
   stateTick: number;
   receiveTick: number;
+  actionKind?: "pass" | "longPass" | "shot";
+  actionTick: number;
 };
 
 function rgba(hex: string, alpha: number): string {
@@ -1422,9 +1424,6 @@ export default function PitchCanvas({
       const diving = p.state === "DIVING";
       const moving = !diving && speed > 4 && (p.state === "MOVING" || p.state === "DRIBBLING");
       const dribbling = moving && p.state === "DRIBBLING";
-      const passing = p.state === "PASSING";
-      const shooting = p.state === "SHOOTING";
-      const longPass = passing && p.actionPassStyle === "long";
       const contesting = p.state === "CONTESTING";
       const recovering = p.state === "RECOVERING";
       const ownsBall = frame.ball.ownerId === p.id;
@@ -1440,12 +1439,29 @@ export default function PitchCanvas({
           state: p.state,
           stateTick: animationTick,
           receiveTick: -9999,
+          actionTick: -9999,
         };
         playerAnimMemoryRef.current.set(p.id, memory);
       }
       if (memory.state !== p.state) {
         memory.state = p.state;
         memory.stateTick = animationTick;
+      }
+
+      // Simulation snapshots can leave PASSING immediately after contact. Keep
+      // the visual action alive long enough to show anticipation, contact,
+      // follow-through and recovery instead of flashing for a single frame.
+      if (p.state === "PASSING") {
+        const nextKind = p.actionPassStyle === "long" ? "longPass" : "pass";
+        if (memory.actionKind !== nextKind || memory.actionTick < animationTick - 28) {
+          memory.actionKind = nextKind;
+          memory.actionTick = animationTick;
+        }
+      } else if (p.state === "SHOOTING") {
+        if (memory.actionKind !== "shot" || memory.actionTick < animationTick - 30) {
+          memory.actionKind = "shot";
+          memory.actionTick = animationTick;
+        }
       }
 
       const directionTarget = p.actionTarget
@@ -1467,6 +1483,12 @@ export default function PitchCanvas({
 
       const stateAge = (animationTick - memory.stateTick + 100000) % 100000;
       const receiveAge = (animationTick - memory.receiveTick + 100000) % 100000;
+      const actionAge = (animationTick - memory.actionTick + 100000) % 100000;
+      const actionDurationTicks = memory.actionKind === "shot" ? 27 : memory.actionKind === "longPass" ? 28 : 24;
+      const actionActive = actionAge <= actionDurationTicks;
+      const passing = actionActive && (memory.actionKind === "pass" || memory.actionKind === "longPass");
+      const shooting = actionActive && memory.actionKind === "shot";
+      const longPass = actionActive && memory.actionKind === "longPass";
       const receiving = ownsBall && speed < 7 && receiveAge < 17 && !passing && !shooting;
       const receiveProgress = clamp(receiveAge / 16, 0, 1);
       const receiveCushion = receiving ? phaseEnvelope(receiveProgress, 0, 0.34, 1) : 0;
@@ -1485,11 +1507,8 @@ export default function PitchCanvas({
         !shooting &&
         Math.sin(animationTick * 0.072 + seed * 24) > 0.88;
 
-      const actionDuration = shooting ? 0.56 : longPass ? 0.58 : 0.48;
       const actionProgress = passing || shooting
-        ? p.stateTimer != null
-          ? clamp(1 - p.stateTimer / actionDuration, 0, 1)
-          : clamp(stateAge / 22, 0, 1)
+        ? clamp(actionAge / Math.max(1, actionDurationTicks), 0, 1)
         : 0;
       const anticipation = smooth01(clamp(actionProgress / 0.34, 0, 1));
       const contact = phaseEnvelope(actionProgress, 0.26, 0.48, 0.66);
@@ -1565,8 +1584,12 @@ export default function PitchCanvas({
       const kneeLiftRight = Math.max(0, -gait) * r * (0.08 + velocityNorm * 0.2);
       const windup = anticipation * (1 - contact);
       const strike = contact + followThrough * (1 - recovery);
-      const actionScale = shooting ? 1.18 : longPass ? 0.98 : 0.7;
-      const actionKick = (-windup * 0.42 + strike * 1.18 - recovery * 0.25) * r * actionScale;
+      const actionScale = shooting ? 1.24 : longPass ? 1.16 : passing ? 1.02 : 0.7;
+      const actionKick = (-windup * 0.48 + strike * 1.3 - recovery * 0.28) * r * actionScale;
+      const passSweep = passing && !longPass
+        ? (-windup * 0.22 + contact * 0.52 + followThrough * 0.34) * r
+        : 0;
+      const longLift = longPass ? (anticipation * 0.16 + contact * 0.34) * r : 0;
       const receiveKick = receiveCushion * r * 0.46;
       const leftAction = kickSide < 0 ? actionKick + receiveKick : 0;
       const rightAction = kickSide > 0 ? actionKick + receiveKick : 0;
@@ -1581,20 +1604,20 @@ export default function PitchCanvas({
       const rightShoulder = world(shoulderHalf, -torsoHeight);
 
       let leftKnee = world(
-        -hipHalf + baseStride * 0.55 - leftAction * 0.16,
-        r * 0.58 - kneeLiftLeft - Math.max(0, leftAction) * 0.28,
+        -hipHalf + baseStride * 0.55 - leftAction * 0.16 + (kickSide < 0 ? passSweep * 0.18 : 0),
+        r * 0.58 - kneeLiftLeft - Math.max(0, leftAction) * 0.28 - (kickSide < 0 ? longLift * 0.22 : 0),
       );
       let rightKnee = world(
-        hipHalf - baseStride * 0.55 + rightAction * 0.16,
-        r * 0.58 - kneeLiftRight - Math.max(0, rightAction) * 0.28,
+        hipHalf - baseStride * 0.55 + rightAction * 0.16 - (kickSide > 0 ? passSweep * 0.18 : 0),
+        r * 0.58 - kneeLiftRight - Math.max(0, rightAction) * 0.28 - (kickSide > 0 ? longLift * 0.22 : 0),
       );
       let leftFoot = world(
-        -hipHalf + baseStride - leftAction * 0.34,
-        r * 1.18 - kneeLiftLeft * 0.42 - Math.abs(leftAction) * 0.22,
+        -hipHalf + baseStride - leftAction * 0.34 + (kickSide < 0 ? passSweep * 0.55 : 0),
+        r * 1.18 - kneeLiftLeft * 0.42 - Math.abs(leftAction) * 0.22 - (kickSide < 0 ? longLift : 0),
       );
       let rightFoot = world(
-        hipHalf - baseStride + rightAction * 0.34,
-        r * 1.18 - kneeLiftRight * 0.42 - Math.abs(rightAction) * 0.22,
+        hipHalf - baseStride + rightAction * 0.34 - (kickSide > 0 ? passSweep * 0.55 : 0),
+        r * 1.18 - kneeLiftRight * 0.42 - Math.abs(rightAction) * 0.22 - (kickSide > 0 ? longLift : 0),
       );
 
       if (diving) {
@@ -1606,7 +1629,11 @@ export default function PitchCanvas({
       }
 
       const runArm = moving ? -baseStride * 0.72 : idleBreath * r * 0.025;
-      const armOpen = passing ? anticipation * r * 0.28 : shooting ? anticipation * r * 0.42 : 0;
+      const armOpen = passing
+        ? (anticipation * 0.34 + followThrough * 0.18) * r
+        : shooting
+          ? anticipation * r * 0.42
+          : 0;
       const brace = contesting ? r * 0.42 : 0;
       const gkReady = isGK && !moving && !diving ? r * 0.3 : 0;
       const pointArm = callForBall ? r * 0.72 : 0;
@@ -1990,7 +2017,7 @@ export default function PitchCanvas({
     };
 
     let ballGround = view.project(frame.ball.position);
-    if (frame.ball.ownerId) {
+    if (frame.ball.ownerId && phase === "simulating") {
       const owner = frame.players.find((player) => player.id === frame.ball.ownerId);
       const memory = playerAnimMemoryRef.current.get(frame.ball.ownerId);
       if (owner && memory) {
@@ -2000,8 +2027,11 @@ export default function PitchCanvas({
           owner.position.y,
         );
         const ownerSpeed = Math.hypot(owner.velocity.x, owner.velocity.y);
+        const touchingBall =
+          ownerSpeed > 4 &&
+          (owner.state === "MOVING" || owner.state === "DRIBBLING");
         const cadence = animationTick * (0.22 + clamp(ownerSpeed / 190, 0, 1) * 0.16) + hashUnit(owner.id) * 5;
-        const touch = Math.sin(cadence * Math.PI);
+        const touch = touchingBall ? Math.sin(cadence * Math.PI) : 0;
         ballGround = {
           x:
             ownerGround.x +

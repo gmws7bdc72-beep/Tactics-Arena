@@ -1,0 +1,5 @@
+- Ground-pass and long-ball kick animations now remain visible through follow-through and recovery.
+- Long balls use a distinct higher, more open-body kicking motion.
+- Passers face the selected target during the action.
+- Planning-phase ball position is stable and no longer jitters left and right.
+- Frame snapshots now carry animation timing, pass style, target, and appearance metadata.

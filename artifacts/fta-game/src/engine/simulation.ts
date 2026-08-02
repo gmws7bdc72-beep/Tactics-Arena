@@ -912,9 +912,16 @@ function snapshotFrame(
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
+      stateTimer: p.stateTimer,
+      actionPassStyle:
+        p.command?.type === CommandType.PASS ? p.command.passStyle : undefined,
+      actionTarget: p.command?.targetPosition
+        ? { ...p.command.targetPosition }
+        : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
+      appearance: p.appearance,
       tileRange: speedToTiles(p.stats.speed),
       offside: offsidePlayers.has(p.id),
     })),
