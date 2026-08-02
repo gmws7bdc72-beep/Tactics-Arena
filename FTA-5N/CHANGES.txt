@@ -1,0 +1,8 @@
+- Repairs 7–10 player saves instead of replacing the squad and formation.
+- Repairs malformed player stats individually.
+- Adds team, league, market and complete-career backup recovery.
+- Adds a larger matching primary/secondary palette plus custom colors.
+- Keeps at least 16 AI players genuinely transfer-listed during a season.
+- Transforms up to exactly 10 unsold listed players league-wide, including the user's club.
+- Replacements have new IDs, names, abilities, stats and market profiles and persist into the next season.
+- Closes stale offers attached to transformed players.

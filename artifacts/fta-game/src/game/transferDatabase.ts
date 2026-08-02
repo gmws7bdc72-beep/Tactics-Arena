@@ -140,3 +140,58 @@ export function randomizePlayerForNewSave(template: PlayerCard, clubId: string, 
     development: undefined,
   }, clubId, 1);
 }
+
+
+/**
+ * Creates a genuinely new player for the season-end transformation system.
+ * The replacement always receives a new identity, a new stat roll and a fresh
+ * market profile, while keeping the old player's role and shirt number so the
+ * squad remains legal and readable.
+ */
+export function generateTransformedPlayer(
+  oldPlayer: PlayerCard,
+  clubId: string,
+  season: number,
+  serial: number,
+): PlayerCard {
+  let replacement = randomizePlayerForNewSave(
+    oldPlayer,
+    clubId,
+    5000 + season * 100 + serial,
+  );
+
+  // A same-name roll is rare, but a transformation should always be obvious.
+  for (let attempt = 0; attempt < 8 && replacement.name === oldPlayer.name; attempt += 1) {
+    replacement = randomizePlayerForNewSave(
+      oldPlayer,
+      clubId,
+      6000 + season * 100 + serial * 10 + attempt,
+    );
+  }
+
+  const id = `${clubId}_transformed_${season}_${serial}_${Date.now().toString(36)}_${Math.floor(Math.random() * 1_000_000).toString(36)}`;
+  return enrichMarketPlayer(
+    {
+      ...replacement,
+      id,
+      role: oldPlayer.role,
+      jerseyNumber: oldPlayer.jerseyNumber,
+      clubId,
+      age: undefined,
+      potential: undefined,
+      marketValue: undefined,
+      weeklyWage: undefined,
+      marketStatus: "available",
+      askingPrice: undefined,
+      development: undefined,
+      transformedFrom: {
+        id: oldPlayer.id,
+        name: oldPlayer.name,
+        season,
+        overall: getPlayerOverall(oldPlayer),
+      },
+    },
+    clubId,
+    season + 1,
+  );
+}

@@ -1,5 +1,6 @@
 import type { LeagueState, PlayerCard, TeamConfig } from "../engine/types";
 import { AI_TEAMS } from "./league";
+import { loadCareerSnapshot } from "./persistence";
 import {
   enrichMarketPlayer,
   getPlayerOverall,
@@ -170,6 +171,7 @@ interface MarketClub {
 }
 
 const KEY = "fta_transfer_market_v1";
+const BACKUP_KEY = "fta_transfer_market_v1_backup";
 const PLAYER_ID = "player_team";
 const MIN_MATCH_SQUAD_SIZE = 6;
 const ACTIVE_OFFER_STATUSES: OfferStatus[] = ["pending", "countered"];
@@ -403,23 +405,37 @@ export function loadTransferMarket(
   team: TeamConfig,
   league: LeagueState,
 ): TransferMarketState {
-  try {
-    const raw = localStorage.getItem(KEY);
-
-    if (raw) {
-      return normalizeMarket(
-        JSON.parse(raw) as TransferMarketState,
-        team,
-        league,
-      );
+  const rawCandidates: unknown[] = [];
+  for (const key of [KEY, BACKUP_KEY]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) rawCandidates.push(JSON.parse(raw));
+    } catch (error) {
+      console.warn(`[FTA transfer save] Could not read ${key}.`, error);
     }
-  } catch {}
+  }
+  rawCandidates.push(loadCareerSnapshot()?.market);
+
+  for (const candidate of rawCandidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    try {
+      return normalizeMarket(candidate as TransferMarketState, team, league);
+    } catch (error) {
+      console.warn("[FTA transfer save] A market candidate could not be repaired.", error);
+    }
+  }
 
   return createTransferMarket(team, league);
 }
 
 export function saveTransferMarket(state: TransferMarketState): void {
-  localStorage.setItem(KEY, JSON.stringify(state));
+  try {
+    const current = localStorage.getItem(KEY);
+    if (current) localStorage.setItem(BACKUP_KEY, current);
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch (error) {
+    console.error("[FTA transfer save] Could not save transfer data.", error);
+  }
 }
 
 export function normalizeMarket(

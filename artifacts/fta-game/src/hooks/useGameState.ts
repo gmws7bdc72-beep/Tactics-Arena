@@ -6,6 +6,7 @@ import {
   saveTeam,
   loadLeague,
   saveLeague,
+  saveCareerSnapshot,
   PLAYER_TEAM_ID_CONST,
 } from "../game/persistence";
 import { AI_TEAMS, migrateLeague, prepareLeagueForNewSeason } from "../game/league";
@@ -19,43 +20,86 @@ import {
   normalizeMarket,
   saveTransferMarket,
 } from "../game/transferMarket";
-import { generateReservePlayer, getPlayerOverall } from "../game/transferDatabase";
+import { generateTransformedPlayer, getPlayerOverall } from "../game/transferDatabase";
 
-function transformTenAIPlayersForNewSeason(league: LeagueState): {
+function transformTenListedPlayersForNewSeason(
+  team: TeamConfig,
+  league: LeagueState,
+): {
+  team: TeamConfig;
   league: LeagueState;
   headlines: string[];
   transformedCount: number;
+  transformedPlayerIds: string[];
 } {
   const season = league.season ?? 1;
   const aiSquads = { ...(league.aiSquads ?? {}) };
-  const headlines: string[] = [];
+  const candidates: Array<{
+    clubId: string;
+    clubName: string;
+    player: TeamConfig["players"][number];
+    index: number;
+    isPlayerClub: boolean;
+  }> = [];
 
-  // Only unsold players who are still transfer-listed at the end of the season
-  // are eligible. Shuffle the full league-wide pool, then transform at most ten.
-  const eligible = AI_TEAMS.flatMap((club) => {
-    const squad = [...(aiSquads[club.id] ?? club.players)];
-    return squad
-      .map((player, index) => ({ club, squad, player, index }))
-      .filter(({ player }) => player.marketStatus === "listed");
+  team.players.forEach((player, index) => {
+    if (player.marketStatus === "listed") {
+      candidates.push({
+        clubId: PLAYER_TEAM_ID_CONST,
+        clubName: team.name,
+        player,
+        index,
+        isPlayerClub: true,
+      });
+    }
   });
 
-  for (let index = eligible.length - 1; index > 0; index -= 1) {
+  AI_TEAMS.forEach((club) => {
+    const squad = [...(aiSquads[club.id] ?? club.players)];
+    squad.forEach((player, index) => {
+      if (player.marketStatus === "listed") {
+        candidates.push({
+          clubId: club.id,
+          clubName: club.name,
+          player,
+          index,
+          isPlayerClub: false,
+        });
+      }
+    });
+  });
+
+  for (let index = candidates.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1));
-    [eligible[index], eligible[swapIndex]] = [eligible[swapIndex], eligible[index]];
+    [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
   }
 
-  eligible.slice(0, 10).forEach(({ club, player: oldPlayer, index }, replacementIndex) => {
-    const squad = [...(aiSquads[club.id] ?? club.players)];
+  let nextTeam = { ...team, players: [...team.players] };
+  const headlines: string[] = [];
+  const transformedPlayerIds: string[] = [];
+
+  candidates.slice(0, 10).forEach((candidate, replacementIndex) => {
+    const oldPlayer = candidate.player;
     const oldOverall = getPlayerOverall(oldPlayer);
-    const replacement = generateReservePlayer(
-      club.id,
-      1000 + season * 20 + replacementIndex,
-      club.tier,
+    const replacement = generateTransformedPlayer(
+      oldPlayer,
+      candidate.clubId,
       season,
+      replacementIndex,
     );
     const newOverall = getPlayerOverall(replacement);
-    squad[index] = replacement;
-    aiSquads[club.id] = squad;
+
+    if (candidate.isPlayerClub) {
+      const players = [...nextTeam.players];
+      const liveIndex = players.findIndex((player) => player.id === oldPlayer.id);
+      if (liveIndex >= 0) players[liveIndex] = replacement;
+      nextTeam = { ...nextTeam, players };
+    } else {
+      const squad = [...(aiSquads[candidate.clubId] ?? [])];
+      const liveIndex = squad.findIndex((player) => player.id === oldPlayer.id);
+      if (liveIndex >= 0) squad[liveIndex] = replacement;
+      aiSquads[candidate.clubId] = squad;
+    }
 
     const comparison =
       newOverall > oldOverall
@@ -64,14 +108,17 @@ function transformTenAIPlayersForNewSeason(league: LeagueState): {
           ? `WORSE by ${oldOverall - newOverall} OVR`
           : "THE SAME overall";
     headlines.push(
-      `${club.name}: unsold transfer-listed player ${oldPlayer.name} (${oldOverall} OVR) was transformed into ${replacement.name} (${newOverall} OVR) — ${comparison}.`,
+      `${candidate.clubName}: unsold transfer-listed player ${oldPlayer.name} (${oldOverall} OVR) was transformed into ${replacement.name} (${newOverall} OVR) — ${comparison}.`,
     );
+    transformedPlayerIds.push(oldPlayer.id);
   });
 
   return {
+    team: nextTeam,
     league: { ...league, aiSquads },
     headlines,
     transformedCount: headlines.length,
+    transformedPlayerIds,
   };
 }
 
@@ -120,7 +167,8 @@ export function useGameState() {
   const updateMarket = useCallback((nextMarket: TransferMarketState) => {
     setMarketState(nextMarket);
     saveTransferMarket(nextMarket);
-  }, []);
+    saveCareerSnapshot(team, league, nextMarket);
+  }, [team, league]);
 
   const updateTeam = useCallback((nextTeam: TeamConfig) => {
     const normalized = ensureTeamDevelopment({
@@ -137,6 +185,7 @@ export function useGameState() {
       setMarketState((previousMarket) => {
         const nextMarket = normalizeMarket(previousMarket, normalized, updated);
         saveTransferMarket(nextMarket);
+        saveCareerSnapshot(normalized, updated, nextMarket);
         return nextMarket;
       });
 
@@ -148,7 +197,8 @@ export function useGameState() {
     const migrated = migrateLeague(nextLeague);
     setLeagueState(migrated);
     saveLeague(migrated);
-  }, []);
+    saveCareerSnapshot(team, migrated, market);
+  }, [team, market]);
 
   const updateTeamAndLeague = useCallback(
     (nextTeam: TeamConfig, nextLeague: LeagueState) => {
@@ -171,6 +221,7 @@ export function useGameState() {
           normalizedLeague,
         );
         saveTransferMarket(next);
+        saveCareerSnapshot(normalizedTeam, normalizedLeague, next);
         return next;
       });
     },
@@ -179,15 +230,17 @@ export function useGameState() {
 
   const startNewSeason = useCallback(
     (teamName: string) => {
-      const preparedLeague = prepareLeagueForNewSeason(
+      const transformation = transformTenListedPlayersForNewSeason(
+        { ...team, name: teamName },
         league,
+      );
+      const nextLeague = prepareLeagueForNewSeason(
+        transformation.league,
         PLAYER_TEAM_ID_CONST,
         teamName,
       );
-      const transformation = transformTenAIPlayersForNewSeason(preparedLeague);
-      const nextLeague = transformation.league;
       const nextTeam = prepareTeamForNewSeason(
-        { ...team, name: teamName },
+        transformation.team,
         nextLeague.season ?? 1,
       );
 
@@ -200,8 +253,15 @@ export function useGameState() {
         season: transformationSeason,
         week: league.trainingWeek ?? prizeMarket.week,
       }));
+      const transformedIds = new Set(transformation.transformedPlayerIds);
       const marketWithTransformations: TransferMarketState = {
         ...prizeMarket,
+        offers: prizeMarket.offers.map((offer) =>
+          transformedIds.has(offer.playerId) &&
+          (offer.status === "pending" || offer.status === "countered")
+            ? { ...offer, status: "withdrawn" as const }
+            : offer,
+        ),
         news: [
           `Season ${transformationSeason} player transformations: ${transformation.transformedCount} unsold transfer-listed players were replaced.`,
           ...transformation.headlines,
@@ -230,6 +290,7 @@ export function useGameState() {
       saveTeam(nextTeam);
       saveLeague(nextLeague);
       saveTransferMarket(normalizedMarket);
+      saveCareerSnapshot(nextTeam, nextLeague, normalizedMarket);
     },
     [league, team, market],
   );
@@ -243,6 +304,7 @@ export function useGameState() {
     setTeamState(nextTeam);
     setLeagueState(migrated);
     setMarketState(nextMarket);
+    saveCareerSnapshot(nextTeam, migrated, nextMarket);
   }, []);
 
   return {

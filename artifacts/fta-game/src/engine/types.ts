@@ -172,6 +172,13 @@ export interface PlayerCard {
   marketStatus?: "available" | "listed" | "not_for_sale" | "untouchable";
   clubId?: string;
   askingPrice?: number;
+  /** Preserved so season-end replacements can be audited in news and profiles. */
+  transformedFrom?: {
+    id: string;
+    name: string;
+    season: number;
+    overall: number;
+  };
   development?: PlayerDevelopment;
 }
 

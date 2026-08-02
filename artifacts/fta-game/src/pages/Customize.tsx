@@ -73,7 +73,7 @@ function ColorPicker({
       </div>
       <div className="grid grid-cols-5 gap-3">
         {colors.map((color) => {
-          const selected = value === color;
+          const selected = value.toLowerCase() === color.toLowerCase();
           return (
             <button
               key={color}
@@ -91,6 +91,19 @@ function ColorPicker({
           );
         })}
       </div>
+      <label className="mt-3 flex cursor-pointer items-center justify-between rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+        <span>
+          <span className="block text-xs font-black text-white">Custom color</span>
+          <span className="mt-0.5 block text-[10px] text-gray-500">Choose any shade, not only the presets.</span>
+        </span>
+        <input
+          type="color"
+          value={/^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff"}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-10 w-14 cursor-pointer rounded-lg border border-white/10 bg-transparent p-0"
+          aria-label={`${label} custom color`}
+        />
+      </label>
     </section>
   );
 }

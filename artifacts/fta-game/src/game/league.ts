@@ -622,7 +622,7 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
 }
 
 export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> {
-  return Object.fromEntries(
+  const squads = Object.fromEntries(
     AI_TEAMS.map((team) => [
       team.id,
       expandSquad(team.players, team.id, team.tier, season)
@@ -630,6 +630,68 @@ export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> 
         .map((player) => ensurePlayerDevelopment(player, season)),
     ]),
   );
+  return ensureAITransferListings(squads, season);
+}
+
+const MIN_AI_TRANSFER_LISTINGS = 16;
+
+function stableListingHash(value: string): number {
+  let result = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return result >>> 0;
+}
+
+function ensureAITransferListings(
+  squads: Record<string, PlayerCard[]>,
+  season: number,
+): Record<string, PlayerCard[]> {
+  const next = Object.fromEntries(
+    Object.entries(squads).map(([clubId, players]) => [
+      clubId,
+      players.map((player) => ({ ...player })),
+    ]),
+  );
+
+  const entries = Object.entries(next).flatMap(([clubId, players]) => {
+    const goalkeeperCount = players.filter((player) => player.role === "goalkeeper").length;
+    return players.map((player, index) => ({
+      clubId,
+      index,
+      player,
+      canList: player.marketStatus !== "untouchable" &&
+        (player.role !== "goalkeeper" || goalkeeperCount > 1),
+    }));
+  });
+
+  let listedCount = entries.filter(({ player }) => player.marketStatus === "listed").length;
+  if (listedCount >= MIN_AI_TRANSFER_LISTINGS) return next;
+
+  const candidates = entries
+    .filter(({ player, canList }) => canList && player.marketStatus !== "listed")
+    .sort((a, b) => {
+      const aStatus = a.player.marketStatus === "available" ? 0 : 1;
+      const bStatus = b.player.marketStatus === "available" ? 0 : 1;
+      if (aStatus !== bStatus) return aStatus - bStatus;
+      return stableListingHash(`${season}:${a.clubId}:${a.player.id}`) -
+        stableListingHash(`${season}:${b.clubId}:${b.player.id}`);
+    });
+
+  for (const candidate of candidates) {
+    if (listedCount >= MIN_AI_TRANSFER_LISTINGS) break;
+    const squad = next[candidate.clubId];
+    const player = squad[candidate.index];
+    squad[candidate.index] = {
+      ...player,
+      marketStatus: "listed",
+      askingPrice: player.askingPrice ?? player.marketValue,
+    };
+    listedCount += 1;
+  }
+
+  return next;
 }
 
 function normalizeAISquads(
@@ -638,7 +700,7 @@ function normalizeAISquads(
 ): Record<string, PlayerCard[]> {
   const existing = state.aiSquads ?? {};
 
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     AI_TEAMS.map((team) => {
       const source = existing[team.id]?.length ? existing[team.id] : team.players;
       return [
@@ -647,6 +709,8 @@ function normalizeAISquads(
       ];
     }),
   );
+
+  return ensureAITransferListings(normalized, season);
 }
 
 export function createLeague(playerTeamId: string, playerTeamName: string): LeagueState {
