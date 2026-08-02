@@ -122,6 +122,8 @@ type PlayerAnimMemory = {
   receiveTick: number;
   actionKind?: "pass" | "longPass" | "shot";
   actionTick: number;
+  lastPosition: Vec2;
+  travelPhase: number;
 };
 
 function rgba(hex: string, alpha: number): string {
@@ -1440,6 +1442,8 @@ export default function PitchCanvas({
           stateTick: animationTick,
           receiveTick: -9999,
           actionTick: -9999,
+          lastPosition: { ...p.position },
+          travelPhase: seed * Math.PI * 2,
         };
         playerAnimMemoryRef.current.set(p.id, memory);
       }
@@ -1508,10 +1512,31 @@ export default function PitchCanvas({
       const receiveCushion = receiving ? phaseEnvelope(receiveProgress, 0, 0.34, 1) : 0;
 
       const velocityNorm = clamp(speed / 190, 0, 1);
-      const runCadence = 0.66 + velocityNorm * 0.82;
-      const t = animationTick * runCadence * 0.31 + playerIndex * 0.73 + seed * 4.7;
-      const gait = moving ? Math.sin(t * Math.PI) : 0;
-      const stridePulse = moving ? Math.abs(Math.sin(t * Math.PI)) : 0;
+
+      // FTA_DISTANCE_SYNCED_GAIT
+      // Drive the leg cycle from actual pitch distance travelled instead of
+      // wall-clock animation ticks. Short one-tile movements now produce only
+      // a few believable steps, while stationary or stalled players do not
+      // keep running in place.
+      const travelledTiles = Math.hypot(
+        (p.position.x - memory.lastPosition.x) / Math.max(1, TILE_W),
+        (p.position.y - memory.lastPosition.y) / Math.max(1, TILE_H),
+      );
+      if (travelledTiles > 1.25) {
+        // Kick-off resets and other teleports must not spin the legs.
+        memory.travelPhase = seed * Math.PI * 2;
+      } else if (moving && travelledTiles > 0.0001) {
+        const cyclesPerTile = dribbling
+          ? 1.45
+          : 1.15 + velocityNorm * 0.18;
+        memory.travelPhase =
+          (memory.travelPhase + travelledTiles * Math.PI * 2 * cyclesPerTile) %
+          (Math.PI * 2);
+      }
+      memory.lastPosition = { ...p.position };
+
+      const gait = moving ? Math.sin(memory.travelPhase) : 0;
+      const stridePulse = moving ? Math.abs(Math.sin(memory.travelPhase)) : 0;
       const idleBreath = Math.sin(animationTick * 0.095 + seed * 8.4);
       const headScan = Math.sin(animationTick * 0.043 + seed * 11.2);
       const callForBall =

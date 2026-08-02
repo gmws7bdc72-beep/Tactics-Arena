@@ -1,0 +1,4 @@
+- Synchronizes running and dribbling foot cycles to actual distance travelled.
+- Prevents players from taking excessive steps during short movements.
+- Prevents stalled players from running in place.
+- Ignores kick-off resets and teleports when calculating leg motion.
