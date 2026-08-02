@@ -1,0 +1,5 @@
+- Pass and long-ball animations now use deterministic simulation progress rather than a presentation-clock guess.
+- Long balls have a longer, distinct wind-up and a more visible open-body follow-through.
+- Ground-pass leg and body motion is stronger and clearly visible.
+- The ball is locked to one stable foot position during planning and whenever its owner is stationary.
+- First-touch and off-ball gestures no longer continue into planning.

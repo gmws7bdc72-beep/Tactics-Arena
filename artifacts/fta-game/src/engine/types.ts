@@ -291,6 +291,10 @@ export interface FrameSnapshot {
     stateTimer?: number;
     actionPassStyle?: PassStyle;
     actionTarget?: Vec2;
+    /** Deterministic kick animation authored by the simulation snapshot. */
+    actionKind?: "pass" | "longPass" | "shot";
+    /** 0..1 progress through the visible wind-up/contact/follow-through. */
+    actionProgress?: number;
     name: string;
     jerseyNumber: number;
     role: PlayerRole;

@@ -18,6 +18,7 @@ import {
   PASS_SPEED,
   SHOT_SPEED,
   PASS_WIND_UP,
+  LONG_PASS_WIND_UP,
   PASS_RECOVERY,
   SHOT_WIND_UP,
   SHOT_RECOVERY,
@@ -918,6 +919,28 @@ function snapshotFrame(
       actionTarget: p.command?.targetPosition
         ? { ...p.command.targetPosition }
         : undefined,
+      actionKind:
+        p.state === PlayerState.PASSING
+          ? p.command?.passStyle === "long"
+            ? "longPass"
+            : "pass"
+          : p.state === PlayerState.SHOOTING
+            ? "shot"
+            : undefined,
+      actionProgress:
+        p.state === PlayerState.PASSING
+          ? clamp(
+              1 -
+                p.stateTimer /
+                  (p.command?.passStyle === "long"
+                    ? LONG_PASS_WIND_UP
+                    : PASS_WIND_UP),
+              0,
+              1,
+            )
+          : p.state === PlayerState.SHOOTING
+            ? clamp(1 - p.stateTimer / SHOT_WIND_UP, 0, 1)
+            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
@@ -1169,7 +1192,10 @@ function updatePlayerMovement(
     if (cmd.type === CommandType.PASS) {
       if (hasBall) {
         player.state = PlayerState.PASSING;
-        player.stateTimer = PASS_WIND_UP;
+        player.stateTimer =
+          player.command?.passStyle === "long"
+            ? LONG_PASS_WIND_UP
+            : PASS_WIND_UP;
         player.commandExecuted = true;
         player.velocity = { x: 0, y: 0 };
       } else {
