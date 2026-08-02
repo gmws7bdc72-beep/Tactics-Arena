@@ -1,0 +1,11 @@
+FTA animation overhaul
+
+- Fluid 42 FPS presentation clock without changing match speed
+- Distinct pass, long-pass, shot, first-touch, run, dribble and recovery poses
+- Speed-sensitive jogging and sprinting cadence
+- Smooth player facing and turning
+- Procedural head tracking and subtle off-ball calling gestures
+- Goalkeeper set stance and multi-stage launch, hang, landing and recovery dive
+- Better jointed limbs, shoes, body shading and directional faces
+- Ball visually follows the dribbler's leading foot
+- Existing kit patterns and colors remain visible on animated bodies

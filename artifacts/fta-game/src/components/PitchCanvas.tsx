@@ -83,6 +83,45 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+function smooth01(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function phaseEnvelope(
+  value: number,
+  riseStart: number,
+  peak: number,
+  fallEnd: number,
+): number {
+  if (value <= riseStart || value >= fallEnd) return 0;
+  if (value < peak) return smooth01((value - riseStart) / Math.max(0.001, peak - riseStart));
+  return 1 - smooth01((value - peak) / Math.max(0.001, fallEnd - peak));
+}
+
+function hashUnit(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10000) / 10000;
+}
+
+function angleDelta(from: number, to: number): number {
+  let delta = (to - from) % (Math.PI * 2);
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
+type PlayerAnimMemory = {
+  facing: number;
+  state: string;
+  stateTick: number;
+  receiveTick: number;
+};
+
 function rgba(hex: string, alpha: number): string {
   const clean = hex.replace("#", "");
   const bigint = parseInt(
@@ -654,8 +693,11 @@ export default function PitchCanvas({
   onCurvePointClick,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // FTA_PLAYER_ANIMATION_RESTORED_FINAL
-  // Redraw the canvas at 30 FPS so the stylized 2.5D bodies remain animated.
+  const playerAnimMemoryRef = useRef<Map<string, PlayerAnimMemory>>(new Map());
+  const previousBallOwnerRef = useRef<string | null>(null);
+  // FTA_ANIMATION_OVERHAUL_V1
+  // A 42 FPS presentation clock keeps procedural body motion fluid without
+  // changing the match simulation speed.
   const [animationTick, setAnimationTick] = useState(0);
 
   useEffect(() => {
@@ -663,7 +705,7 @@ export default function PitchCanvas({
     let previousTime = 0;
 
     const animate = (time: number) => {
-      if (time - previousTime >= 33) {
+      if (time - previousTime >= 24) {
         previousTime = time;
         setAnimationTick((tick) => (tick + 1) % 100000);
       }
@@ -1257,10 +1299,22 @@ export default function PitchCanvas({
       aiTeamSleeveStyle ?? deriveSleeveStyle(`${aiTeamColor}:${aiTeamSecondaryColor}`),
     );
 
-    // FTA_POLISHED_ACTION_PLAYERS
+    // FTA_ANIMATION_OVERHAUL_V1
+    // Every football action is rendered as anticipation -> contact -> follow
+    // through -> recovery. The presentation layer is procedural and does not
+    // alter simulation positions or timing.
     const players = [...frame.players].sort(
       (a, b) => view.project(a.position).y - view.project(b.position).y,
     );
+
+    if (
+      frame.ball.ownerId &&
+      previousBallOwnerRef.current !== frame.ball.ownerId
+    ) {
+      const receiverMemory = playerAnimMemoryRef.current.get(frame.ball.ownerId);
+      if (receiverMemory) receiverMemory.receiveTick = animationTick;
+    }
+    previousBallOwnerRef.current = frame.ball.ownerId;
 
     const drawLimb = (
       a: ScreenPoint,
@@ -1270,31 +1324,75 @@ export default function PitchCanvas({
       color: string,
       endColor?: string,
     ) => {
-      ctx.save();
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = "rgba(0,0,0,0.38)";
-      ctx.lineWidth = width + 2.2;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(joint.x, joint.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(joint.x, joint.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      if (endColor) {
-        ctx.strokeStyle = endColor;
-        ctx.lineWidth = Math.max(2, width * 0.52);
+      const drawSegment = (
+        from: ScreenPoint,
+        to: ScreenPoint,
+        segmentColor: string,
+        segmentWidth: number,
+      ) => {
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "rgba(0,0,0,0.5)";
+        ctx.lineWidth = segmentWidth + 2.4;
         ctx.beginPath();
-        ctx.moveTo(joint.x, joint.y);
-        ctx.lineTo(b.x, b.y);
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
         ctx.stroke();
-      }
+
+        const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+        gradient.addColorStop(0, rgba("#ffffff", 0.17));
+        gradient.addColorStop(0.24, segmentColor);
+        gradient.addColorStop(1, rgba(segmentColor, 0.76));
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = segmentWidth;
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.28;
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = Math.max(0.7, segmentWidth * 0.16);
+        ctx.beginPath();
+        ctx.moveTo(from.x - 0.5, from.y - 0.5);
+        ctx.lineTo(to.x - 0.5, to.y - 0.5);
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      drawSegment(a, joint, color, width);
+      drawSegment(joint, b, endColor ?? color, Math.max(2, width * 0.84));
+
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.strokeStyle = "rgba(0,0,0,0.45)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(joint.x, joint.y, Math.max(1.8, width * 0.48), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const drawShoe = (
+      foot: ScreenPoint,
+      knee: ScreenPoint,
+      radius: number,
+      color: string,
+    ) => {
+      const angle = Math.atan2(foot.y - knee.y, foot.x - knee.x) + Math.PI / 2;
+      ctx.save();
+      ctx.translate(foot.x, foot.y);
+      ctx.rotate(angle);
+      ctx.fillStyle = "#17191d";
+      ctx.strokeStyle = "rgba(0,0,0,0.62)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(0, radius * 0.08, radius * 0.32, radius * 0.15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = rgba(color, 0.82);
+      ctx.fillRect(-radius * 0.18, radius * 0.02, radius * 0.36, radius * 0.05);
       ctx.restore();
     };
 
@@ -1313,66 +1411,255 @@ export default function PitchCanvas({
         : baseColor;
       const skin = p.appearance?.skinTone ?? "#c98b6b";
       const hair = p.appearance?.hairColor ?? "#211915";
-      const ringColor = isSelected ? "#00e5ff" : frame.ball.ownerId === p.id ? "#ffd700" : rgba(baseColor, 0.9);
+      const ringColor = isSelected
+        ? "#00e5ff"
+        : frame.ball.ownerId === p.id
+          ? "#ffd700"
+          : rgba(baseColor, 0.9);
       const r = view.radius(isGK ? PLAYER_RADIUS + 3 : PLAYER_RADIUS, p.position.y);
-      const t = animationTick * 0.19 + playerIndex * 0.81;
+      const seed = hashUnit(p.id);
       const speed = Math.hypot(p.velocity.x, p.velocity.y);
       const diving = p.state === "DIVING";
-      // Receiving the ball while stationary must keep the idle pose. State alone
-      // is not proof of movement; the player must actually have velocity.
       const moving = !diving && speed > 4 && (p.state === "MOVING" || p.state === "DRIBBLING");
+      const dribbling = moving && p.state === "DRIBBLING";
       const passing = p.state === "PASSING";
       const shooting = p.state === "SHOOTING";
       const longPass = passing && p.actionPassStyle === "long";
       const contesting = p.state === "CONTESTING";
       const recovering = p.state === "RECOVERING";
-      const actionProgress = clamp((p.stateTimer ?? 0) / 0.48, 0, 1);
-      const diveProgress = diving ? clamp(1 - (p.stateTimer ?? 0) / 0.46, 0, 1) : 0;
-      const diveDirection = Math.atan2(p.velocity.y, p.velocity.x);
-      const actionWave = Math.sin(actionProgress * Math.PI);
-      const gait = moving ? Math.sin(t * 1.65) : 0;
-      const idle = Math.sin(t * 0.42);
-      const kick = shooting ? actionWave * 1.15 : longPass ? actionWave * 0.92 : passing ? actionWave * 0.68 : 0;
-      const lean = shooting ? -0.18 * actionWave : longPass ? -0.12 * actionWave : passing ? 0.07 * actionWave : contesting ? 0.13 : 0;
-      const crouch = recovering ? r * 0.22 : contesting ? r * 0.08 : 0;
-      const bob = moving ? Math.abs(gait) * r * 0.1 : idle * r * 0.025;
-      const diveLift = diving ? Math.sin(diveProgress * Math.PI) * r * 0.72 : 0;
-      const diveStretch = diving ? Math.sin(Math.min(1, diveProgress * 1.45) * Math.PI / 2) : 0;
-      const hip = {
-        x: ground.x + lean * r + (diving ? Math.cos(diveDirection) * r * 0.45 * diveStretch : 0),
-        y: ground.y - r * 0.08 - bob + crouch - diveLift,
-      };
-      const torsoCenter = { x: hip.x + lean * r * 0.65, y: hip.y - r * 0.9 };
-      const shoulderY = torsoCenter.y - r * 0.47;
-      const shoulderHalf = r * 0.48;
-      const hipHalf = r * 0.31;
-      const headR = r * 0.38;
-      const neck = { x: torsoCenter.x + lean * r * 0.25, y: shoulderY - r * 0.15 };
-      const head = { x: neck.x + lean * r * 0.32, y: neck.y - headR * 0.82 };
-      const leftHip = { x: hip.x - hipHalf, y: hip.y };
-      const rightHip = { x: hip.x + hipHalf, y: hip.y };
-      const leftShoulder = { x: torsoCenter.x - shoulderHalf, y: shoulderY };
-      const rightShoulder = { x: torsoCenter.x + shoulderHalf, y: shoulderY };
-      const runSwing = gait * r * 0.52;
-      const plantBend = Math.abs(gait) * r * 0.12;
-      const leftKnee = { x: leftHip.x + runSwing * 0.56 - kick * r * 0.14, y: hip.y + r * 0.58 - kick * r * 0.08 };
-      const rightKnee = { x: rightHip.x - runSwing * 0.56 + kick * r * 0.52, y: hip.y + r * 0.57 - kick * r * 0.42 };
-      const leftFoot = { x: leftKnee.x + runSwing * 0.55 - kick * r * 0.18, y: ground.y + r * 0.62 - plantBend };
-      const rightFoot = { x: rightKnee.x - runSwing * 0.55 + kick * r * 0.72, y: ground.y + r * 0.62 - Math.abs(kick) * r * 0.3 };
-      const armSwing = moving ? -gait * r * 0.4 : idle * r * 0.03;
-      const brace = contesting ? r * 0.45 : 0;
-      const shotArm = shooting ? actionWave * r * 0.36 : 0;
-      const diveArm = diving ? r * 0.95 * diveStretch : 0;
-      const leftElbow = { x: leftShoulder.x - r * 0.23 - armSwing - brace - diveArm, y: shoulderY + r * 0.42 - shotArm - diveLift * 0.18 };
-      const rightElbow = { x: rightShoulder.x + r * 0.23 + armSwing + brace + diveArm, y: shoulderY + r * 0.4 + shotArm * 0.25 - diveLift * 0.18 };
-      const leftHand = { x: leftElbow.x - r * 0.12 - armSwing * 0.4, y: leftElbow.y + r * 0.38 };
-      const rightHand = { x: rightElbow.x + r * 0.12 + armSwing * 0.4, y: rightElbow.y + r * 0.38 };
+      const ownsBall = frame.ball.ownerId === p.id;
 
+      let memory = playerAnimMemoryRef.current.get(p.id);
+      if (!memory) {
+        const attackTarget = view.project({
+          x: p.position.x + (p.teamId === "player" ? TILE_W : -TILE_W),
+          y: p.position.y,
+        });
+        memory = {
+          facing: Math.atan2(attackTarget.y - ground.y, attackTarget.x - ground.x),
+          state: p.state,
+          stateTick: animationTick,
+          receiveTick: -9999,
+        };
+        playerAnimMemoryRef.current.set(p.id, memory);
+      }
+      if (memory.state !== p.state) {
+        memory.state = p.state;
+        memory.stateTick = animationTick;
+      }
+
+      const directionTarget = p.actionTarget
+        ? view.project(p.actionTarget)
+        : speed > 2
+          ? view.project({
+              x: p.position.x + p.velocity.x,
+              y: p.position.y + p.velocity.y,
+            })
+          : view.project({
+              x: p.position.x + (p.teamId === "player" ? TILE_W : -TILE_W),
+              y: p.position.y,
+            });
+      const desiredFacing = Math.atan2(
+        directionTarget.y - ground.y,
+        directionTarget.x - ground.x,
+      );
+      memory.facing += angleDelta(memory.facing, desiredFacing) * (moving ? 0.24 : 0.13);
+
+      const stateAge = (animationTick - memory.stateTick + 100000) % 100000;
+      const receiveAge = (animationTick - memory.receiveTick + 100000) % 100000;
+      const receiving = ownsBall && speed < 7 && receiveAge < 17 && !passing && !shooting;
+      const receiveProgress = clamp(receiveAge / 16, 0, 1);
+      const receiveCushion = receiving ? phaseEnvelope(receiveProgress, 0, 0.34, 1) : 0;
+
+      const velocityNorm = clamp(speed / 190, 0, 1);
+      const runCadence = 0.66 + velocityNorm * 0.82;
+      const t = animationTick * runCadence * 0.31 + playerIndex * 0.73 + seed * 4.7;
+      const gait = moving ? Math.sin(t * Math.PI) : 0;
+      const stridePulse = moving ? Math.abs(Math.sin(t * Math.PI)) : 0;
+      const idleBreath = Math.sin(animationTick * 0.095 + seed * 8.4);
+      const headScan = Math.sin(animationTick * 0.043 + seed * 11.2);
+      const callForBall =
+        moving &&
+        !ownsBall &&
+        !passing &&
+        !shooting &&
+        Math.sin(animationTick * 0.072 + seed * 24) > 0.88;
+
+      const actionDuration = shooting ? 0.56 : longPass ? 0.58 : 0.48;
+      const actionProgress = passing || shooting
+        ? p.stateTimer != null
+          ? clamp(1 - p.stateTimer / actionDuration, 0, 1)
+          : clamp(stateAge / 22, 0, 1)
+        : 0;
+      const anticipation = smooth01(clamp(actionProgress / 0.34, 0, 1));
+      const contact = phaseEnvelope(actionProgress, 0.26, 0.48, 0.66);
+      const followThrough = smooth01(clamp((actionProgress - 0.44) / 0.34, 0, 1));
+      const recovery = smooth01(clamp((actionProgress - 0.74) / 0.26, 0, 1));
+
+      const diveProgress = diving
+        ? p.stateTimer != null
+          ? clamp(1 - p.stateTimer / 0.46, 0, 1)
+          : clamp(stateAge / 20, 0, 1)
+        : 0;
+      const divePreload = 1 - smooth01(clamp(diveProgress / 0.16, 0, 1));
+      const diveLaunch = smooth01(clamp((diveProgress - 0.1) / 0.28, 0, 1));
+      const diveHang = phaseEnvelope(diveProgress, 0.26, 0.53, 0.76);
+      const diveLanding = smooth01(clamp((diveProgress - 0.66) / 0.24, 0, 1));
+      const diveRecover = smooth01(clamp((diveProgress - 0.86) / 0.14, 0, 1));
+
+      const facingX = Math.cos(memory.facing);
+      const facingY = Math.sin(memory.facing);
+      const mirror = facingX < 0 ? -1 : 1;
+      const stanceWidth = isGK && !moving ? 1.18 : 1;
+      const runLean = moving ? 0.08 + velocityNorm * 0.12 : 0;
+      const actionLean = shooting
+        ? -0.18 * anticipation + 0.17 * followThrough
+        : longPass
+          ? -0.14 * anticipation + 0.11 * followThrough
+          : passing
+            ? -0.06 * anticipation + 0.1 * followThrough
+            : 0;
+      const contestLean = contesting ? 0.16 : 0;
+      const stumble = recovering ? Math.sin(Math.min(1, stateAge / 18) * Math.PI) : 0;
+      const crouch =
+        (isGK && !moving && !diving ? r * 0.12 : 0) +
+        (contesting ? r * 0.1 : 0) +
+        (receiving ? r * 0.1 * receiveCushion : 0) +
+        (diving ? r * 0.28 * divePreload : 0);
+      const bob = moving
+        ? stridePulse * r * (0.045 + velocityNorm * 0.045)
+        : idleBreath * r * 0.018;
+      const diveLift = diving
+        ? (Math.sin(Math.PI * clamp((diveProgress - 0.08) / 0.82, 0, 1)) * r * 0.82 + diveHang * r * 0.16)
+        : 0;
+      const bodyAngle = diving
+        ? memory.facing + Math.PI / 2 + diveLanding * mirror * 0.08
+        : mirror * (runLean + actionLean + contestLean) + stumble * mirror * 0.08;
+
+      const hipOrigin = {
+        x:
+          ground.x +
+          facingX * r * (moving ? velocityNorm * 0.08 : 0) +
+          (diving ? facingX * r * (0.18 + diveLaunch * 0.44) : 0),
+        y:
+          ground.y -
+          r * 0.08 -
+          bob +
+          crouch -
+          diveLift +
+          (diving ? facingY * r * (0.18 + diveLaunch * 0.44) : 0),
+      };
+      const cosBody = Math.cos(bodyAngle);
+      const sinBody = Math.sin(bodyAngle);
+      const world = (localX: number, localY: number): ScreenPoint => {
+        const x = localX * mirror;
+        return {
+          x: hipOrigin.x + x * cosBody - localY * sinBody,
+          y: hipOrigin.y + x * sinBody + localY * cosBody,
+        };
+      };
+
+      const kickSide = seed > 0.5 ? 1 : -1;
+      const baseStride = gait * r * (0.38 + velocityNorm * 0.3) * (dribbling ? 0.76 : 1);
+      const kneeLiftLeft = Math.max(0, gait) * r * (0.08 + velocityNorm * 0.2);
+      const kneeLiftRight = Math.max(0, -gait) * r * (0.08 + velocityNorm * 0.2);
+      const windup = anticipation * (1 - contact);
+      const strike = contact + followThrough * (1 - recovery);
+      const actionScale = shooting ? 1.18 : longPass ? 0.98 : 0.7;
+      const actionKick = (-windup * 0.42 + strike * 1.18 - recovery * 0.25) * r * actionScale;
+      const receiveKick = receiveCushion * r * 0.46;
+      const leftAction = kickSide < 0 ? actionKick + receiveKick : 0;
+      const rightAction = kickSide > 0 ? actionKick + receiveKick : 0;
+
+      const hipHalf = r * 0.29 * stanceWidth;
+      const shoulderHalf = r * (isGK ? 0.52 : 0.46);
+      const torsoHeight = r * 0.94;
+      const headR = r * 0.37;
+      const leftHip = world(-hipHalf, 0);
+      const rightHip = world(hipHalf, 0);
+      const leftShoulder = world(-shoulderHalf, -torsoHeight);
+      const rightShoulder = world(shoulderHalf, -torsoHeight);
+
+      let leftKnee = world(
+        -hipHalf + baseStride * 0.55 - leftAction * 0.16,
+        r * 0.58 - kneeLiftLeft - Math.max(0, leftAction) * 0.28,
+      );
+      let rightKnee = world(
+        hipHalf - baseStride * 0.55 + rightAction * 0.16,
+        r * 0.58 - kneeLiftRight - Math.max(0, rightAction) * 0.28,
+      );
+      let leftFoot = world(
+        -hipHalf + baseStride - leftAction * 0.34,
+        r * 1.18 - kneeLiftLeft * 0.42 - Math.abs(leftAction) * 0.22,
+      );
+      let rightFoot = world(
+        hipHalf - baseStride + rightAction * 0.34,
+        r * 1.18 - kneeLiftRight * 0.42 - Math.abs(rightAction) * 0.22,
+      );
+
+      if (diving) {
+        const trail = r * (0.16 + diveLaunch * 0.3);
+        leftKnee = world(-hipHalf * 0.8, r * 0.62 + trail);
+        rightKnee = world(hipHalf * 0.8, r * 0.69 + trail * 0.72);
+        leftFoot = world(-hipHalf * 1.04, r * 1.18 + trail);
+        rightFoot = world(hipHalf * 1.02, r * 1.23 + trail * 0.82);
+      }
+
+      const runArm = moving ? -baseStride * 0.72 : idleBreath * r * 0.025;
+      const armOpen = passing ? anticipation * r * 0.28 : shooting ? anticipation * r * 0.42 : 0;
+      const brace = contesting ? r * 0.42 : 0;
+      const gkReady = isGK && !moving && !diving ? r * 0.3 : 0;
+      const pointArm = callForBall ? r * 0.72 : 0;
+      let leftElbow = world(
+        -shoulderHalf - r * 0.2 - runArm - brace - armOpen,
+        -torsoHeight + r * 0.42 - gkReady - pointArm,
+      );
+      let rightElbow = world(
+        shoulderHalf + r * 0.2 + runArm + brace + armOpen,
+        -torsoHeight + r * 0.42 - gkReady,
+      );
+      let leftHand = world(
+        -shoulderHalf - r * 0.34 - runArm * 1.2 - brace - armOpen,
+        -torsoHeight + r * 0.78 - gkReady * 0.7 - pointArm * 1.15,
+      );
+      let rightHand = world(
+        shoulderHalf + r * 0.34 + runArm * 1.2 + brace + armOpen,
+        -torsoHeight + r * 0.78 - gkReady * 0.7,
+      );
+
+      if (diving) {
+        const extension = r * (0.58 + diveLaunch * 0.92 + diveHang * 0.18);
+        leftElbow = world(-shoulderHalf * 0.65, -torsoHeight - extension * 0.46);
+        rightElbow = world(shoulderHalf * 0.65, -torsoHeight - extension * 0.42);
+        leftHand = world(-shoulderHalf * 0.72, -torsoHeight - extension);
+        rightHand = world(shoulderHalf * 0.72, -torsoHeight - extension * 0.96);
+      }
+
+      const ballLook = view.project(frame.ball.position);
+      const lookDirection = clamp((ballLook.x - ground.x) / Math.max(1, r * 5), -1, 1);
+      const neck = world(
+        lookDirection * r * 0.05 + headScan * r * 0.018,
+        -torsoHeight - r * 0.22,
+      );
+      const head = world(
+        lookDirection * r * 0.09 + headScan * r * 0.026,
+        -torsoHeight - r * 0.22 - headR * 0.94,
+      );
+
+      const shadowStretch = diving ? 1.55 : moving ? 1.06 + velocityNorm * 0.16 : 1;
       ctx.save();
-      ctx.globalAlpha = 0.27;
+      ctx.globalAlpha = diving ? 0.2 : 0.27;
       ctx.fillStyle = "#000";
       ctx.beginPath();
-      ctx.ellipse(ground.x + r * 0.1, ground.y + r * 0.55, r * 1.05, r * 0.3, -0.08, 0, Math.PI * 2);
+      ctx.ellipse(
+        ground.x + facingX * r * 0.12,
+        ground.y + r * 0.56,
+        r * 1.05 * shadowStretch,
+        r * (diving ? 0.24 : 0.3),
+        memory.facing,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
       ctx.restore();
 
@@ -1380,7 +1667,7 @@ export default function PitchCanvas({
       ctx.strokeStyle = ringColor;
       ctx.lineWidth = isSelected ? 3.5 : 2.1;
       ctx.shadowColor = ringColor;
-      ctx.shadowBlur = isSelected || frame.ball.ownerId === p.id ? 12 : 3;
+      ctx.shadowBlur = isSelected || ownsBall ? 12 : 3;
       ctx.beginPath();
       ctx.ellipse(ground.x, ground.y + r * 0.48, r * 1.08, r * 0.36, -0.05, 0, Math.PI * 2);
       ctx.stroke();
@@ -1388,26 +1675,29 @@ export default function PitchCanvas({
 
       drawLimb(leftHip, leftKnee, leftFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
       drawLimb(rightHip, rightKnee, rightFoot, Math.max(3.2, r * 0.2), "#242424", secColor);
+      drawShoe(leftFoot, leftKnee, r, secColor);
+      drawShoe(rightFoot, rightKnee, r, secColor);
       drawLimb(leftShoulder, leftElbow, leftHand, Math.max(3, r * 0.18), leftSleeveColor, skin);
       drawLimb(rightShoulder, rightElbow, rightHand, Math.max(3, r * 0.18), rightSleeveColor, skin);
 
-      const torsoTopLeft = { x: leftShoulder.x, y: shoulderY - r * 0.08 };
-      const torsoTopRight = { x: rightShoulder.x, y: shoulderY - r * 0.08 };
-      const torsoBottomRight = { x: rightHip.x + r * 0.08, y: hip.y + r * 0.04 };
-      const torsoBottomLeft = { x: leftHip.x - r * 0.08, y: hip.y + r * 0.04 };
+      const torsoTopLeft = world(-shoulderHalf, -torsoHeight - r * 0.08);
+      const torsoTopRight = world(shoulderHalf, -torsoHeight - r * 0.08);
+      const torsoBottomRight = world(hipHalf + r * 0.08, r * 0.04);
+      const torsoBottomLeft = world(-hipHalf - r * 0.08, r * 0.04);
+      const torsoCenter = world(0, -torsoHeight * 0.48);
       const traceTorso = () => {
         ctx.beginPath();
         ctx.moveTo(torsoTopLeft.x, torsoTopLeft.y);
         ctx.quadraticCurveTo(
           torsoCenter.x,
-          shoulderY - r * 0.18,
+          torsoCenter.y - r * 0.6,
           torsoTopRight.x,
           torsoTopRight.y,
         );
         ctx.lineTo(torsoBottomRight.x, torsoBottomRight.y);
         ctx.quadraticCurveTo(
           torsoCenter.x,
-          hip.y + r * 0.16,
+          torsoCenter.y + r * 0.62,
           torsoBottomLeft.x,
           torsoBottomLeft.y,
         );
@@ -1420,22 +1710,20 @@ export default function PitchCanvas({
         torsoBottomRight.x,
         torsoBottomRight.y,
       );
-      jerseyGrad.addColorStop(0, rgba("#ffffff", 0.2));
-      jerseyGrad.addColorStop(0.24, baseColor);
-      jerseyGrad.addColorStop(1, rgba(baseColor, 0.72));
+      jerseyGrad.addColorStop(0, rgba("#ffffff", 0.23));
+      jerseyGrad.addColorStop(0.22, baseColor);
+      jerseyGrad.addColorStop(1, rgba(baseColor, 0.69));
       ctx.save();
       ctx.fillStyle = jerseyGrad;
       traceTorso();
       ctx.fill();
       ctx.restore();
 
-      // Clip the pattern to the animated torso so stripes and sashes deform
-      // with the body instead of appearing as a flat badge over it.
       if (kitStyle !== "solid") {
-        const minX = Math.min(torsoTopLeft.x, torsoBottomLeft.x);
-        const maxX = Math.max(torsoTopRight.x, torsoBottomRight.x);
-        const minY = Math.min(torsoTopLeft.y, torsoTopRight.y);
-        const maxY = Math.max(torsoBottomLeft.y, torsoBottomRight.y);
+        const minX = Math.min(torsoTopLeft.x, torsoTopRight.x, torsoBottomLeft.x, torsoBottomRight.x);
+        const maxX = Math.max(torsoTopLeft.x, torsoTopRight.x, torsoBottomLeft.x, torsoBottomRight.x);
+        const minY = Math.min(torsoTopLeft.y, torsoTopRight.y, torsoBottomLeft.y, torsoBottomRight.y);
+        const maxY = Math.max(torsoTopLeft.y, torsoTopRight.y, torsoBottomLeft.y, torsoBottomRight.y);
         const width = Math.max(1, maxX - minX);
         const height = Math.max(1, maxY - minY);
 
@@ -1457,7 +1745,7 @@ export default function PitchCanvas({
         } else if (kitStyle === "diagonal-sash") {
           const sash = Math.max(r * 0.3, width * 0.28);
           ctx.translate(torsoCenter.x, torsoCenter.y);
-          ctx.rotate(-0.62);
+          ctx.rotate(bodyAngle - 0.62);
           ctx.fillRect(-sash / 2, -height, sash, height * 2);
         }
         ctx.restore();
@@ -1475,11 +1763,11 @@ export default function PitchCanvas({
       ctx.strokeStyle = "rgba(0,0,0,.48)";
       ctx.lineWidth = 1.1;
       ctx.beginPath();
-      ctx.moveTo(torsoBottomLeft.x + r * 0.06, torsoBottomLeft.y - r * 0.08);
-      ctx.lineTo(torsoBottomRight.x - r * 0.06, torsoBottomRight.y - r * 0.08);
-      ctx.lineTo(rightHip.x + r * 0.12, hip.y + r * 0.26);
-      ctx.lineTo(hip.x, hip.y + r * 0.18);
-      ctx.lineTo(leftHip.x - r * 0.12, hip.y + r * 0.26);
+      ctx.moveTo(torsoBottomLeft.x, torsoBottomLeft.y - r * 0.06);
+      ctx.lineTo(torsoBottomRight.x, torsoBottomRight.y - r * 0.06);
+      ctx.lineTo(rightHip.x + r * 0.12, rightHip.y + r * 0.25);
+      ctx.lineTo(hipOrigin.x, hipOrigin.y + r * 0.18);
+      ctx.lineTo(leftHip.x - r * 0.12, leftHip.y + r * 0.25);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
@@ -1490,7 +1778,7 @@ export default function PitchCanvas({
       ctx.lineWidth = Math.max(2.5, r * 0.17);
       ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(torsoCenter.x, shoulderY - r * 0.03);
+      ctx.moveTo(torsoCenter.x, torsoCenter.y - r * 0.42);
       ctx.lineTo(neck.x, neck.y);
       ctx.stroke();
       ctx.fillStyle = skin;
@@ -1505,17 +1793,26 @@ export default function PitchCanvas({
         ctx.beginPath();
         ctx.arc(head.x, head.y - headR * 0.18, headR * 0.92, Math.PI, Math.PI * 2);
         ctx.lineTo(head.x + headR * 0.82, head.y - headR * 0.02);
-        ctx.quadraticCurveTo(head.x, head.y - headR * 0.6, head.x - headR * 0.82, head.y - headR * 0.02);
+        ctx.quadraticCurveTo(head.x, head.y - headR * 0.62, head.x - headR * 0.82, head.y - headR * 0.02);
         ctx.closePath();
         ctx.fill();
       }
+      // A tiny directional face mark keeps the head from reading as a blank circle.
+      ctx.fillStyle = "rgba(50,29,22,0.62)";
+      ctx.beginPath();
+      ctx.arc(head.x + mirror * headR * 0.3, head.y - headR * 0.02, Math.max(0.7, headR * 0.07), 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
 
+      ctx.save();
+      ctx.translate(torsoCenter.x, torsoCenter.y);
+      ctx.rotate(bodyAngle);
       ctx.fillStyle = secColor;
       ctx.font = `900 ${Math.max(8, Math.round(r * 0.48))}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(p.jerseyNumber), torsoCenter.x, torsoCenter.y);
+      ctx.fillText(String(p.jerseyNumber), 0, 0);
+      ctx.restore();
 
       const nameW = clamp(r * 3.2, 30, 56);
       const nameH = clamp(r * 0.68, 9, 13);
@@ -1692,7 +1989,31 @@ export default function PitchCanvas({
       passStyle?: string;
     };
 
-    const ballGround = view.project(frame.ball.position);
+    let ballGround = view.project(frame.ball.position);
+    if (frame.ball.ownerId) {
+      const owner = frame.players.find((player) => player.id === frame.ball.ownerId);
+      const memory = playerAnimMemoryRef.current.get(frame.ball.ownerId);
+      if (owner && memory) {
+        const ownerGround = view.project(owner.position);
+        const ownerRadius = view.radius(
+          owner.role === "goalkeeper" ? PLAYER_RADIUS + 3 : PLAYER_RADIUS,
+          owner.position.y,
+        );
+        const ownerSpeed = Math.hypot(owner.velocity.x, owner.velocity.y);
+        const cadence = animationTick * (0.22 + clamp(ownerSpeed / 190, 0, 1) * 0.16) + hashUnit(owner.id) * 5;
+        const touch = Math.sin(cadence * Math.PI);
+        ballGround = {
+          x:
+            ownerGround.x +
+            Math.cos(memory.facing) * ownerRadius * (0.56 + Math.max(0, touch) * 0.18) +
+            Math.sin(memory.facing) * ownerRadius * 0.22 * touch,
+          y:
+            ownerGround.y +
+            Math.sin(memory.facing) * ownerRadius * (0.34 + Math.max(0, touch) * 0.12) +
+            ownerRadius * 0.42,
+        };
+      }
+    }
     const bv = frame.ball.velocity;
     const spd = Math.sqrt(bv.x * bv.x + bv.y * bv.y);
     const ballHeight = visualBall.height ?? 0;
