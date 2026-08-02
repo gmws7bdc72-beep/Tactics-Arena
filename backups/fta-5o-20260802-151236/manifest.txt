@@ -1,0 +1,11 @@
+existing	src/App.tsx
+new	src/components/PenaltyShootout.tsx
+existing	src/components/PlayerCard.tsx
+existing	src/engine/types.ts
+existing	src/game/league.ts
+existing	src/game/transferMarket.ts
+existing	src/pages/Home.tsx
+existing	src/pages/Match.tsx
+existing	src/pages/PostMatch.tsx
+existing	src/pages/TeamSetup.tsx
+existing	src/pages/TransferMarket.tsx

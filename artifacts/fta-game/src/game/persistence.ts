@@ -290,13 +290,30 @@ export function getDefaultTeam(): TeamConfig {
 }
 
 export const JERSEY_COLORS = [
-  "#00b4d8", "#38bdf8", "#3a86ff", "#1d4ed8", "#1a237e",
-  "#14b8a6", "#00b288", "#10b981", "#2d6a4f", "#65a30d",
-  "#a3e635", "#ffd60a", "#facc15", "#f59e0b", "#f77f00",
-  "#ef4444", "#e63946", "#c9184a", "#9f1239", "#7f1d1d",
-  "#ec4899", "#d946ef", "#a855f7", "#7b2d8b", "#5b21b6",
-  "#8b5e34", "#d6a85f", "#f5e6c8", "#ffffff", "#d1d5db",
-  "#64748b", "#374151", "#1a1a2e", "#111111",
+  // Reds and corals
+  "#ff1744", "#ff2d55", "#ef4444", "#e63946", "#dc2626", "#c9184a", "#be123c", "#9f1239", "#7f1d1d", "#ff6b6b", "#ff7f50", "#fb7185",
+  // Oranges, ambers and golds
+  "#ff8c00", "#f97316", "#f77f00", "#ea580c", "#c2410c", "#ffb703", "#f59e0b", "#facc15", "#ffd60a", "#eab308", "#ca8a04", "#b45309",
+  // Yellows and limes
+  "#fff200", "#fde047", "#fef08a", "#d9f99d", "#bef264", "#a3e635", "#84cc16", "#65a30d", "#4d7c0f",
+  // Greens
+  "#00e676", "#10b981", "#00b288", "#14b86e", "#22c55e", "#16a34a", "#15803d", "#166534", "#2d6a4f", "#064e3b", "#00a86b", "#32cd32",
+  // Teals and cyans
+  "#00f5d4", "#2dd4bf", "#14b8a6", "#0d9488", "#0f766e", "#115e59", "#00e5ff", "#22d3ee", "#06b6d4", "#00b4d8", "#0891b2", "#0e7490", "#155e75",
+  // Blues
+  "#7dd3fc", "#38bdf8", "#0ea5e9", "#0284c7", "#0369a1", "#3a86ff", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a", "#1a237e", "#001f54",
+  // Indigos and violets
+  "#818cf8", "#6366f1", "#4f46e5", "#4338ca", "#3730a3", "#a78bfa", "#8b5cf6", "#7c3aed", "#6d28d9", "#5b21b6", "#4c1d95",
+  // Purples and magentas
+  "#d8b4fe", "#c084fc", "#a855f7", "#9333ea", "#7e22ce", "#6b21a8", "#d946ef", "#c026d3", "#a21caf", "#86198f", "#7b2d8b",
+  // Pinks
+  "#f9a8d4", "#f472b6", "#ec4899", "#db2777", "#be185d", "#9d174d", "#ff69b4", "#ff4da6",
+  // Browns, tans and creams
+  "#3f2d20", "#5c4033", "#6f4e37", "#8b5e34", "#a16207", "#b7791f", "#d6a85f", "#e7c27d", "#f5e6c8", "#fff1d6",
+  // Whites, silvers and greys
+  "#ffffff", "#f8fafc", "#f1f5f9", "#e5e7eb", "#d1d5db", "#9ca3af", "#64748b", "#475569", "#374151", "#1f2937", "#111827", "#111111",
+  // Deep/navy specialty shades
+  "#0f172a", "#1a1a2e", "#172554", "#082f49", "#052e16", "#3b0764", "#4a044e", "#450a0a",
 ];
 
 export const SECONDARY_COLORS = [...JERSEY_COLORS];

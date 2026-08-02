@@ -1,11 +1,10 @@
 import type { PlayerCard, PlayerStats } from "../engine/types";
 import { ensurePlayerDevelopment } from "./training";
+import { generateUniquePlayerName, registerGeneratedPlayerNames } from "./nameDatabase";
 
 export const MIN_SQUAD_SIZE = 11;
 export const MAX_SQUAD_SIZE = 16;
 
-const FIRST_NAMES = ["Adrian","Bastian","Cairo","Dario","Emil","Felix","Gian","Hector","Ivan","Jonas","Kian","Luca","Marco","Nils","Owen","Pablo","Quinn","Rafael","Sami","Theo","Uri","Victor","Wes","Yuri","Zane"];
-const LAST_NAMES = ["Alder","Bauer","Costa","Dunn","Evans","Frost","Grant","Hale","Ibarra","Jensen","Kovac","Lind","Meyer","Nash","Ortiz","Pike","Reed","Silva","Toma","Voss","Ward","Young"];
 
 function hash(text: string): number {
   let h = 2166136261;
@@ -75,11 +74,10 @@ export function generateReservePlayer(clubId: string, index: number, tier: 1 | 2
   const seed = hash(`${clubId}:${season}:${index}`);
   const role = roleForIndex(index);
   const level = tier === 1 ? 7 : tier === 2 ? 6 : 5;
-  const first = FIRST_NAMES[seed % FIRST_NAMES.length];
-  const last = LAST_NAMES[(seed >>> 7) % LAST_NAMES.length];
+  const name = generateUniquePlayerName(seed);
   return enrichMarketPlayer({
     id: `${clubId}_reserve_${season}_${index}`,
-    name: `${first} ${last}`,
+    name,
     role,
     jerseyNumber: 12 + index,
     ability: role === "goalkeeper" ? "goalkeeper" : "none",
@@ -94,6 +92,7 @@ export function getInitialSquadSize(clubId: string): number {
 }
 
 export function expandSquad(players: PlayerCard[], clubId: string, tier: 1 | 2 | 3 = 2, season = 1): PlayerCard[] {
+  registerGeneratedPlayerNames(players.map((player) => player.name));
   const targetSize = Math.max(players.length, getInitialSquadSize(clubId));
   const unique = new Map(players.map((player) => [player.id, enrichMarketPlayer(player, clubId, season)]));
   let index = 0;
@@ -118,8 +117,8 @@ function randomInt(min: number, max: number): number {
 }
 
 export function randomizePlayerForNewSave(template: PlayerCard, clubId: string, index: number): PlayerCard {
-  const first = FIRST_NAMES[randomInt(0, FIRST_NAMES.length - 1)];
-  const last = LAST_NAMES[randomInt(0, LAST_NAMES.length - 1)];
+  const nameSeed = randomInt(1, 0x7fffffff);
+  const name = generateUniquePlayerName(nameSeed, [template.name]);
   const level = Math.max(3, Math.min(9, Math.round(getPlayerOverall(template) / 10)));
   const seed = randomInt(1, 0x7fffffff);
   const ability = template.role === "goalkeeper"
@@ -128,7 +127,7 @@ export function randomizePlayerForNewSave(template: PlayerCard, clubId: string, 
   return enrichMarketPlayer({
     ...template,
     id: `${clubId}_new_${Date.now().toString(36)}_${index}_${seed.toString(36)}`,
-    name: `${first} ${last}`,
+    name,
     ability,
     stats: baseStats(template.role, level, seed),
     jerseyNumber: index + 1,

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { LeagueState, PlayerCard, TeamConfig } from "../engine/types";
 import { AI_TEAMS } from "../game/league";
+import { ABILITIES } from "../game/players";
 import {
   enrichMarketPlayer,
   formatMoney,
@@ -247,7 +248,7 @@ export default function TransferMarket({
             className="font-black"
             style={{ color: locked ? "#9ca3af" : "#34d399" }}
           >
-            {locked ? "Locked" : formatMoney(finance?.budget ?? 0)}
+            {formatMoney(finance?.budget ?? 0)}
           </div>
         </div>
       </div>
@@ -516,6 +517,9 @@ export default function TransferMarket({
                         {club.crestIcon} {club.name} · {player.role} · age{" "}
                         {player.age}
                       </div>
+                      <div className="mt-0.5 truncate text-[10px] font-bold text-amber-300/90">
+                        {ABILITIES[player.ability]?.name ?? "No Ability"}
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-black text-white">
@@ -564,6 +568,15 @@ export default function TransferMarket({
                           <div className="text-xs font-black text-white">
                             {club.players.length}/{MAX_SQUAD_SIZE}
                           </div>
+                        </div>
+                      </div>
+
+                      <div className="mb-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] p-3">
+                        <div className="text-[9px] font-black uppercase tracking-wider text-amber-300/80">
+                          Ability · {ABILITIES[player.ability]?.name ?? "No Ability"}
+                        </div>
+                        <div className="mt-1 text-[10px] leading-4 text-gray-300">
+                          {ABILITIES[player.ability]?.description ?? "No special ability."}
                         </div>
                       </div>
 
@@ -961,12 +974,12 @@ export default function TransferMarket({
               <div className="text-right">
                 <div className="text-[9px] text-gray-500">Balance</div>
                 <div className="font-black text-emerald-400">
-                  {locked ? "Locked" : formatMoney(finance?.budget ?? 0)}
+                  {formatMoney(finance?.budget ?? 0)}
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+            <div className="mt-4 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
               <div className="rounded-xl bg-black/20 px-2 py-3">
                 <div className="text-[8px] uppercase text-gray-500">Spent</div>
                 <div className="mt-1 text-xs font-black text-rose-300">
@@ -989,6 +1002,12 @@ export default function TransferMarket({
                 >
                   {netSpend < 0 ? "+" : ""}
                   {formatMoney(Math.abs(netSpend))}
+                </div>
+              </div>
+              <div className="rounded-xl bg-black/20 px-2 py-3">
+                <div className="text-[8px] uppercase text-gray-500">Wages paid</div>
+                <div className="mt-1 text-xs font-black text-violet-300">
+                  {formatMoney(finance?.wagesPaid ?? 0)}
                 </div>
               </div>
             </div>
@@ -1018,9 +1037,19 @@ export default function TransferMarket({
                   }}
                 />
               </div>
-              <div className="mt-1.5 text-right text-[9px] text-sky-300">
-                {formatMoney(wageSpace)}/w available
+              <div className="mt-1.5 flex items-center justify-between gap-3 text-[9px]">
+                <span className={(finance?.budget ?? 0) < 0 ? "font-black text-rose-300" : "text-gray-500"}>
+                  {(finance?.budget ?? 0) < 0
+                    ? `Debt: ${formatMoney(Math.abs(finance?.budget ?? 0))}`
+                    : `Next wage payment: ${formatMoney(finance?.payroll ?? 0)}`}
+                </span>
+                <span className="text-sky-300">{formatMoney(wageSpace)}/w available</span>
               </div>
+              {(finance?.insolventWeeks ?? 0) > 0 && (
+                <div className="mt-2 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-[10px] font-bold text-rose-200">
+                  Financial warning: the club has finished {finance?.insolventWeeks} paid week{finance?.insolventWeeks === 1 ? "" : "s"} below zero.
+                </div>
+              )}
             </div>
           </section>
 
@@ -1040,8 +1069,6 @@ export default function TransferMarket({
                 const club = clubs.find(
                   (item) => item.id === clubFinance.clubId,
                 );
-                const hidden = locked && clubFinance.clubId === PLAYER_ID;
-
                 return (
                   <div
                     key={clubFinance.clubId}
@@ -1063,12 +1090,10 @@ export default function TransferMarket({
                         {club?.crestIcon} {club?.name ?? clubFinance.clubId}
                       </div>
                       <div className="font-black text-emerald-400">
-                        {hidden
-                          ? "Unlocks S2"
-                          : formatMoney(clubFinance.budget)}
+                        {formatMoney(clubFinance.budget)}
                       </div>
                     </div>
-                    <div className="mt-2 grid grid-cols-4 gap-2 text-center text-[9px]">
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-center text-[9px] sm:grid-cols-5">
                       <div>
                         <div className="text-gray-500">Payroll</div>
                         <div className="text-white">
@@ -1079,6 +1104,12 @@ export default function TransferMarket({
                         <div className="text-gray-500">Wage cap</div>
                         <div className="text-white">
                           {formatMoney(clubFinance.wageBudget)}/w
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Wages paid</div>
+                        <div className="text-violet-300">
+                          {formatMoney(clubFinance.wagesPaid ?? 0)}
                         </div>
                       </div>
                       <div>

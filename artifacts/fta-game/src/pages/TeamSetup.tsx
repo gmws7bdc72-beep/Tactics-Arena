@@ -21,6 +21,7 @@ import {
   PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import { formatMoney } from "../game/transferDatabase";
+import { ABILITIES } from "../game/players";
 
 interface Props {
   team: TeamConfig;
@@ -527,7 +528,7 @@ export default function TeamSetup({
 
                           <div className="text-gray-400 text-xs truncate capitalize">
                             {player.role} · ⚡{" "}
-                            {player.ability.replace(/_/g, " ")}
+                            {ABILITIES[player.ability]?.name ?? "No Ability"}
                           </div>
                         </div>
 
@@ -562,6 +563,15 @@ export default function TeamSetup({
 
                       {activeSlot === index && (
                         <div className="mt-3 pt-3 border-t border-white/10">
+                          <div className="mb-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] p-3">
+                            <div className="text-[9px] font-black uppercase tracking-wider text-amber-300/80">
+                              {ABILITIES[player.ability]?.name ?? "No Ability"}
+                            </div>
+                            <div className="mt-1 text-[10px] leading-4 text-gray-300">
+                              {ABILITIES[player.ability]?.description ?? "No special ability."}
+                            </div>
+                          </div>
+
                           <div className="mb-3">
                             <SquadManagementPanel
                               player={player}
@@ -620,7 +630,7 @@ export default function TeamSetup({
                                     </div>
                                     <div className="text-gray-400 text-[10px] truncate capitalize">
                                       {candidate.role} ·{" "}
-                                      {candidate.ability.replace(/_/g, " ")}
+                                      {ABILITIES[candidate.ability]?.name ?? "No Ability"}
                                     </div>
                                   </div>
 
@@ -685,7 +695,7 @@ export default function TeamSetup({
                               {player.name}
                             </div>
                             <div className="text-[10px] capitalize text-gray-500">
-                              {player.role} ·{" "}
+                              {player.role} · {ABILITIES[player.ability]?.name ?? "No Ability"} ·{" "}
                               {player.marketStatus === "listed"
                                 ? "🏷️ listed"
                                 : player.marketStatus === "untouchable"
@@ -700,6 +710,14 @@ export default function TeamSetup({
 
                         {open && (
                           <div className="mt-3 border-t border-white/10 pt-3">
+                            <div className="mb-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] p-3">
+                              <div className="text-[9px] font-black uppercase tracking-wider text-amber-300/80">
+                                {ABILITIES[player.ability]?.name ?? "No Ability"}
+                              </div>
+                              <div className="mt-1 text-[10px] leading-4 text-gray-300">
+                                {ABILITIES[player.ability]?.description ?? "No special ability."}
+                              </div>
+                            </div>
                             <SquadManagementPanel
                               player={player}
                               onUpdate={(status, askingPrice) =>

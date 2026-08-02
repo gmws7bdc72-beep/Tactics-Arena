@@ -71,6 +71,7 @@ interface MatchResult {
   autoSimAwayName?: string;
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
+  penalties?: { player: number; ai: number };
 }
 
 interface PlayoffContext {
@@ -218,7 +219,12 @@ export default function App() {
     : null;
 
   const handleMatchEnd = useCallback(
-    (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => {
+    (result: {
+      playerScore: number;
+      aiScore: number;
+      events: GameEvent[];
+      penalties?: { player: number; ai: number };
+    }) => {
       if (!currentScheduledMatch || !currentOpponentDef) return;
 
       const seed = Date.now() % 99999;
@@ -262,6 +268,7 @@ export default function App() {
         events: result.events,
         opponentName: currentOpponentDef.name,
         playoffStage: null,
+        penalties: result.penalties,
       });
 
       setScreen("post-match");
@@ -278,7 +285,12 @@ export default function App() {
   );
 
   const handlePlayoffMatchEnd = useCallback(
-    (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => {
+    (result: {
+      playerScore: number;
+      aiScore: number;
+      events: GameEvent[];
+      penalties?: { player: number; ai: number };
+    }) => {
       if (!playoffContext) return;
 
       const seed = Date.now() % 99999;
@@ -286,6 +298,29 @@ export default function App() {
 
       const homeGoals = isHome ? result.playerScore : result.aiScore;
       const awayGoals = isHome ? result.aiScore : result.playerScore;
+      const penaltyHome = result.penalties
+        ? isHome
+          ? result.penalties.player
+          : result.penalties.ai
+        : undefined;
+      const penaltyAway = result.penalties
+        ? isHome
+          ? result.penalties.ai
+          : result.penalties.player
+        : undefined;
+      const playerWon =
+        result.playerScore > result.aiScore ||
+        (result.playerScore === result.aiScore &&
+          (result.penalties?.player ?? 0) > (result.penalties?.ai ?? 0));
+      const opponentWon =
+        result.aiScore > result.playerScore ||
+        (result.playerScore === result.aiScore &&
+          (result.penalties?.ai ?? 0) > (result.penalties?.player ?? 0));
+      const forcedWinnerId = playerWon
+        ? PLAYER_TEAM_ID_CONST
+        : opponentWon
+          ? playoffContext.opponentId
+          : undefined;
 
       const resultLeague = applyPlayoffResult(
         league,
@@ -293,6 +328,10 @@ export default function App() {
         homeGoals,
         awayGoals,
         seed,
+        forcedWinnerId,
+        penaltyHome !== undefined && penaltyAway !== undefined
+          ? { home: penaltyHome, away: penaltyAway }
+          : undefined,
       );
       const newLeague = advanceAITrainingWeek(resultLeague, {
         playerOpponentId: playoffContext.opponentId,
@@ -302,12 +341,7 @@ export default function App() {
       const trainedTeam = advanceTeamTraining(team, {
         season: newLeague.season ?? 1,
         week: newLeague.trainingWeek ?? 1,
-        result:
-          result.playerScore > result.aiScore
-            ? "win"
-            : result.playerScore < result.aiScore
-              ? "loss"
-              : "draw",
+        result: playerWon ? "win" : opponentWon ? "loss" : "draw",
       });
 
       const transferResult = processTransferWeek(
@@ -330,6 +364,7 @@ export default function App() {
         events: result.events,
         opponentName: oppName,
         playoffStage: stage,
+        penalties: result.penalties,
       });
 
       setScreen("post-match");
@@ -709,6 +744,7 @@ export default function App() {
             isHome={isHomeForMatch}
             onMatchEnd={isPlayoff ? handlePlayoffMatchEnd : handleMatchEnd}
             onForfeit={isPlayoff ? handlePlayoffForfeit : handleForfeit}
+            requiresWinner={isPlayoff}
           />
         </div>
       );
@@ -736,6 +772,7 @@ export default function App() {
           autoSimAwayName={matchResult.autoSimAwayName}
           autoSimHomeGoals={matchResult.autoSimHomeGoals}
           autoSimAwayGoals={matchResult.autoSimAwayGoals}
+          penalties={matchResult.penalties}
           showNewSeason={showNewSeason}
           onNextMatch={() => {
             setMatchResult(null);

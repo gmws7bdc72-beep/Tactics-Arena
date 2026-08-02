@@ -1,0 +1,8 @@
+FTA-5P2
+
+Cumulative corrected package containing FTA-5O and FTA-5P.
+
+- Fixes the Match.tsx selected-player ability TypeScript error.
+- Weekly wages and playable penalty shootouts from 5O.
+- Expanded colors and name database from 5P.
+- Improved AI transfer listing, transformations, and goalkeeper dives from 5P.

@@ -1,0 +1,11 @@
+FTA-5O
+
+- Weekly wage payments visibly reduce every club's balance.
+- Wage totals, debt, projected weekly bill, and insolvency warnings appear in finances.
+- Abilities are visible on squad cards, market cards, expanded profiles, and selected match players.
+- Tied player-controlled playoff matches use a playable best-of-five penalty shootout.
+- Penalty shooting uses an elongated 3x3 goal target grid.
+- Shooting skill affects placement accuracy; goalkeeper skill affects reading and saves.
+- Best shooters take penalties first; sudden death starts when level after five each.
+- Penalty goalkeeper animation has fast launch, airborne hang, and drop phases.
+- Penalty scores are retained in playoff results, post-match screens, and the home bracket.

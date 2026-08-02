@@ -43,7 +43,9 @@ import { deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
 import TutorialCoach from "../components/TutorialCoach";
+import PenaltyShootout, { type PenaltyResult } from "../components/PenaltyShootout";
 import { MATCH_TUTORIAL_STEPS, type TutorialRequirement } from "../game/matchTutorial";
+import { ABILITIES } from "../game/players";
 
 interface Props {
   team: TeamConfig;
@@ -51,8 +53,14 @@ interface Props {
   isHome?: boolean;
   twoPlayer?: boolean;
   p1TeamDef?: AITeamDef;
-  onMatchEnd: (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => void;
+  onMatchEnd: (result: {
+    playerScore: number;
+    aiScore: number;
+    events: GameEvent[];
+    penalties?: { player: number; ai: number };
+  }) => void;
   onForfeit: () => void;
+  requiresWinner?: boolean;
   tutorialMode?: boolean;
   onTutorialComplete?: () => void;
 }
@@ -133,7 +141,7 @@ function pickContrasting(againstColor: string): string {
   return CONTRAST_POOL.reduce((best, c) => rgbDist(againstColor, c) > rgbDist(againstColor, best) ? c : best, CONTRAST_POOL[0]);
 }
 
-export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer = false, p1TeamDef, onMatchEnd, onForfeit, tutorialMode = false, onTutorialComplete }: Props) {
+export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer = false, p1TeamDef, onMatchEnd, onForfeit, requiresWinner = false, tutorialMode = false, onTutorialComplete }: Props) {
   const p1Source = twoPlayer && p1TeamDef ? p1TeamDef : null;
   const playerFormation = p1Source ? getFormationById(p1Source.formationId) : getFormationById(team.formationId);
   const aiFormation = getAIFormationById(opponentTeamDef.formationId);
@@ -216,7 +224,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
   // Replay
   const allMatchFramesRef = useRef<FrameSnapshot[]>([]);
-  const [matchEndResult, setMatchEndResult] = useState<{ playerScore: number; aiScore: number } | null>(null);
+  const [matchEndResult, setMatchEndResult] = useState<{
+    playerScore: number;
+    aiScore: number;
+    penalties?: { player: number; ai: number };
+  } | null>(null);
+  const [penaltyShootoutActive, setPenaltyShootoutActive] = useState(false);
   const [replayMode, setReplayMode] = useState(savedMatch?.replayMode ?? false);
   const [replayIdx, setReplayIdx] = useState(savedMatch?.replayIdx ?? 0);
   const [replaySpeed, setReplaySpeed] = useState<1 | 6 | 8 | 10>(savedMatch?.replaySpeed ?? 1);
@@ -431,8 +444,13 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     if (matchOver) {
       phaseRef.current = "finished";
       setPhase("finished");
+      const tiedKnockout = requiresWinner && !twoPlayer && newScore.player === newScore.ai;
       setTimeout(() => {
-        setMatchEndResult({ playerScore: newScore.player, aiScore: newScore.ai });
+        if (tiedKnockout) {
+          setPenaltyShootoutActive(true);
+        } else {
+          setMatchEndResult({ playerScore: newScore.player, aiScore: newScore.ai });
+        }
       }, goalEvent ? 2400 : 1200);
     } else {
       turnRef.current = nextTurn;
@@ -440,7 +458,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       phaseRef.current = "planning";
       setPhase("planning");
     }
-  }, [onMatchEnd, playerFormation, aiFormation, twoPlayer]);
+  }, [onMatchEnd, playerFormation, aiFormation, twoPlayer, requiresWinner]);
 
   const playbackFrames = useCallback((frames: FrameSnapshot[], allNewEvents: GameEvent[]) => {
     let idx = 0;
@@ -502,7 +520,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       }));
     } else {
       const aiPlayersList = currentPlayers.filter(x => x.teamId === "ai");
-      const playerPlayersList = currentPlayers.filter(x => x.teamId === "player");
+      const playerPlayersList = currentPlayers
+        .filter(x => x.teamId === "player")
+        .map((player) => ({
+          ...player,
+          command: currentPending.get(player.id) ?? null,
+        }));
       const aiCommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current, opponentTeamDef.tactic);
       withCommands = currentPlayers.map(p => {
         const cmd = p.teamId === "player"
@@ -593,9 +616,23 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     startReplayAnimation(0);
   }, [startReplayAnimation]);
 
+  const handlePenaltyComplete = useCallback((result: PenaltyResult) => {
+    setPenaltyShootoutActive(false);
+    setMatchEndResult({
+      playerScore: scoreRef.current.player,
+      aiScore: scoreRef.current.ai,
+      penalties: { player: result.player, ai: result.ai },
+    });
+  }, []);
+
   const handleContinue = useCallback(() => {
     if (matchEndResult) {
-      onMatchEnd({ playerScore: matchEndResult.playerScore, aiScore: matchEndResult.aiScore, events: allEventsRef.current });
+      onMatchEnd({
+        playerScore: matchEndResult.playerScore,
+        aiScore: matchEndResult.aiScore,
+        events: allEventsRef.current,
+        penalties: matchEndResult.penalties,
+      });
     }
   }, [matchEndResult, onMatchEnd]);
 
@@ -914,6 +951,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const selectedSimPlayer = selectedPlayerId
     ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ?? null
     : null;
+  const selectedAbilityId = selectedPlayerId
+    ? players.find((player) => player.id === selectedPlayerId)?.ability
+    : undefined;
 
   const goalkeeperCanDive =
     !!selectedSimPlayer &&
@@ -1091,6 +1131,15 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
         }}
       >
+        {phase === "planning" && selectedSimPlayer && (
+          <div className="flex justify-center px-3 pt-1.5">
+            <div className="max-w-full truncate rounded-full border border-amber-300/20 bg-amber-300/[0.07] px-3 py-1 text-[9px] font-black uppercase tracking-wider text-amber-200">
+              <span className="text-amber-400/70">Selected ability · </span>
+              {selectedAbilityId ? ABILITIES[selectedAbilityId]?.name ?? "No Ability" : "No Ability"}
+            </div>
+          </div>
+        )}
+
         {phase === "planning" && !comboActive && (
           <MechanicPad
             onCancel={cancelAction}
@@ -1157,6 +1206,17 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         </div>
       </div>
 
+      {penaltyShootoutActive && (
+        <PenaltyShootout
+          team={team}
+          opponentName={opponentTeamDef.name}
+          opponentPlayers={opponentTeamDef.players}
+          opponentColor={effectiveAiColor}
+          opponentSecondaryColor={effectiveAiSecondaryColor}
+          onComplete={handlePenaltyComplete}
+        />
+      )}
+
       {/* Match-end overlay */}
       {matchEndResult && !replayMode && (
         <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.72)" }}>
@@ -1165,11 +1225,31 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             <div className="text-white font-black text-5xl mb-1">
               {matchEndResult.playerScore} – {matchEndResult.aiScore}
             </div>
+            {matchEndResult.penalties && (
+              <div className="mb-2 text-xs font-black uppercase tracking-wider text-cyan-300">
+                Penalties {matchEndResult.penalties.player}–{matchEndResult.penalties.ai}
+              </div>
+            )}
             <div
               className="text-base font-bold mb-6"
-              style={{ color: matchEndResult.playerScore > matchEndResult.aiScore ? "#00e676" : matchEndResult.playerScore < matchEndResult.aiScore ? "#ff5252" : "#ffd700" }}
+              style={{
+                color:
+                  matchEndResult.playerScore > matchEndResult.aiScore ||
+                  ((matchEndResult.penalties?.player ?? 0) > (matchEndResult.penalties?.ai ?? 0))
+                    ? "#00e676"
+                    : matchEndResult.playerScore < matchEndResult.aiScore ||
+                        ((matchEndResult.penalties?.player ?? 0) < (matchEndResult.penalties?.ai ?? 0))
+                      ? "#ff5252"
+                      : "#ffd700",
+              }}
             >
-              {matchEndResult.playerScore > matchEndResult.aiScore ? "Victory!" : matchEndResult.playerScore < matchEndResult.aiScore ? "Defeat" : "Draw"}
+              {matchEndResult.playerScore > matchEndResult.aiScore ||
+              ((matchEndResult.penalties?.player ?? 0) > (matchEndResult.penalties?.ai ?? 0))
+                ? "Victory!"
+                : matchEndResult.playerScore < matchEndResult.aiScore ||
+                    ((matchEndResult.penalties?.player ?? 0) < (matchEndResult.penalties?.ai ?? 0))
+                  ? "Defeat"
+                  : "Draw"}
             </div>
             <div className="flex gap-3">
               {allMatchFramesRef.current.length > 0 && (

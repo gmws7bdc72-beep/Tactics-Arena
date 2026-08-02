@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
+import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
 import {
   curvePointLimitForCommand,
   curveRouteFitsMoveBudget,
@@ -1416,6 +1416,61 @@ function addTacticalCurve(
   return primary;
 }
 
+function goalThreatTarget(command: Command | null | undefined): Vec2 | null {
+  let current = command ?? null;
+  for (let depth = 0; current && depth < 3; depth += 1) {
+    if (
+      (current.type === CommandType.SHOOT || current.type === CommandType.PASS) &&
+      current.targetPosition &&
+      current.targetPosition.x >= PITCH_WIDTH - BALL_RADIUS &&
+      current.targetPosition.y >= GOAL_TOP_Y + BALL_RADIUS &&
+      current.targetPosition.y <= GOAL_BOTTOM_Y - BALL_RADIUS
+    ) {
+      return current.targetPosition;
+    }
+    current = current.followUp ?? null;
+  }
+  return null;
+}
+
+function plannedAIGoalkeeperDive(
+  goalkeeper: SimPlayer,
+  attackingOwner: SimPlayer | null,
+): Command | null {
+  if (!attackingOwner || attackingOwner.teamId !== "player") return null;
+  const threat = goalThreatTarget(attackingOwner.command);
+  if (!threat) return null;
+
+  const from = posToTile(goalkeeper.position);
+  const targetRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(threat.y / TILE_H)));
+  const maxTiles = Math.max(goalkeeper.stats.defense, goalkeeper.stats.speed) >= 9 ? 2 : 1;
+  const rowDelta = Math.max(-maxTiles, Math.min(maxTiles, targetRow - from.row));
+  const goalLineCol = GRID_COLS - 1;
+  const colDelta = Math.max(-maxTiles, Math.min(maxTiles, goalLineCol - from.col));
+
+  // A central ball already within the keeper's body line does not need an
+  // artificial dive. Anything outside that catch line triggers an early dive.
+  if (Math.abs(rowDelta) === 0 && Math.abs(colDelta) === 0) return null;
+
+  let best = { col: from.col, row: from.row };
+  let bestError = Number.POSITIVE_INFINITY;
+  for (let dc = -maxTiles; dc <= maxTiles; dc += 1) {
+    for (let dr = -maxTiles; dr <= maxTiles; dr += 1) {
+      if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
+      const col = Math.max(GK_COLS_AI_MIN, Math.min(GK_COLS_AI_MAX, from.col + dc));
+      const row = Math.max(0, Math.min(GRID_ROWS - 1, from.row + dr));
+      const error = Math.abs(row - targetRow) * 2 + Math.abs(col - goalLineCol);
+      if (error < bestError) {
+        bestError = error;
+        best = { col, row };
+      }
+    }
+  }
+
+  if (best.col === from.col && best.row === from.row) return null;
+  return { type: CommandType.DIVE, targetPosition: tileToPos(best.col, best.row) };
+}
+
 export function generateAICommands(
   aiPlayers: SimPlayer[],
   playerPlayers: SimPlayer[],
@@ -1546,6 +1601,15 @@ export function generateAICommands(
         targetPosition: tileToPos(onsideCol, pt.row),
       });
       continue;
+    }
+
+    if (player.role === "goalkeeper" && playerHasBall) {
+      const dive = plannedAIGoalkeeperDive(player, ballOwner);
+      if (dive) {
+        logCommand(player.id, dive);
+        commands.set(player.id, dive);
+        continue;
+      }
     }
 
     if (!hasBall && planRef.current?.runnerId === player.id) {

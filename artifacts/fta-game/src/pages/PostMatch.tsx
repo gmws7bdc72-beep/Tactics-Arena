@@ -18,6 +18,7 @@ interface Props {
   autoSimAwayName?: string;
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
+  penalties?: { player: number; ai: number };
   showNewSeason?: boolean;
   onNextMatch: () => void;
   onHome: () => void;
@@ -44,6 +45,7 @@ export default function PostMatch({
   autoSimAwayName,
   autoSimHomeGoals,
   autoSimAwayGoals,
+  penalties,
   showNewSeason,
   onNextMatch,
   onHome,
@@ -62,13 +64,6 @@ export default function PostMatch({
     e.type === GameEventType.SHOT_ON_GOAL
   ).slice(0, 6);
 
-  const resultColor = won ? "#00e676" : draw ? "#ffd700" : "#ff5252";
-  const resultBg = won
-    ? "linear-gradient(135deg, rgba(0,230,118,0.15), rgba(0,178,136,0.08))"
-    : draw
-    ? "linear-gradient(135deg, rgba(255,235,59,0.15), rgba(255,152,0,0.08))"
-    : "linear-gradient(135deg, rgba(255,82,82,0.15), rgba(211,47,47,0.08))";
-
   const pointsGained = won ? 3 : draw ? 1 : 0;
 
   const isPlayoffMatch = !!playoffStage;
@@ -86,8 +81,16 @@ export default function PostMatch({
   })();
   const playerEliminated = isPlayoffMatch && !playerAdvanced;
   const nextStageLabel = playoffStage === "sf1" || playoffStage === "sf2" ? "Final" : null;
-  const wonOnPenalties = draw && playerAdvanced;
-  const lostOnPenalties = draw && playerEliminated;
+  const wonOnPenalties = !!penalties && playerAdvanced;
+  const lostOnPenalties = !!penalties && playerEliminated;
+  const displayWon = won || wonOnPenalties;
+  const displayLost = (!draw && !won) || lostOnPenalties;
+  const resultColor = displayWon ? "#00e676" : displayLost ? "#ff5252" : "#ffd700";
+  const resultBg = displayWon
+    ? "linear-gradient(135deg, rgba(0,230,118,0.15), rgba(0,178,136,0.08))"
+    : displayLost
+      ? "linear-gradient(135deg, rgba(255,82,82,0.15), rgba(211,47,47,0.08))"
+      : "linear-gradient(135deg, rgba(255,235,59,0.15), rgba(255,152,0,0.08))";
 
   // Auto-sim display
   if (isAutoSim && autoSimHomeName && autoSimAwayName) {
@@ -174,11 +177,16 @@ export default function PostMatch({
             🏆 {STAGE_LABEL[playoffStage!]}
           </div>
         )}
-        <div className="text-4xl mb-1.5">{won ? "🏆" : draw ? "🤝" : "💀"}</div>
+        <div className="text-4xl mb-1.5">{displayWon ? "🏆" : displayLost ? "💀" : "🤝"}</div>
         <div className="text-3xl font-black mb-0.5" style={{ color: resultColor }}>
-          {won ? "Victory!" : draw ? "Draw" : "Defeat"}
+          {displayWon ? "Victory!" : displayLost ? "Defeat" : "Draw"}
         </div>
         <div className="text-gray-300 text-2xl font-bold">{playerScore} — {aiScore}</div>
+        {penalties && (
+          <div className="mt-1 text-xs font-black uppercase tracking-wider text-cyan-300">
+            Penalties {penalties.player} — {penalties.ai}
+          </div>
+        )}
         <div className="text-gray-500 text-xs mt-1">{team.name} vs {opponentName}</div>
 
         {isPlayoffMatch ? (
@@ -375,7 +383,17 @@ function PlayoffProgressCard({
   const playerIsInFinal = po.final && (po.final.homeId === PLAYER_ID || po.final.awayId === PLAYER_ID);
 
   const matchRow = (
-    match: { homeId: string; homeName: string; awayId: string; awayName: string; homeGoals?: number; awayGoals?: number; winnerId?: string } | undefined,
+    match: {
+      homeId: string;
+      homeName: string;
+      awayId: string;
+      awayName: string;
+      homeGoals?: number;
+      awayGoals?: number;
+      penaltyHomeGoals?: number;
+      penaltyAwayGoals?: number;
+      winnerId?: string;
+    } | undefined,
     label: string,
     isCurrentStage: boolean
   ) => {
@@ -404,7 +422,11 @@ function PlayoffProgressCard({
           {homeName}
         </span>
         <span className="text-gray-600 text-xs shrink-0 font-mono">
-          {isDone ? `${match.homeGoals}–${match.awayGoals}` : "vs"}
+          {isDone
+            ? match.penaltyHomeGoals !== undefined && match.penaltyAwayGoals !== undefined
+              ? `${match.homeGoals}–${match.awayGoals} (${match.penaltyHomeGoals}–${match.penaltyAwayGoals}p)`
+              : `${match.homeGoals}–${match.awayGoals}`
+            : "vs"}
         </span>
         <span className="flex-1 text-xs truncate text-right" style={{ color: awayWon ? "#fff" : isDone ? "#4b5563" : (playerIsAway ? team.jerseyColor : "#9ca3af"), fontWeight: awayWon ? 700 : 400 }}>
           {awayName}

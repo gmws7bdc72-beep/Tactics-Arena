@@ -18,7 +18,7 @@ import {
   prepareSquadForNewSeason,
   type MatchTrainingResult,
 } from "./training";
-import { expandSquad, randomizePlayerForNewSave } from "./transferDatabase";
+import { expandSquad, getPlayerOverall, randomizePlayerForNewSave } from "./transferDatabase";
 
 export interface AITeamDef {
   id: string;
@@ -633,7 +633,11 @@ export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> 
   return ensureAITransferListings(squads, season);
 }
 
-const MIN_AI_TRANSFER_LISTINGS = 16;
+const MIN_AI_TRANSFER_LISTINGS = 20;
+const MIN_AI_LISTINGS_PER_CLUB = 1;
+const MAX_AI_LISTINGS_PER_CLUB = 4;
+
+type SquadRoleBucket = "goalkeeper" | "defender" | "midfielder" | "attacker";
 
 function stableListingHash(value: string): number {
   let result = 2166136261;
@@ -642,6 +646,75 @@ function stableListingHash(value: string): number {
     result = Math.imul(result, 16777619);
   }
   return result >>> 0;
+}
+
+function roleBucket(player: PlayerCard): SquadRoleBucket {
+  if (player.role === "goalkeeper") return "goalkeeper";
+  if (player.role === "defender") return "defender";
+  if (player.role === "midfielder") return "midfielder";
+  return "attacker";
+}
+
+function formationRolePlan(formationId: string): Record<SquadRoleBucket, number> {
+  const clean = formationId.replace(/^ai-/, "");
+  const [defenders = 2, midfielders = 1, attackers = 2] = clean
+    .split("-")
+    .map((value) => Math.max(0, Number.parseInt(value, 10) || 0));
+  return { goalkeeper: 1, defender: defenders, midfielder: midfielders, attacker: attackers };
+}
+
+function preferredSquadDepth(formationId: string, squadSize: number): Record<SquadRoleBucket, number> {
+  const starters = formationRolePlan(formationId);
+  const deepBench = squadSize >= 14;
+  return {
+    goalkeeper: deepBench ? 2 : 1,
+    defender: Math.max(1, starters.defender + (starters.defender > 0 ? 1 : 0)),
+    midfielder: Math.max(starters.midfielder > 0 ? starters.midfielder + 1 : 1, 1),
+    attacker: Math.max(starters.attacker > 0 ? starters.attacker + 1 : 1, 1),
+  };
+}
+
+function listingScore(
+  player: PlayerCard,
+  club: AITeamDef,
+  squad: PlayerCard[],
+  season: number,
+): number {
+  if (player.marketStatus === "untouchable") return Number.NEGATIVE_INFINITY;
+
+  const bucket = roleBucket(player);
+  const counts = squad.reduce<Record<SquadRoleBucket, number>>(
+    (total, item) => {
+      total[roleBucket(item)] += 1;
+      return total;
+    },
+    { goalkeeper: 0, defender: 0, midfielder: 0, attacker: 0 },
+  );
+  if (bucket === "goalkeeper" && counts.goalkeeper <= 1) return Number.NEGATIVE_INFINITY;
+
+  const starters = formationRolePlan(club.formationId);
+  const preferred = preferredSquadDepth(club.formationId, squad.length);
+  const overall = getPlayerOverall(player);
+  const sortedOveralls = squad.map(getPlayerOverall).sort((a, b) => a - b);
+  const median = sortedOveralls[Math.floor(sortedOveralls.length / 2)] ?? overall;
+  const clubFloor = club.tier === 1 ? 68 : club.tier === 2 ? 58 : 48;
+  const surplus = Math.max(0, counts[bucket] - preferred[bucket]);
+
+  let score = surplus * 18;
+  if (starters[bucket] === 0) score += 15;
+  if (overall < median) score += (median - overall) * 1.15;
+  if (overall < clubFloor) score += (clubFloor - overall) * 1.35;
+  if (player.marketStatus === "listed") score += 30;
+  else if (player.marketStatus === "available") score += 3;
+  else if (player.marketStatus === "not_for_sale") score -= 4;
+
+  // Transformed players are normal squad members, not protected assets. If a
+  // replacement is tactically redundant or below the club standard, it can be
+  // listed immediately in the next market cycle.
+  if (player.transformedFrom) score += 2;
+
+  score += (stableListingHash(`${season}:${club.id}:${player.id}`) % 1000) / 1000;
+  return score;
 }
 
 function ensureAITransferListings(
@@ -655,40 +728,66 @@ function ensureAITransferListings(
     ]),
   );
 
-  const entries = Object.entries(next).flatMap(([clubId, players]) => {
-    const goalkeeperCount = players.filter((player) => player.role === "goalkeeper").length;
-    return players.map((player, index) => ({
-      clubId,
-      index,
+  // First, each club evaluates tactical fit and quality independently. This
+  // makes radically shaped teams sell redundant positions instead of keeping
+  // five defenders for a one-defender system.
+  for (const club of AI_TEAMS) {
+    const squad = next[club.id] ?? [];
+    const ranked = squad
+      .map((player, index) => ({ player, index, score: listingScore(player, club, squad, season) }))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((a, b) => b.score - a.score);
+
+    let listed = squad.filter((player) => player.marketStatus === "listed").length;
+    const strongCandidates = ranked.filter((entry) => entry.score >= 9);
+    const desired = Math.min(
+      MAX_AI_LISTINGS_PER_CLUB,
+      Math.max(MIN_AI_LISTINGS_PER_CLUB, Math.min(strongCandidates.length, 3)),
+    );
+
+    for (const candidate of ranked) {
+      if (listed >= desired) break;
+      if (candidate.player.marketStatus === "listed") continue;
+      squad[candidate.index] = {
+        ...candidate.player,
+        marketStatus: "listed",
+        askingPrice: candidate.player.askingPrice ?? candidate.player.marketValue,
+      };
+      listed += 1;
+    }
+  }
+
+  // Then enforce a healthy league-wide market. This is a floor, not random
+  // listing: the remaining candidates are still ranked by tactical mismatch
+  // and quality relative to their own club.
+  const allCandidates = AI_TEAMS.flatMap((club) => {
+    const squad = next[club.id] ?? [];
+    return squad.map((player, index) => ({
+      club,
       player,
-      canList: player.marketStatus !== "untouchable" &&
-        (player.role !== "goalkeeper" || goalkeeperCount > 1),
+      index,
+      score: listingScore(player, club, squad, season),
     }));
-  });
+  })
+    .filter((entry) => Number.isFinite(entry.score) && entry.player.marketStatus !== "listed")
+    .sort((a, b) => b.score - a.score);
 
-  let listedCount = entries.filter(({ player }) => player.marketStatus === "listed").length;
-  if (listedCount >= MIN_AI_TRANSFER_LISTINGS) return next;
+  let totalListed = Object.values(next)
+    .flat()
+    .filter((player) => player.marketStatus === "listed").length;
 
-  const candidates = entries
-    .filter(({ player, canList }) => canList && player.marketStatus !== "listed")
-    .sort((a, b) => {
-      const aStatus = a.player.marketStatus === "available" ? 0 : 1;
-      const bStatus = b.player.marketStatus === "available" ? 0 : 1;
-      if (aStatus !== bStatus) return aStatus - bStatus;
-      return stableListingHash(`${season}:${a.clubId}:${a.player.id}`) -
-        stableListingHash(`${season}:${b.clubId}:${b.player.id}`);
-    });
-
-  for (const candidate of candidates) {
-    if (listedCount >= MIN_AI_TRANSFER_LISTINGS) break;
-    const squad = next[candidate.clubId];
-    const player = squad[candidate.index];
+  for (const candidate of allCandidates) {
+    if (totalListed >= MIN_AI_TRANSFER_LISTINGS) break;
+    const squad = next[candidate.club.id];
+    const live = squad[candidate.index];
+    if (!live || live.marketStatus === "untouchable" || live.marketStatus === "listed") continue;
+    if (live.role === "goalkeeper" && squad.filter((player) => player.role === "goalkeeper").length <= 1) continue;
     squad[candidate.index] = {
-      ...player,
+      ...live,
       marketStatus: "listed",
-      askingPrice: player.askingPrice ?? player.marketValue,
+      askingPrice: live.askingPrice ?? live.marketValue,
     };
-    listedCount += 1;
+    totalListed += 1;
   }
 
   return next;
@@ -1014,14 +1113,17 @@ export function prepareLeagueForNewSeason(
     ...fresh,
     season: nextSeason,
     trainingWeek: 0,
-    aiSquads: Object.fromEntries(
-      AI_TEAMS.map((team) => [
-        team.id,
-        prepareSquadForNewSeason(
-          previousSquads[team.id] ?? team.players,
-          nextSeason,
-        ),
-      ]),
+    aiSquads: ensureAITransferListings(
+      Object.fromEntries(
+        AI_TEAMS.map((team) => [
+          team.id,
+          prepareSquadForNewSeason(
+            previousSquads[team.id] ?? team.players,
+            nextSeason,
+          ),
+        ]),
+      ),
+      nextSeason,
     ),
   };
 }
@@ -1059,10 +1161,14 @@ function resolveWinner(
   homeGoals: number,
   awayGoals: number,
   seed: number,
+  forcedWinnerId?: string,
+  penalties?: { home: number; away: number },
 ): PlayoffMatch {
   let winnerId: string;
 
-  if (homeGoals > awayGoals) {
+  if (forcedWinnerId === match.homeId || forcedWinnerId === match.awayId) {
+    winnerId = forcedWinnerId;
+  } else if (homeGoals > awayGoals) {
     winnerId = match.homeId;
   } else if (awayGoals > homeGoals) {
     winnerId = match.awayId;
@@ -1074,6 +1180,8 @@ function resolveWinner(
     ...match,
     homeGoals,
     awayGoals,
+    penaltyHomeGoals: penalties?.home,
+    penaltyAwayGoals: penalties?.away,
     winnerId,
   };
 }
@@ -1115,6 +1223,8 @@ export function applyPlayoffResult(
   homeGoals: number,
   awayGoals: number,
   seed: number,
+  forcedWinnerId?: string,
+  penalties?: { home: number; away: number },
 ): LeagueState {
   if (!state.playoff) return state;
 
@@ -1126,12 +1236,12 @@ export function applyPlayoffResult(
   };
 
   if (stage === "sf1") {
-    playoff.sf1 = resolveWinner(playoff.sf1, homeGoals, awayGoals, seed);
+    playoff.sf1 = resolveWinner(playoff.sf1, homeGoals, awayGoals, seed, forcedWinnerId, penalties);
     playoff.stage = "sf2";
   }
 
   if (stage === "sf2") {
-    playoff.sf2 = resolveWinner(playoff.sf2, homeGoals, awayGoals, seed);
+    playoff.sf2 = resolveWinner(playoff.sf2, homeGoals, awayGoals, seed, forcedWinnerId, penalties);
 
     const sf1WinnerId = playoff.sf1.winnerId!;
     const sf2WinnerId = playoff.sf2.winnerId!;
@@ -1151,7 +1261,7 @@ export function applyPlayoffResult(
   }
 
   if (stage === "final" && playoff.final) {
-    playoff.final = resolveWinner(playoff.final, homeGoals, awayGoals, seed);
+    playoff.final = resolveWinner(playoff.final, homeGoals, awayGoals, seed, forcedWinnerId, penalties);
     playoff.champion = playoff.final.winnerId;
     playoff.championName =
       state.teams.find((team) => team.id === playoff.final?.winnerId)?.name ??

@@ -3,6 +3,7 @@ import { AI_TEAMS } from "./league";
 import { loadCareerSnapshot } from "./persistence";
 import {
   enrichMarketPlayer,
+  formatMoney,
   getPlayerOverall,
   MAX_SQUAD_SIZE,
 } from "./transferDatabase";
@@ -38,7 +39,15 @@ export interface ClubFinance {
   clubId: string;
   budget: number;
   wageBudget: number;
+  /** Total weekly wage bill for the current squad. */
   payroll: number;
+  /** Wages actually paid during the current season. */
+  wagesPaid: number;
+  /** Last season/week charged, preventing duplicate deductions on reload. */
+  lastWageSeason: number;
+  lastWageWeek: number;
+  /** Number of paid weeks ending below zero. */
+  insolventWeeks: number;
   sales: number;
   purchases: number;
   prizeMoney: number;
@@ -118,6 +127,8 @@ export interface ClubSeasonHistoryEntry {
   transferReceived: number;
   endingBudget: number;
   payroll: number;
+  wagesPaid: number;
+  insolventWeeks: number;
   squadValue: number;
 }
 
@@ -374,6 +385,10 @@ export function createTransferMarket(
       budget: baseBudgets[index] ?? 20_000_000,
       wageBudget: currentPayroll * 1.35 + 50_000,
       payroll: currentPayroll,
+      wagesPaid: 0,
+      lastWageSeason: league.season ?? 1,
+      lastWageWeek: 0,
+      insolventWeeks: 0,
       sales: 0,
       purchases: 0,
       prizeMoney: 0,
@@ -450,11 +465,28 @@ export function normalizeMarket(
     const old = finances[club.id];
     const currentPayroll = payroll(club.players);
 
+    const normalizedSeason = league.season ?? state.season ?? 1;
+    const normalizedWeek = league.trainingWeek ?? state.week ?? 0;
+    const hasWageLedger =
+      typeof old?.lastWageSeason === "number" &&
+      typeof old?.lastWageWeek === "number";
+    const sameSeason = hasWageLedger && old.lastWageSeason === normalizedSeason;
+
     finances[club.id] = {
       clubId: club.id,
       budget: old?.budget ?? baseBudgets[index] ?? 20_000_000,
       wageBudget: old?.wageBudget ?? currentPayroll * 1.35 + 50_000,
       payroll: currentPayroll,
+      wagesPaid: sameSeason ? old?.wagesPaid ?? 0 : 0,
+      lastWageSeason: normalizedSeason,
+      // Migrated saves begin at the currently loaded week so old wages are not
+      // charged retroactively. A genuine new season starts at week zero.
+      lastWageWeek: !hasWageLedger
+        ? normalizedWeek
+        : sameSeason
+          ? old.lastWageWeek
+          : 0,
+      insolventWeeks: sameSeason ? old?.insolventWeeks ?? 0 : 0,
       sales: old?.sales ?? 0,
       purchases: old?.purchases ?? 0,
       prizeMoney: old?.prizeMoney ?? 0,
@@ -1369,12 +1401,78 @@ function generateAIMarketActivity(
   };
 }
 
+function applyWeeklyWages(
+  state: TransferMarketState,
+  league: LeagueState,
+): TransferMarketState {
+  const season = Math.max(1, Math.round(league.season ?? state.season));
+  const week = Math.max(0, Math.round(league.trainingWeek ?? state.week));
+  if (week <= 0) return state;
+
+  let playerCharge = 0;
+  const finances: Record<string, ClubFinance> = {};
+
+  Object.entries(state.finances).forEach(([clubId, finance]) => {
+    const sameSeason = finance.lastWageSeason === season;
+    const paidThrough = sameSeason ? finance.lastWageWeek : 0;
+    const weeksDue = Math.max(0, week - paidThrough);
+    if (weeksDue === 0) {
+      finances[clubId] = finance;
+      return;
+    }
+
+    const weeklyCharge = Math.max(0, finance.payroll);
+    const charge = weeklyCharge * weeksDue;
+    const nextBudget = finance.budget - charge;
+    if (clubId === PLAYER_ID) playerCharge = charge;
+
+    // Count only the individual paid weeks that actually ended below zero.
+    // This stays accurate when a restored save catches up several weeks at once.
+    const firstDebtWeek =
+      weeklyCharge <= 0
+        ? Number.POSITIVE_INFINITY
+        : finance.budget < 0
+          ? 1
+          : Math.floor(finance.budget / weeklyCharge) + 1;
+    const newlyInsolventWeeks = Math.max(0, weeksDue - firstDebtWeek + 1);
+
+    finances[clubId] = {
+      ...finance,
+      budget: nextBudget,
+      wagesPaid: (sameSeason ? finance.wagesPaid : 0) + charge,
+      lastWageSeason: season,
+      lastWageWeek: week,
+      insolventWeeks:
+        (sameSeason ? finance.insolventWeeks : 0) + newlyInsolventWeeks,
+    };
+  });
+
+  let next: TransferMarketState = {
+    ...state,
+    season,
+    week,
+    finances,
+  };
+
+  if (playerCharge > 0) {
+    const balance = finances[PLAYER_ID]?.budget ?? 0;
+    next = addNews(
+      next,
+      `Week ${week} wages paid: ${formatMoney(playerCharge)}. Club balance: ${formatMoney(balance)}${balance < 0 ? " — the club is in debt." : "."}`,
+      { kind: "finance", clubIds: [PLAYER_ID], amount: playerCharge },
+    );
+  }
+
+  return next;
+}
+
 export function processTransferWeek(
   rawState: TransferMarketState,
   team: TeamConfig,
   league: LeagueState,
 ): TransferActionResult {
-  const state = normalizeMarket(rawState, team, league);
+  const normalized = normalizeMarket(rawState, team, league);
+  const state = applyWeeklyWages(normalized, league);
   const season = league.season ?? 1;
 
   if (season <= 1) {
@@ -1477,6 +1575,10 @@ export function awardSeasonPrize(
       budget: (finance?.budget ?? 0) + prize,
       wageBudget: finance?.wageBudget ?? 0,
       payroll: finance?.payroll ?? 0,
+      wagesPaid: finance?.wagesPaid ?? 0,
+      lastWageSeason: finance?.lastWageSeason ?? season,
+      lastWageWeek: finance?.lastWageWeek ?? (league.trainingWeek ?? 0),
+      insolventWeeks: finance?.insolventWeeks ?? 0,
       sales: finance?.sales ?? 0,
       purchases: finance?.purchases ?? 0,
       prizeMoney: (finance?.prizeMoney ?? 0) + prize,
@@ -1517,6 +1619,8 @@ export function awardSeasonPrize(
       ),
       endingBudget: nextFinance.budget,
       payroll: nextFinance.payroll,
+      wagesPaid: nextFinance.wagesPaid,
+      insolventWeeks: nextFinance.insolventWeeks,
       squadValue: squad.reduce(
         (sum, player) => sum + (player.marketValue ?? 0),
         0,

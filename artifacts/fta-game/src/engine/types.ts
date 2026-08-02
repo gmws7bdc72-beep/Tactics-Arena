@@ -361,6 +361,8 @@ export interface PlayoffMatch {
   awayName: string;
   homeGoals?: number;
   awayGoals?: number;
+  penaltyHomeGoals?: number;
+  penaltyAwayGoals?: number;
   winnerId?: string;
 }
 
@@ -407,7 +409,11 @@ export interface SavedMatchState {
   ball: SimBall;
   currentFrame: FrameSnapshot;
   allEvents: GameEvent[];
-  matchEndResult: { playerScore: number; aiScore: number } | null;
+  matchEndResult: {
+    playerScore: number;
+    aiScore: number;
+    penalties?: { player: number; ai: number };
+  } | null;
   pendingCommands: [string, Command][];
   selectedPlayerId: string | null;
   passTargetMode: boolean;

@@ -75,7 +75,11 @@ function PlayoffMatchRow({
           {homeName}
         </span>
         <span className="text-gray-500 text-xs font-mono shrink-0">
-          {isDone ? `${match.homeGoals} – ${match.awayGoals}` : "vs"}
+          {isDone
+            ? match.penaltyHomeGoals !== undefined && match.penaltyAwayGoals !== undefined
+              ? `${match.homeGoals} – ${match.awayGoals} (${match.penaltyHomeGoals}–${match.penaltyAwayGoals}p)`
+              : `${match.homeGoals} – ${match.awayGoals}`
+            : "vs"}
         </span>
         <span
           className="flex-1 text-xs font-semibold truncate text-right"
