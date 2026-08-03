@@ -1,0 +1,8 @@
+FTA-A11 — Compact tutorial lesson panel
+
+- Removes the large empty flexible area inside the tutorial lesson panel.
+- Places Back / step count / Next immediately beneath the lesson text.
+- Lets the tutorial pitch consume all remaining vertical room first.
+- Preserves each exercise's custom pitch crop and preferred pitch basis while allowing it to grow or shrink safely on different phones.
+- Keeps the lesson panel directly beneath Confirm Turn without covering the pitch.
+- Does not change normal career, local multiplayer, or online match layouts.

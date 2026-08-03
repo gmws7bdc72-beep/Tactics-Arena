@@ -1415,12 +1415,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       {/* Pitch */}
       <div
-        className={tutorialMode && isMobile ? "relative flex-shrink-0" : "relative flex-1"}
+        className={tutorialMode && isMobile ? "relative min-h-0 flex-1" : "relative flex-1"}
         style={{
           minHeight: 0,
           padding: isMobile ? 0 : "4px 4px 0",
           ...(tutorialMode && isMobile && tutorial
-            ? { height: `${tutorial.mobilePitchDvh}dvh` }
+            ? { flexBasis: `${tutorial.mobilePitchDvh}dvh`, flexGrow: 1, flexShrink: 1 }
             : {}),
         }}
       >
@@ -1474,7 +1474,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       {/* Controls bottom bar */}
       <div
-        className={`${tutorialMode ? "flex min-h-0 flex-1 flex-col" : "flex-shrink-0"} text-[11px] sm:text-sm`}
+        className="flex-shrink-0 text-[11px] sm:text-sm"
         style={{
           background: "rgba(0,0,0,0.62)",
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
