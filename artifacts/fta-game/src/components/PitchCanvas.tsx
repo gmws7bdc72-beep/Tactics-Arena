@@ -60,6 +60,10 @@ interface Props {
   onPlayerClick: (playerId: string, pos: Vec2) => void;
   onTileClick: (pos: Vec2, isEnemyTile: boolean) => void;
   onCurvePointClick?: (pos: Vec2) => void;
+  /** Optional tutorial camera crop in pitch coordinates. */
+  viewBounds?: { minX: number; maxX: number; minY: number; maxY: number };
+  /** Focused lesson scene used only for on-pitch tutorial guidance. */
+  tutorialScene?: string;
 }
 
 type TileState =
@@ -171,12 +175,19 @@ function roundedRectPath(
   ctx.closePath();
 }
 
-function createView(W: number, H: number, isVertical: boolean): View2_5D {
+function createView(
+  W: number,
+  H: number,
+  isVertical: boolean,
+  viewBounds?: { minX: number; maxX: number; minY: number; maxY: number },
+): View2_5D {
   // FTA_MOBILE_TOP_DOWN_V3: mobile uses a straight orthographic top-down pitch.
   // FTA_GOAL_VIEW_BOUNDS_V2
-  const viewMinX = -GOAL_DEPTH;
-  const viewMaxX = PITCH_WIDTH + GOAL_DEPTH;
-  const baseH = isVertical ? viewMaxX - viewMinX : PITCH_HEIGHT;
+  const viewMinX = clamp(viewBounds?.minX ?? -GOAL_DEPTH, -GOAL_DEPTH, PITCH_WIDTH + GOAL_DEPTH);
+  const viewMaxX = clamp(viewBounds?.maxX ?? PITCH_WIDTH + GOAL_DEPTH, viewMinX + 1, PITCH_WIDTH + GOAL_DEPTH);
+  const viewMinY = clamp(viewBounds?.minY ?? 0, 0, PITCH_HEIGHT);
+  const viewMaxY = clamp(viewBounds?.maxY ?? PITCH_HEIGHT, viewMinY + 1, PITCH_HEIGHT);
+  const baseH = isVertical ? viewMaxX - viewMinX : viewMaxY - viewMinY;
 
   // Mobile is a fixed, straight top-down view. Desktop keeps the angled presentation.
   const CAMERA_ZOOM = isVertical ? 1.0: 1.08;
@@ -206,10 +217,10 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
   };
 
   const corners = [
-    raw({ x: viewMinX, y: 0 }),
-    raw({ x: viewMaxX, y: 0 }),
-    raw({ x: viewMaxX, y: PITCH_HEIGHT }),
-    raw({ x: viewMinX, y: PITCH_HEIGHT }),
+    raw({ x: viewMinX, y: viewMinY }),
+    raw({ x: viewMaxX, y: viewMinY }),
+    raw({ x: viewMaxX, y: viewMaxY }),
+    raw({ x: viewMinX, y: viewMaxY }),
   ];
 
   const minX = Math.min(...corners.map((p) => p.x));
@@ -262,7 +273,7 @@ function createView(W: number, H: number, isVertical: boolean): View2_5D {
 
     return {
       x: clamp(pitch.x, viewMinX, viewMaxX),
-      y: clamp(pitch.y, 0, PITCH_HEIGHT),
+      y: clamp(pitch.y, viewMinY, viewMaxY),
     };
   };
 
@@ -701,6 +712,8 @@ export default function PitchCanvas({
   onPlayerClick,
   onTileClick,
   onCurvePointClick,
+  viewBounds,
+  tutorialScene,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerAnimMemoryRef = useRef<Map<string, PlayerAnimMemory>>(new Map());
@@ -740,12 +753,12 @@ export default function PitchCanvas({
       const sx = ((cx - rect.left) / rect.width) * canvas.width;
       const sy = ((cy - rect.top) / rect.height) * canvas.height;
 
-      return createView(canvas.width, canvas.height, isVertical).unproject({
+      return createView(canvas.width, canvas.height, isVertical, viewBounds).unproject({
         x: sx,
         y: sy,
       });
     },
-    [isVertical],
+    [isVertical, viewBounds],
   );
 
   const buildTileMap = useCallback((): Map<string, TileState> => {
@@ -807,7 +820,7 @@ export default function PitchCanvas({
 
     const W = canvas.width;
     const H = canvas.height;
-    const view = createView(W, H, isVertical);
+    const view = createView(W, H, isVertical, viewBounds);
 
     ctx.clearRect(0, 0, W, H);
 
@@ -1073,6 +1086,86 @@ export default function PitchCanvas({
       1.2,
       [7, 5],
     );
+
+    if (tutorialScene && phase === "planning") {
+      const pulse = 0.78 + Math.sin(animationTick * 0.14) * 0.16;
+      const playerSide = frame.players.filter((player) => player.teamId === "player");
+      const aiSide = frame.players.filter((player) => player.teamId === "ai");
+      const ballOwner = frame.ball.ownerId
+        ? frame.players.find((player) => player.id === frame.ball.ownerId)
+        : undefined;
+
+      const drawGuide = (position: Vec2, label: string, color = "#67e8f9", radiusScale = 1) => {
+        const point = view.project(position);
+        const ringRadius = view.radius(PLAYER_RADIUS * 1.65 * radiusScale, position.y);
+        ctx.save();
+        ctx.globalAlpha = pulse;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(2, view.radius(1.7, position.y));
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.font = `700 ${Math.max(8, view.radius(7.5, position.y))}px system-ui, sans-serif`;
+        const textWidth = ctx.measureText(label).width;
+        const padX = 5;
+        const boxH = Math.max(14, view.radius(13, position.y));
+        const boxX = point.x - textWidth / 2 - padX;
+        const boxY = point.y - ringRadius - boxH - 4;
+        roundedRectPath(ctx, boxX, boxY, textWidth + padX * 2, boxH, 5);
+        ctx.fillStyle = "rgba(3,10,18,0.86)";
+        ctx.fill();
+        ctx.strokeStyle = rgba(color, 0.55);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, point.x, boxY + boxH / 2 + 0.5);
+        ctx.restore();
+      };
+
+      const firstPlayer = playerSide.find((player) => player.role !== "goalkeeper") ?? playerSide[0];
+      const targetPlayer = playerSide.find((player) => player.id !== ballOwner?.id && player.role !== "goalkeeper");
+
+      if (tutorialScene === "select" || tutorialScene === "movement") {
+        if (firstPlayer) drawGuide(firstPlayer.position, tutorialScene === "select" ? "TAP ME" : "RUNNER");
+      } else if (["pass", "longBall", "curve", "combination", "shooting"].includes(tutorialScene)) {
+        if (ballOwner) drawGuide(ballOwner.position, tutorialScene === "shooting" ? "SHOOTER" : "START");
+        if (targetPlayer && tutorialScene !== "shooting") drawGuide(targetPlayer.position, "TARGET", "#fde68a");
+        if (tutorialScene === "shooting") {
+          drawGuide({ x: PITCH_WIDTH + GOAL_DEPTH * 0.48, y: PITCH_HEIGHT / 2 }, "PLACE SHOT", "#fca5a5", 0.82);
+        }
+      } else if (tutorialScene === "goalkeeper") {
+        const keeper = playerSide.find((player) => player.role === "goalkeeper") ?? playerSide[0];
+        if (keeper) drawGuide(keeper.position, "SELECT KEEPER");
+      } else if (tutorialScene === "offside") {
+        const attacker = [...playerSide]
+          .filter((player) => player.role !== "goalkeeper")
+          .sort((a, b) => b.position.x - a.position.x)[0];
+        const sortedDefenders = [...aiSide].sort((a, b) => b.position.x - a.position.x);
+        const lineDefender = sortedDefenders[1] ?? sortedDefenders[0];
+        if (lineDefender) {
+          const defenderTile = posToTile(lineDefender.position);
+          const lineX = (defenderTile.col + 1) * TILE_W;
+          drawProjectedLine(
+            ctx,
+            view,
+            { x: lineX, y: viewBounds?.minY ?? 0 },
+            { x: lineX, y: viewBounds?.maxY ?? PITCH_HEIGHT },
+            "rgba(252,165,165,0.9)",
+            2.2,
+            [8, 5],
+          );
+        }
+        if (attacker) drawGuide(attacker.position, "ATTACKER", "#fde68a");
+        if (lineDefender) drawGuide(lineDefender.position, "SETS LINE", "#fca5a5");
+      } else if (tutorialScene === "final" && ballOwner) {
+        drawGuide(ballOwner.position, "BUILD FROM HERE");
+      }
+    }
 
     const selPlayer = selectedPlayerId
       ? frame.players.find((p) => p.id === selectedPlayerId)
@@ -2322,6 +2415,8 @@ export default function PitchCanvas({
     isVertical,
     buildTileMap,
     animationTick,
+    viewBounds,
+    tutorialScene,
   ]);
 
   const handleClick = useCallback(

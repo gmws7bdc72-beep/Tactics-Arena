@@ -44,7 +44,11 @@ import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { loadMatch, saveMatch } from "../game/persistence";
 import TutorialCoach from "../components/TutorialCoach";
 import PenaltyShootout, { type PenaltyResult } from "../components/PenaltyShootout";
-import { MATCH_TUTORIAL_STEPS, type TutorialRequirement } from "../game/matchTutorial";
+import {
+  MATCH_TUTORIAL_STEPS,
+  type TutorialRequirement,
+  type TutorialSceneId,
+} from "../game/matchTutorial";
 import { ABILITIES } from "../game/players";
 import { getValidStartingLineup } from "../game/abilityLimits";
 import { collectTurnStats, createEmptyMatchStats } from "../game/matchStats";
@@ -119,6 +123,137 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
     events: [],
+  };
+}
+
+type TutorialSceneState = {
+  players: SimPlayer[];
+  ball: SimBall;
+};
+
+function cloneTutorialPlayer(player: SimPlayer, position: Vec2): SimPlayer {
+  return {
+    ...player,
+    position: { ...position },
+    velocity: { x: 0, y: 0 },
+    startPosition: { ...position },
+    state: "IDLE" as SimPlayer["state"],
+    command: null,
+    commandExecuted: false,
+    stateTimer: 0,
+    recoveryTimer: 0,
+    curveMotion: undefined,
+    diveMotion: undefined,
+  };
+}
+
+function makeTutorialScene(basePlayers: SimPlayer[], scene: TutorialSceneId): TutorialSceneState {
+  const playerTeam = basePlayers.filter((player) => player.teamId === "player");
+  const aiTeam = basePlayers.filter((player) => player.teamId === "ai");
+  const playerGK = playerTeam.find((player) => player.role === "goalkeeper") ?? playerTeam[0];
+  const aiGK = aiTeam.find((player) => player.role === "goalkeeper") ?? aiTeam[0];
+  const playerOutfield = playerTeam.filter((player) => player.id !== playerGK?.id);
+  const aiOutfield = aiTeam.filter((player) => player.id !== aiGK?.id);
+
+  const players: SimPlayer[] = [];
+  const used = new Set<string>();
+  const add = (template: SimPlayer | undefined, position: Vec2) => {
+    if (!template || used.has(template.id)) return undefined;
+    const cloned = cloneTutorialPlayer(template, position);
+    players.push(cloned);
+    used.add(template.id);
+    return cloned;
+  };
+
+  let owner: SimPlayer | undefined;
+  let looseBall: Vec2 = { x: 150, y: 60 };
+
+  switch (scene) {
+    case "board": {
+      owner = add(playerOutfield[0], { x: 285, y: 170 });
+      add(playerOutfield[1], { x: 355, y: 315 });
+      add(aiOutfield[0], { x: 445, y: 165 });
+      add(aiOutfield[1], { x: 485, y: 305 });
+      break;
+    }
+    case "select": {
+      owner = add(playerOutfield[0], { x: 235, y: 230 });
+      add(aiOutfield[0], { x: 355, y: 230 });
+      break;
+    }
+    case "movement": {
+      add(playerOutfield[0], { x: 205, y: 230 });
+      add(aiOutfield[0], { x: 355, y: 270 });
+      looseBall = { x: 145, y: 370 };
+      break;
+    }
+    case "pass": {
+      owner = add(playerOutfield[0], { x: 235, y: 315 });
+      add(playerOutfield[1], { x: 455, y: 145 });
+      add(aiOutfield[0], { x: 350, y: 235 });
+      break;
+    }
+    case "longBall": {
+      owner = add(playerOutfield[0], { x: 135, y: 335 });
+      add(playerOutfield[1], { x: 585, y: 135 });
+      add(aiOutfield[0], { x: 430, y: 235 });
+      add(aiOutfield[1], { x: 560, y: 250 });
+      break;
+    }
+    case "curve": {
+      owner = add(playerOutfield[0], { x: 345, y: 315 });
+      add(playerOutfield[1], { x: 625, y: 105 });
+      add(aiOutfield[0], { x: 490, y: 220 });
+      break;
+    }
+    case "combination": {
+      owner = add(playerOutfield[0], { x: 315, y: 315 });
+      add(playerOutfield[1], { x: 535, y: 135 });
+      add(aiOutfield[0], { x: 430, y: 225 });
+      add(aiOutfield[1], { x: 565, y: 300 });
+      break;
+    }
+    case "shooting": {
+      owner = add(playerOutfield[0], { x: 525, y: 245 });
+      add(aiGK, { x: 708, y: 230 });
+      add(aiOutfield[0], { x: 620, y: 170 });
+      break;
+    }
+    case "goalkeeper": {
+      add(playerGK, { x: 42, y: 230 });
+      owner = add(aiOutfield[0], { x: 215, y: 230 });
+      add(playerOutfield[0], { x: 135, y: 345 });
+      break;
+    }
+    case "offside": {
+      owner = add(playerOutfield[0], { x: 495, y: 315 });
+      add(playerOutfield[1], { x: 706, y: 145 });
+      add(aiGK, { x: 712, y: 230 });
+      add(aiOutfield[0], { x: 660, y: 290 });
+      add(aiOutfield[1], { x: 610, y: 205 });
+      break;
+    }
+    case "final": {
+      owner = add(playerOutfield[0], { x: 330, y: 230 });
+      add(playerOutfield[1], { x: 425, y: 95 });
+      add(playerOutfield[2], { x: 455, y: 365 });
+      add(aiGK, { x: 712, y: 230 });
+      add(aiOutfield[0], { x: 515, y: 150 });
+      add(aiOutfield[1], { x: 540, y: 315 });
+      add(aiOutfield[2], { x: 635, y: 230 });
+      break;
+    }
+  }
+
+  const ballPosition = owner ? { ...owner.position } : looseBall;
+  return {
+    players,
+    ball: {
+      position: ballPosition,
+      velocity: { x: 0, y: 0 },
+      ownerId: owner?.id ?? null,
+      height: 0,
+    },
   };
 }
 
@@ -240,6 +375,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const learningCommittedRef = useRef(false);
   // Tracks where the AI conceded goals this match so it can adapt its defensive shape
   const adaptiveAIRef = useRef<AdaptiveAIState>({ concededRows: [] });
+  const tutorialAIModeRef = useRef<"still" | "active">("still");
 
   // Replay
   const allMatchFramesRef = useRef<FrameSnapshot[]>([]);
@@ -608,22 +744,41 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           command: currentPending.get(player.id) ?? null,
         }));
       const seed = Date.now() % 99999;
-      const generatedAICommands = generateAICommands(aiPlayersList, playerPlayersList, currentBall, aiTier, adaptiveAIRef.current, opponentTeamDef.tactic);
-      const aiCommands = applyHiddenTacticalVariation(
-        generatedAICommands,
-        aiPlayersList,
-        playerPlayersList,
-        currentBall,
-        opponentTeamDef.tactic,
-        clubTacticalMemoryRef.current,
-        seed,
-      );
-      const predictionScore = scorePredictionTurn(
-        predictionCommandsRef.current,
-        aiCommands,
-        aiPlayersList,
-      );
-      addPredictionTurn(predictionAccumulatorRef.current, predictionScore);
+      const tutorialStill = tutorialMode && tutorialAIModeRef.current === "still";
+      const generatedAICommands = tutorialStill
+        ? new Map(
+            aiPlayersList.map((player) => [
+              player.id,
+              { type: CommandType.MOVE, targetPosition: { ...player.position } } as Command,
+            ]),
+          )
+        : generateAICommands(
+            aiPlayersList,
+            playerPlayersList,
+            currentBall,
+            aiTier,
+            adaptiveAIRef.current,
+            opponentTeamDef.tactic,
+          );
+      const aiCommands = tutorialStill
+        ? generatedAICommands
+        : applyHiddenTacticalVariation(
+            generatedAICommands,
+            aiPlayersList,
+            playerPlayersList,
+            currentBall,
+            opponentTeamDef.tactic,
+            clubTacticalMemoryRef.current,
+            seed,
+          );
+      if (!tutorialMode) {
+        const predictionScore = scorePredictionTurn(
+          predictionCommandsRef.current,
+          aiCommands,
+          aiPlayersList,
+        );
+        addPredictionTurn(predictionAccumulatorRef.current, predictionScore);
+      }
       predictionCommandsRef.current = new Map();
       setPredictionCommands(new Map());
       withCommands = currentPlayers.map(p => {
@@ -651,7 +806,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
     matchStatsRef.current = updatedStats;
     setMatchStats(updatedStats);
     playbackFrames(frames, events);
-  }, [playbackFrames, aiTier, opponentTeamDef.tactic, twoPlayer]);
+  }, [playbackFrames, aiTier, opponentTeamDef.tactic, twoPlayer, tutorialMode]);
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;
@@ -1090,6 +1245,47 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const [tutorialStepStartTurn, setTutorialStepStartTurn] = useState(turnRef.current);
   const [tutorialFinalStartTurn, setTutorialFinalStartTurn] = useState<number | null>(null);
   const tutorial = MATCH_TUTORIAL_STEPS[tutorialStep];
+  const lastTutorialSceneRef = useRef<TutorialSceneId | null>(null);
+
+  useEffect(() => {
+    if (!tutorialMode || !tutorial) return;
+    tutorialAIModeRef.current = tutorial.aiMode ?? "still";
+    if (lastTutorialSceneRef.current === tutorial.scene) return;
+    lastTutorialSceneRef.current = tutorial.scene;
+
+    stopAnim();
+    const scene = makeTutorialScene(initState.current.players, tutorial.scene);
+    const freshFrame = makeInitFrame(scene.players, scene.ball);
+
+    playersRef.current = scene.players;
+    ballRef.current = scene.ball;
+    pendingCommandsRef.current = new Map();
+    predictionCommandsRef.current = new Map();
+    matchStatsRef.current = createEmptyMatchStats();
+    scoreRef.current = { player: 0, ai: 0 };
+    turnRef.current = 1;
+    phaseRef.current = "planning";
+
+    setPlayers(scene.players);
+    setBall(scene.ball);
+    setCurrentFrame(freshFrame);
+    setPendingCommands(new Map());
+    setPredictionCommands(new Map());
+    setMatchStats(createEmptyMatchStats());
+    setScore({ player: 0, ai: 0 });
+    setTurn(1);
+    setPhase("planning");
+    setAllEvents([]);
+    allEventsRef.current = [];
+    setShowGoalBanner(null);
+    setMatchEndResult(null);
+    setPenaltyShootoutActive(false);
+    allMatchFramesRef.current = [];
+    clearSelection();
+    curve.reset();
+    setTutorialStepStartTurn(1);
+    setTutorialFinalStartTurn(tutorial.requirement === "final" ? 1 : null);
+  }, [tutorialMode, tutorial?.scene]);
 
   const tutorialRequirementMet = useMemo(() => {
     if (!tutorialMode || !tutorial) return true;
@@ -1105,6 +1301,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
         case "curve": return curve.controls.length >= 2 || commands.some((command) => (command.curvePoints?.length ?? 0) >= 2);
         case "combo": return commands.some((command) => !!command.followUp);
         case "shoot": return commands.some((command) => command.type === CommandType.SHOOT);
+        case "dive": return commands.some((command) => command.type === CommandType.DIVE);
         case "final": return score.player > 0 || (tutorialFinalStartTurn !== null && turn - tutorialFinalStartTurn >= 3);
         default: return true;
       }
@@ -1134,51 +1331,56 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
       {/* Top bar */}
-      <div
-        className="flex items-center justify-between px-2 sm:px-4 py-1.5 sm:py-2.5 flex-shrink-0"
-        style={{ background: "rgba(255,255,255,0.04)" }}
-      >
-        <button onClick={onForfeit} className="text-gray-500 hover:text-white transition-colors text-sm px-2 py-1">
-          ✕
-        </button>
-        <div className="flex items-center gap-5">
-          <div className="text-center min-w-20">
-            <div className="text-xs text-gray-400 truncate">
-              {twoPlayer ? <span style={{ color: p1JerseyColor }}>● P1</span> : <>{team.crestIcon} {team.name}</>}
+      {tutorialMode && tutorial ? (
+        <div
+          className="flex flex-shrink-0 items-center justify-between border-b border-white/[0.06] px-3 py-2"
+          style={{ background: "rgba(255,255,255,0.035)" }}
+        >
+          <button onClick={onForfeit} className="px-2 py-1 text-sm text-gray-500 transition-colors hover:text-white">
+            ✕
+          </button>
+          <div className="min-w-0 text-center">
+            <div className="truncate text-[10px] font-black uppercase tracking-[0.16em] text-cyan-300">
+              Practice exercise
             </div>
-            <div className="text-white font-black text-3xl leading-none">{score.player}</div>
-            <GoalDots filled={score.player} total={GOALS_TO_WIN} />
+            <div className="truncate text-xs font-bold text-white">{tutorial.title}</div>
           </div>
-          <div className="text-center">
-            <div className="text-gray-500 text-[10px]">First to {GOALS_TO_WIN}</div>
-            {phase === "simulating" && <div className="text-[#00e676] text-sm">▶</div>}
-            {phase === "finished" && <div className="text-gray-500 text-xs">FT</div>}
-            <div className="text-gray-600 text-[10px]">T{turn}/{MAX_MATCH_TURNS}</div>
-          </div>
-          <div className="text-center min-w-20">
-            <div className="text-xs text-gray-400 truncate">
-              {twoPlayer ? <span style={{ color: effectiveAiColor }}>● P2</span> : <>{opponentTeamDef.crestIcon} {opponentTeamDef.name}</>}
-            </div>
-            <div className="text-white font-black text-3xl leading-none">{score.ai}</div>
-            <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
+          <div className="min-w-8 text-right text-[10px] font-black text-gray-500">
+            {tutorialStep + 1}/{MATCH_TUTORIAL_STEPS.length}
           </div>
         </div>
-        <div className="w-8" />
-      </div>
-
-      {tutorialMode && tutorial && (
-        <TutorialCoach
-          step={tutorialStep}
-          total={MATCH_TUTORIAL_STEPS.length}
-          title={tutorial.title}
-          body={tutorial.body}
-          hint={tutorial.hint}
-          canContinue={tutorialRequirementMet}
-          final={tutorialStep === MATCH_TUTORIAL_STEPS.length - 1}
-          onBack={previousTutorialStep}
-          onNext={nextTutorialStep}
-          onSkip={onForfeit}
-        />
+      ) : (
+        <div
+          className="flex flex-shrink-0 items-center justify-between px-2 py-1.5 sm:px-4 sm:py-2.5"
+          style={{ background: "rgba(255,255,255,0.04)" }}
+        >
+          <button onClick={onForfeit} className="px-2 py-1 text-sm text-gray-500 transition-colors hover:text-white">
+            ✕
+          </button>
+          <div className="flex items-center gap-5">
+            <div className="min-w-20 text-center">
+              <div className="truncate text-xs text-gray-400">
+                {twoPlayer ? <span style={{ color: p1JerseyColor }}>● P1</span> : <>{team.crestIcon} {team.name}</>}
+              </div>
+              <div className="text-3xl font-black leading-none text-white">{score.player}</div>
+              <GoalDots filled={score.player} total={GOALS_TO_WIN} />
+            </div>
+            <div className="text-center">
+              <div className="text-[10px] text-gray-500">First to {GOALS_TO_WIN}</div>
+              {phase === "simulating" && <div className="text-sm text-[#00e676]">▶</div>}
+              {phase === "finished" && <div className="text-xs text-gray-500">FT</div>}
+              <div className="text-[10px] text-gray-600">T{turn}/{MAX_MATCH_TURNS}</div>
+            </div>
+            <div className="min-w-20 text-center">
+              <div className="truncate text-xs text-gray-400">
+                {twoPlayer ? <span style={{ color: effectiveAiColor }}>● P2</span> : <>{opponentTeamDef.crestIcon} {opponentTeamDef.name}</>}
+              </div>
+              <div className="text-3xl font-black leading-none text-white">{score.ai}</div>
+              <GoalDots filled={score.ai} total={GOALS_TO_WIN} />
+            </div>
+          </div>
+          <div className="w-8" />
+        </div>
       )}
 
       {/* Goal banner */}
@@ -1202,7 +1404,16 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
       )}
 
       {/* Pitch */}
-      <div className="flex-1 relative" style={{ minHeight: 0, padding: isMobile ? 0 : "4px 4px 0" }}>
+      <div
+        className={tutorialMode && isMobile ? "relative flex-shrink-0" : "relative flex-1"}
+        style={{
+          minHeight: 0,
+          padding: isMobile ? 0 : "4px 4px 0",
+          ...(tutorialMode && isMobile && tutorial
+            ? { height: `${tutorial.mobilePitchDvh}dvh` }
+            : {}),
+        }}
+      >
         {isMobile && (
           <div className="absolute top-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
             <span className="text-[10px] text-white/40 font-semibold tracking-wide">▲ Attacking</span>
@@ -1234,6 +1445,8 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
           onCurvePointClick={curve.addControl}
+          viewBounds={tutorialMode ? tutorial?.view : undefined}
+          tutorialScene={tutorialMode ? tutorial?.scene : undefined}
         />
         {isMobile && (
           <div className="absolute bottom-1 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
@@ -1241,10 +1454,12 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        {/* Commentary overlay — bottom of pitch */}
-        <div className="absolute bottom-2 left-2 right-2 z-10 pointer-events-none">
-          <EventLog events={allEvents} />
-        </div>
+        {/* Commentary overlay — hidden in focused tutorial exercises. */}
+        {!tutorialMode && (
+          <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-10">
+            <EventLog events={allEvents} />
+          </div>
+        )}
       </div>
 
       {/* Controls bottom bar */}
@@ -1255,7 +1470,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
         }}
       >
-        {phase === "planning" && selectedSimPlayer && (
+        {phase === "planning" && selectedSimPlayer && !tutorialMode && (
           <div className="flex justify-center px-3 pt-1.5">
             <div className="max-w-full truncate rounded-full border border-amber-300/20 bg-amber-300/[0.07] px-3 py-1 text-[9px] font-black uppercase tracking-wider text-amber-200">
               <span className="text-amber-400/70">{selectedIsPrediction ? "Predicted player · " : "Selected ability · "}</span>
@@ -1328,6 +1543,21 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             {twoPlayer && phase === "planning" ? (twoPlayerTurn === "p1" ? "P1 Done" : "P2 Done") : "Confirm Turn"}
           </button>
         </div>
+
+        {tutorialMode && tutorial && (
+          <TutorialCoach
+            step={tutorialStep}
+            total={MATCH_TUTORIAL_STEPS.length}
+            title={tutorial.title}
+            body={tutorial.body}
+            hint={tutorial.hint}
+            canContinue={tutorialRequirementMet}
+            final={tutorialStep === MATCH_TUTORIAL_STEPS.length - 1}
+            onBack={previousTutorialStep}
+            onNext={nextTutorialStep}
+            onSkip={onForfeit}
+          />
+        )}
       </div>
 
       {penaltyShootoutActive && (

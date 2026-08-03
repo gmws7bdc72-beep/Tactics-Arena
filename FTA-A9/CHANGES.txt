@@ -1,0 +1,18 @@
+FTA-A9 — Scenario-built match tutorial
+
+- Removes the tutorial card from the pitch completely.
+- Places the lesson panel inside the command UI, directly below Confirm Turn.
+- The lesson panel now pushes the pitch upward instead of covering gameplay.
+- Replaces the old one-size-fits-all tutorial match with eleven purpose-built practice scenes.
+- Every lesson receives its own camera crop and mobile pitch height based on the mechanic being taught.
+- Each new scene resets the ball, players, score, turn and commands so it begins cleanly.
+- Uses small, focused player groups instead of displaying both full starting lineups in every lesson.
+- Adds dedicated layouts for selection, movement, passing, long balls, curves, combinations, shooting, goalkeeper dives, offside and the final challenge.
+- Adds on-pitch START, TARGET, RUNNER, SHOOTER, SELECT KEEPER, ATTACKER and SETS LINE guides.
+- Draws the actual dynamic offside tile-edge line during the offside lesson.
+- Keeps AI players still during mechanic lessons so they do not ruin the exercise.
+- Re-enables active defending for the final three-turn challenge.
+- Requires the player to actually create a goalkeeper dive before advancing.
+- Uses a compact tutorial-only top bar instead of the full match scoreboard.
+- Hides the ability pill and commentary log during tutorial exercises to preserve pitch space.
+- Rewrites all seventeen instructions around the exact staged scenario shown on the pitch.

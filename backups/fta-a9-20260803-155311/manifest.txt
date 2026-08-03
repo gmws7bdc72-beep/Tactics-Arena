@@ -1,0 +1,4 @@
+existing|src/components/TutorialCoach.tsx
+existing|src/components/PitchCanvas.tsx
+existing|src/game/matchTutorial.ts
+existing|src/pages/Match.tsx
