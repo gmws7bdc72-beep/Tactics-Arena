@@ -3,6 +3,8 @@ export interface TutorialProgress {
   welcomeDismissed: boolean;
   matchComplete: boolean;
   marketComplete: boolean;
+  /** Set only after the mandatory first-time club naming screen is submitted. */
+  teamNameChosen: boolean;
 }
 
 const TUTORIAL_KEY = "fta_tutorial_progress_v1";
@@ -13,6 +15,7 @@ const DEFAULT_PROGRESS: TutorialProgress = {
   welcomeDismissed: false,
   matchComplete: false,
   marketComplete: false,
+  teamNameChosen: false,
 };
 
 export function loadTutorialProgress(): TutorialProgress {
@@ -20,9 +23,16 @@ export function loadTutorialProgress(): TutorialProgress {
     const raw = localStorage.getItem(TUTORIAL_KEY);
     if (!raw) return { ...DEFAULT_PROGRESS };
     const parsed = JSON.parse(raw) as Partial<TutorialProgress>;
+    // Existing careers that completed the old tutorial before the naming step
+    // was introduced are grandfathered in instead of being interrupted later.
+    const legacyCompletedWithoutNamingField =
+      parsed.teamNameChosen === undefined && parsed.marketComplete === true;
     return {
       ...DEFAULT_PROGRESS,
       ...parsed,
+      teamNameChosen: legacyCompletedWithoutNamingField
+        ? true
+        : parsed.teamNameChosen ?? false,
       version: TUTORIAL_VERSION,
     };
   } catch {
@@ -60,6 +70,18 @@ export function completeMarketTutorial(): TutorialProgress {
     ...loadTutorialProgress(),
     welcomeDismissed: true,
     marketComplete: true,
+  };
+  saveTutorialProgress(next);
+  return next;
+}
+
+export function completeTeamNaming(): TutorialProgress {
+  const next = {
+    ...loadTutorialProgress(),
+    welcomeDismissed: true,
+    matchComplete: true,
+    marketComplete: true,
+    teamNameChosen: true,
   };
   saveTutorialProgress(next);
   return next;

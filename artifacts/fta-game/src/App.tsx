@@ -20,6 +20,7 @@ import Pitch3DPreview from "./pages/Pitch3DPreview";
 import TransferMarket from "./pages/TransferMarket";
 import TransferTutorial from "./pages/TransferTutorial";
 import TutorialWelcome from "./components/TutorialWelcome";
+import TeamNameSetup from "./pages/TeamNameSetup";
 import { processTransferWeek } from "./game/transferMarket";
 import { formatMoney } from "./game/transferDatabase";
 import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
@@ -37,7 +38,7 @@ import {
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
 import { advanceTeamTraining } from "./game/training";
-import { completeMarketTutorial, completeMatchTutorial, dismissTutorialWelcome, shouldShowTutorialWelcome } from "./game/tutorial";
+import { completeMarketTutorial, completeMatchTutorial, completeTeamNaming, dismissTutorialWelcome, loadTutorialProgress, shouldShowTutorialWelcome } from "./game/tutorial";
 
 type Screen =
   | "home"
@@ -52,7 +53,8 @@ type Screen =
   | "online-match"
   | "pitch3d-preview"
   | "tutorial-match"
-  | "transfer-tutorial";
+  | "transfer-tutorial"
+  | "team-name";
 
 interface OnlineGameConfig {
   myRole: "p1" | "p2";
@@ -134,7 +136,14 @@ export default function App() {
 
   const initialHash = hashToScreen(window.location.hash);
 
-  const [screen, setScreen] = useState<Screen>(initialHash.screen);
+  const [screen, setScreen] = useState<Screen>(() => {
+    const tutorialProgress = loadTutorialProgress();
+    const namingPending =
+      tutorialProgress.matchComplete &&
+      tutorialProgress.marketComplete &&
+      !tutorialProgress.teamNameChosen;
+    return namingPending ? "team-name" : initialHash.screen;
+  });
   const [setupTab, setSetupTab] = useState<"lineup" | "formation" | "training">(
     initialHash.tab ?? "lineup",
   );
@@ -666,7 +675,21 @@ export default function App() {
         team={team}
         onBack={() => setScreen("home")}
         onComplete={() => {
-          completeMarketTutorial();
+          const progress = completeMarketTutorial();
+          setScreen(progress.teamNameChosen ? "transfer-market" : "team-name");
+        }}
+      />
+    );
+  }
+
+  if (screen === "team-name") {
+    return (
+      <TeamNameSetup
+        team={team}
+        onComplete={(name) => {
+          updateTeam({ ...team, name });
+          completeTeamNaming();
+          toast.success(`Welcome, ${name}`);
           setScreen("transfer-market");
         }}
       />

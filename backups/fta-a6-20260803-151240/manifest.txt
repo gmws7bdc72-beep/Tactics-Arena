@@ -1,0 +1,4 @@
+existing|src/App.tsx
+existing|src/game/tutorial.ts
+existing|src/pages/TransferTutorial.tsx
+new|src/pages/TeamNameSetup.tsx

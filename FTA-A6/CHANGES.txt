@@ -1,0 +1,6 @@
+- After the complete first-run tutorial chain finishes, the player must name their club.
+- The name field cannot be skipped or submitted empty.
+- The selected name immediately updates the team, league, transfers, and career save through the existing updateTeam flow.
+- Replaying the tutorial later does not ask for a name again.
+- Existing careers that completed the tutorial before this patch are not interrupted.
+- The final transfer-tutorial button now says Finish Tutorial.

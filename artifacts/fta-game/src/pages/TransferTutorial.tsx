@@ -75,7 +75,7 @@ export default function TransferTutorial({ team, onBack, onComplete }: Props) {
 
         <div className="mt-5 flex gap-3">
           <button disabled={index === 0} onClick={() => setIndex((v) => Math.max(0, v - 1))} className="w-24 rounded-2xl border border-white/10 bg-white/[.04] py-3 text-sm font-bold text-gray-400 disabled:opacity-25">Back</button>
-          <button onClick={() => final ? onComplete() : setIndex((v) => v + 1)} className="flex-1 rounded-2xl py-3 text-sm font-black" style={{ background: "linear-gradient(135deg,#00e676,#0891b2)" }}>{final ? "Open Transfer Market" : "Next"}</button>
+          <button onClick={() => final ? onComplete() : setIndex((v) => v + 1)} className="flex-1 rounded-2xl py-3 text-sm font-black" style={{ background: "linear-gradient(135deg,#00e676,#0891b2)" }}>{final ? "Finish Tutorial" : "Next"}</button>
         </div>
       </div>
     </div>
