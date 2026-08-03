@@ -4,7 +4,12 @@ import type {
   AbilityId,
   PlayerStats,
 } from "../engine/types";
-import { expandSquad, getInitialSquadSize, randomizePlayerForNewSave } from "./transferDatabase";
+import {
+  expandSquad,
+  getInitialSquadSize,
+  randomizePlayerForNewSave,
+  rollNewSaveClubTalent,
+} from "./transferDatabase";
 
 export const ABILITIES: Record<AbilityId, Ability> = {
   bullet_pass: {
@@ -21,7 +26,7 @@ export const ABILITIES: Record<AbilityId, Ability> = {
   ghost_run: {
     id: "ghost_run",
     name: "Ghost Run",
-    description: "Elusive runner — +15% dribble strength, reduced turning cost",
+    description: "Elite runner — unlocks 3-tile movement at 9-10 Speed and gains +15% dribble strength",
   },
   eagle_eye: {
     id: "eagle_eye",
@@ -506,8 +511,11 @@ export function getDefaultSquad(): PlayerCard[] {
     (player) => !starters.some((starter) => starter.id === player.id),
   ).slice(0, Math.max(0, targetSize - starters.length));
 
-  return expandSquad([...starters, ...reserves], "player_team", 2, 1)
-    .map((player, index) => randomizePlayerForNewSave(player, "player_team", index));
+  const clubTalent = rollNewSaveClubTalent(1);
+  return expandSquad([...starters, ...reserves], "player_team", 1, 1)
+    .map((player, index) =>
+      randomizePlayerForNewSave(player, "player_team", index, 1, clubTalent),
+    );
 }
 
 export function getGoalkeepers(): PlayerCard[] {

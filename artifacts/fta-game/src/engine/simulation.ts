@@ -996,7 +996,7 @@ function snapshotFrame(
       jerseyNumber: p.jerseyNumber,
       role: p.role,
       appearance: p.appearance,
-      tileRange: speedToTiles(p.stats.speed),
+      tileRange: speedToTiles(p.stats.speed, p.ability),
       offside: offsidePlayers.has(p.id),
     })),
     ball: {
@@ -1031,7 +1031,7 @@ function moveLinear(player: SimPlayer, target: Vec2, dt: number): boolean {
   const dx = target.x - player.position.x;
   const dy = target.y - player.position.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const pixelSpeed = getLinearPixelSpeed(player.stats.speed);
+  const pixelSpeed = getLinearPixelSpeed(player.stats.speed, player.ability);
   const step = pixelSpeed * dt;
 
   if (dist <= step || dist < 0.5) {
@@ -1070,7 +1070,7 @@ function moveCommand(
       target,
     );
   }
-  const pixelSpeed = getLinearPixelSpeed(player.stats.speed);
+  const pixelSpeed = getLinearPixelSpeed(player.stats.speed, player.ability);
   const advanced = advanceCurveMotion(
     player.position,
     player.curveMotion,
@@ -1297,7 +1297,7 @@ function updatePlayerMovement(
         const target = tileToPos(bestCol, bestRow);
         const start = { ...player.position };
         const distance = Math.max(1, Math.hypot(target.x - start.x, target.y - start.y));
-        const duration = Math.max(0.28, Math.min(0.46, distance / (getLinearPixelSpeed(10) * 2.1)));
+        const duration = Math.max(0.28, Math.min(0.46, distance / (getLinearPixelSpeed(10, "ghost_run") * 2.1)));
         player.velocity = vec2Scale(vec2Normalize(vec2Sub(target, start)), distance / duration);
         player.state = PlayerState.DIVING;
         player.stateTimer = duration;

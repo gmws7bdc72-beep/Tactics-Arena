@@ -1,0 +1,10 @@
+FTA-A7
+
+- Ghost Run is now the only ability that can unlock 3-tile movement at Speed 9-10.
+- Every non-Ghost Run player is capped at 2 tiles, including AI movement, curves, prediction reach, replays, local matches, and online matches.
+- Running speed now follows the same legal movement cap.
+- New careers generate fully rerolled player talent with random club strength and player-by-player/stat-by-stat variation.
+- The player club is now Tier 1. Tier 1 squads begin strongest, Tier 2 lower, and Tier 3 lower again, while still allowing random stars and weak links.
+- Every club begins Season 1 with exactly enough cash to cover all 11 wage-processing weeks: 9 league weeks plus semifinal and final progression.
+- The balance falls by one payroll payment per matchweek and reaches $0 after the first season if the squad does not change.
+- Existing saves keep their current squads and balances; the new talent and opening-budget rules apply to newly created careers.

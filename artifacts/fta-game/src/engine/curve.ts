@@ -334,8 +334,9 @@ export function curveRouteFitsMoveBudget(
   controls: Vec2[],
   target: Vec2,
   speed: number,
+  ability?: string,
 ): boolean {
-  const maximumDistance = getLinearPixelSpeed(speed) * TURN_DURATION;
+  const maximumDistance = getLinearPixelSpeed(speed, ability) * TURN_DURATION;
   return curveRouteLength(start, controls, target) <= maximumDistance + 1;
 }
 

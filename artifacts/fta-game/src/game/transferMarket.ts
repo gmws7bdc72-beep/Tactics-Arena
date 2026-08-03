@@ -204,6 +204,26 @@ function payroll(players: PlayerCard[]): number {
   return players.reduce((sum, player) => sum + (player.weeklyWage ?? 0), 0);
 }
 
+const PLAYOFF_WAGE_WEEKS = 2;
+
+function seasonWageWeeks(league: LeagueState): number {
+  // Nine league matchdays plus the semifinal and final progression weeks.
+  // Clubs keep paying wages while the playoffs advance even after elimination.
+  return Math.max(1, league.schedule?.length ?? AI_TEAMS.length) + PLAYOFF_WAGE_WEEKS;
+}
+
+function openingClubBudget(
+  currentPayroll: number,
+  league: LeagueState,
+  fallbackIndex: number,
+): number {
+  if ((league.season ?? 1) === 1) {
+    return currentPayroll * seasonWageWeeks(league);
+  }
+  return baseBudgets[fallbackIndex] ?? 20_000_000;
+}
+
+
 interface NewsDetails {
   kind?: TransferNewsKind;
   playerId?: string;
@@ -382,7 +402,7 @@ export function createTransferMarket(
     const currentPayroll = payroll(club.players);
     finances[club.id] = {
       clubId: club.id,
-      budget: baseBudgets[index] ?? 20_000_000,
+      budget: openingClubBudget(currentPayroll, league, index),
       wageBudget: currentPayroll * 1.35 + 50_000,
       payroll: currentPayroll,
       wagesPaid: 0,
@@ -474,7 +494,7 @@ export function normalizeMarket(
 
     finances[club.id] = {
       clubId: club.id,
-      budget: old?.budget ?? baseBudgets[index] ?? 20_000_000,
+      budget: old?.budget ?? openingClubBudget(currentPayroll, league, index),
       wageBudget: old?.wageBudget ?? currentPayroll * 1.35 + 50_000,
       payroll: currentPayroll,
       wagesPaid: sameSeason ? old?.wagesPaid ?? 0 : 0,

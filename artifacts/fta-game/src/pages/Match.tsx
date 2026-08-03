@@ -115,7 +115,7 @@ function makeInitFrame(players: SimPlayer[], ball: SimBall): FrameSnapshot {
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      tileRange: speedToTiles(p.stats.speed),
+      tileRange: speedToTiles(p.stats.speed, p.ability),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
     events: [],

@@ -58,7 +58,10 @@ function roleForIndex(index: number): PlayerCard["role"] {
 }
 
 function baseStats(role: PlayerCard["role"], level: number, seed: number): PlayerStats {
-  const n = (offset: number, bonus = 0) => clamp(level + ((seed >> offset) % 3) - 1 + bonus);
+  // Each attribute receives its own roll. A five-point spread makes new-save
+  // squads genuinely different instead of producing near-clones of templates.
+  const n = (offset: number, bonus = 0) =>
+    clamp(level + (hash(`${seed}:${offset}`) % 5) - 2 + bonus);
   return {
     attack: n(1, role === "forward" || role === "striker" ? 2 : role === "midfielder" ? 0 : -2),
     defense: n(2, role === "defender" || role === "goalkeeper" ? 2 : role === "midfielder" ? 0 : -2),
@@ -116,10 +119,43 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export function randomizePlayerForNewSave(template: PlayerCard, clubId: string, index: number): PlayerCard {
+/**
+ * Rolls one club-wide talent level for a new career. The tier bands do not
+ * overlap, so Tier 1 squads are strongest on average, while individual player
+ * rolls can still create stars, weak links and surprise lower-tier standouts.
+ */
+export function rollNewSaveClubTalent(tier: 1 | 2 | 3): number {
+  const [minimum, maximum] =
+    tier === 1 ? [8.2, 8.7] : tier === 2 ? [6.3, 6.9] : [4.8, 5.5];
+  return minimum + Math.random() * (maximum - minimum);
+}
+
+function triangularTalentNoise(scale: number): number {
+  return (Math.random() + Math.random() - 1) * scale;
+}
+
+export function randomizePlayerForNewSave(
+  template: PlayerCard,
+  clubId: string,
+  index: number,
+  tier?: 1 | 2 | 3,
+  clubTalent?: number,
+): PlayerCard {
   const nameSeed = randomInt(1, 0x7fffffff);
   const name = generateUniquePlayerName(nameSeed, [template.name]);
-  const level = Math.max(3, Math.min(9, Math.round(getPlayerOverall(template) / 10)));
+  const templateLevel = Math.max(
+    3,
+    Math.min(9, Math.round(getPlayerOverall(template) / 10)),
+  );
+  const tierLevel =
+    tier === undefined
+      ? templateLevel
+      : clubTalent ?? rollNewSaveClubTalent(tier);
+  const depthAdjustment = index < 6 ? 0.25 : -0.25;
+  const level = Math.max(
+    3,
+    Math.min(9, tierLevel + depthAdjustment + triangularTalentNoise(1.25)),
+  );
   const seed = randomInt(1, 0x7fffffff);
   const ability = template.role === "goalkeeper"
     ? "goalkeeper"

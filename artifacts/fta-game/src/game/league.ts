@@ -18,7 +18,12 @@ import {
   prepareSquadForNewSeason,
   type MatchTrainingResult,
 } from "./training";
-import { expandSquad, getPlayerOverall, randomizePlayerForNewSave } from "./transferDatabase";
+import {
+  expandSquad,
+  getPlayerOverall,
+  randomizePlayerForNewSave,
+  rollNewSaveClubTalent,
+} from "./transferDatabase";
 
 export interface AITeamDef {
   id: string;
@@ -623,12 +628,21 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
 
 export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> {
   const squads = Object.fromEntries(
-    AI_TEAMS.map((team) => [
-      team.id,
-      expandSquad(team.players, team.id, team.tier, season)
-        .map((player, index) => randomizePlayerForNewSave(player, team.id, index))
-        .map((player) => ensurePlayerDevelopment(player, season)),
-    ]),
+    AI_TEAMS.map((team) => {
+      const clubTalent = rollNewSaveClubTalent(team.tier);
+      const players = expandSquad(team.players, team.id, team.tier, season)
+        .map((player, index) =>
+          randomizePlayerForNewSave(
+            player,
+            team.id,
+            index,
+            team.tier,
+            clubTalent,
+          ),
+        )
+        .map((player) => ensurePlayerDevelopment(player, season));
+      return [team.id, players];
+    }),
   );
   return ensureAITransferListings(squads, season);
 }
@@ -819,7 +833,7 @@ export function createLeague(playerTeamId: string, playerTeamName: string): Leag
     {
       id: playerTeamId,
       name: playerTeamName,
-      tier: 2,
+      tier: 1,
       played: 0,
       won: 0,
       drawn: 0,

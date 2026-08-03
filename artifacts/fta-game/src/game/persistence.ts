@@ -130,7 +130,7 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
   );
   const unique = [...new Map(repairedBase.map((player) => [player.id, player])).values()];
   const players = enforceStartingAbilityCaps(
-    expandSquad(unique, PLAYER_TEAM_ID, 2, 1)
+    expandSquad(unique, PLAYER_TEAM_ID, 1, 1)
       .slice(0, MAX_SQUAD_SIZE)
       .map((player, index) => repairPlayer(player, defaults[index % defaults.length], index)),
   );
