@@ -1,0 +1,8 @@
+FTA-A5 — Compact tutorial coach
+
+- Shrinks the in-match tutorial overlay so the pitch stays visible.
+- Docks the tutorial card in the upper-right corner.
+- Starts each tutorial in a compact state with the current instruction preview.
+- Adds a + / − control to expand or collapse the full explanation and hint.
+- Caps expanded instructions at 30% of the screen height with internal scrolling.
+- Keeps Back, Next, progress, and Exit available in the compact view.
