@@ -113,10 +113,35 @@ export function formatMoney(value: number): string {
 }
 
 
-const NEW_SAVE_ABILITIES = ["bullet_pass", "iron_tackle", "ghost_run", "eagle_eye", "powerhouse", "shadow_mark", "none"] as const;
+const NEW_SAVE_STAT_WEIGHTS = [
+  5,  // 1
+  6,  // 2
+  8,  // 3
+  9,  // 4
+  12, // 5
+  16, // 6
+  17, // 7
+  14, // 8
+  8,  // 9
+  5,  // 10
+] as const;
+
+const SPECIAL_ABILITY_CHANCE = 0.48;
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function weightedRandomStat(): number {
+  const totalWeight = NEW_SAVE_STAT_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (let index = 0; index < NEW_SAVE_STAT_WEIGHTS.length; index += 1) {
+    roll -= NEW_SAVE_STAT_WEIGHTS[index];
+    if (roll < 0) return index + 1;
+  }
+
+  return 10;
 }
 
 /**
@@ -129,26 +154,78 @@ export function rollNewSaveClubTalent(_tier: 1 | 2 | 3): number {
 }
 
 function fullyRandomStats(): PlayerStats {
-  // Deliberately no role bonuses, club bonuses, tier floors, template influence,
-  // starter bonuses or shared talent bands. Every attribute is an independent
-  // uniform 1-10 roll so a new career can produce specialists, misfits, stars,
-  // weak links and completely unexpected squad shapes.
+  // Every attribute is still rolled independently from 1-10 with no tier,
+  // club, role, starter, reserve or template influence. The only change from
+  // the previous flat roll is a very gentle middle/upward weighting: weak
+  // players still appear, stars still appear, but entire new leagues are less
+  // likely to be dominated by 4-6 overall squads.
   return {
-    attack: randomInt(1, 10),
-    defense: randomInt(1, 10),
-    passing: randomInt(1, 10),
-    speed: randomInt(1, 10),
-    movement: randomInt(1, 10),
-    shooting: randomInt(1, 10),
-    dribbling: randomInt(1, 10),
-    tackling: randomInt(1, 10),
-    marking: randomInt(1, 10),
-    stamina: randomInt(1, 10),
-    strength: randomInt(1, 10),
-    vision: randomInt(1, 10),
-    longPassing: randomInt(1, 10),
-    aerial: randomInt(1, 10),
+    attack: weightedRandomStat(),
+    defense: weightedRandomStat(),
+    passing: weightedRandomStat(),
+    speed: weightedRandomStat(),
+    movement: weightedRandomStat(),
+    shooting: weightedRandomStat(),
+    dribbling: weightedRandomStat(),
+    tackling: weightedRandomStat(),
+    marking: weightedRandomStat(),
+    stamina: weightedRandomStat(),
+    strength: weightedRandomStat(),
+    vision: weightedRandomStat(),
+    longPassing: weightedRandomStat(),
+    aerial: weightedRandomStat(),
   };
+}
+
+function rollNewSaveAbility(
+  template: PlayerCard,
+  stats: PlayerStats,
+): PlayerCard["ability"] {
+  if (template.role === "goalkeeper") return "goalkeeper";
+
+  // Abilities remain common enough to shape squads, but they are no longer
+  // handed to nearly every outfield player. A failed special roll always
+  // creates a normal player, even when several abilities would fit.
+  if (Math.random() >= SPECIAL_ABILITY_CHANCE) return "none";
+
+  const provisionalPlayer: PlayerCard = {
+    ...template,
+    stats,
+    ability: "none",
+  };
+  const overall = getPlayerOverall(provisionalPlayer);
+  const eligible: PlayerCard["ability"][] = [];
+
+  if (stats.passing >= 7 && (stats.vision >= 6 || stats.longPassing >= 6)) {
+    eligible.push("bullet_pass");
+  }
+  if (stats.tackling >= 7 && (stats.defense >= 6 || stats.marking >= 6)) {
+    eligible.push("iron_tackle");
+  }
+  if (stats.shooting >= 7 && (stats.attack >= 6 || stats.vision >= 6)) {
+    eligible.push("eagle_eye");
+  }
+  if (
+    stats.strength >= 8 &&
+    (stats.tackling >= 6 || stats.dribbling >= 6 || stats.attack >= 6)
+  ) {
+    eligible.push("powerhouse");
+  }
+  if (stats.marking >= 7 && (stats.defense >= 6 || stats.tackling >= 6)) {
+    eligible.push("shadow_mark");
+  }
+
+  // Ghost Run is an elite movement ability, not a random sticker. A displayed
+  // 6-overall player can never receive it. The player must be at least 7
+  // overall and already possess genuinely high Speed and Movement.
+  if (overall >= 70 && stats.speed >= 8 && stats.movement >= 8) {
+    // Add it several times so qualifying elite runners have a real chance of
+    // receiving Ghost Run despite usually qualifying for other abilities too.
+    eligible.push("ghost_run", "ghost_run", "ghost_run", "ghost_run");
+  }
+
+  if (eligible.length === 0) return "none";
+  return eligible[randomInt(0, eligible.length - 1)];
 }
 
 export function randomizePlayerForNewSave(
@@ -161,16 +238,15 @@ export function randomizePlayerForNewSave(
   const nameSeed = randomInt(1, 0x7fffffff);
   const name = generateUniquePlayerName(nameSeed, [template.name]);
   const seed = randomInt(1, 0x7fffffff);
-  const ability = template.role === "goalkeeper"
-    ? "goalkeeper"
-    : NEW_SAVE_ABILITIES[randomInt(0, NEW_SAVE_ABILITIES.length - 1)];
+  const stats = fullyRandomStats();
+  const ability = rollNewSaveAbility(template, stats);
 
   return enrichMarketPlayer({
     ...template,
     id: `${clubId}_new_${Date.now().toString(36)}_${index}_${seed.toString(36)}`,
     name,
     ability,
-    stats: fullyRandomStats(),
+    stats,
     jerseyNumber: index + 1,
     age: undefined,
     potential: undefined,

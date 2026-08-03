@@ -1,0 +1,11 @@
+FTA-A12
+
+- Fixes new-save ability saturation.
+- Outfield players now have a 48% chance to attempt a special ability roll; players who do not qualify for a fitting ability become No Ability.
+- Abilities are assigned only when the player's generated stats support them.
+- Ghost Run now requires at least a displayed 7 overall plus 8+ Speed and 8+ Movement.
+- A displayed 6-overall player can never spawn with Ghost Run.
+- Goalkeepers still receive the Goalkeeper ability.
+- New-save attributes remain completely independent of club tier, team, role, starter status and templates.
+- The 1-10 attribute roll is now gently weighted toward the middle and upper-middle instead of being flat, making 7-rated players somewhat more common without eliminating weak players or random extremes.
+- Existing saves are untouched. Start a new career to generate the corrected squads.
