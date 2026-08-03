@@ -1246,10 +1246,65 @@ function desiredRoleCount(bucket: RoleBucket, squadSize: number): number {
   return Math.max(3, Math.round(squadSize * 0.28));
 }
 
+function averagePlayerStats(
+  player: PlayerCard,
+  keys: (keyof PlayerCard["stats"])[],
+): number {
+  return keys.reduce((sum, key) => sum + player.stats[key], 0) / Math.max(1, keys.length);
+}
+
+function tacticalIdentityFit(
+  team: (typeof AI_TEAMS)[number],
+  player: PlayerCard,
+): number {
+  let core = 0;
+  let abilityBonus = 0;
+
+  switch (team.tacticId) {
+    case "slow_possession":
+      core = averagePlayerStats(player, ["passing", "vision", "dribbling", "movement", "stamina"]);
+      abilityBonus = player.ability === "bullet_pass" ? 12 : player.ability === "ghost_run" ? 5 : 0;
+      break;
+    case "balanced_build_up":
+      core = averagePlayerStats(player, ["passing", "vision", "movement", "defense", "attack", "stamina"]);
+      abilityBonus = player.ability === "bullet_pass" || player.ability === "shadow_mark" ? 6 : 0;
+      break;
+    case "direct_play":
+      core = averagePlayerStats(player, ["longPassing", "vision", "speed", "strength", "aerial"]);
+      abilityBonus = player.ability === "bullet_pass" || player.ability === "powerhouse" ? 10 : 0;
+      break;
+    case "counter_press":
+      core = averagePlayerStats(player, ["stamina", "speed", "movement", "tackling", "marking"]);
+      abilityBonus = ["iron_tackle", "powerhouse", "shadow_mark", "ghost_run"].includes(player.ability) ? 9 : 0;
+      break;
+    case "low_block_counter":
+      core = averagePlayerStats(player, ["defense", "tackling", "marking", "strength", "aerial", "longPassing"]);
+      abilityBonus = ["iron_tackle", "powerhouse", "shadow_mark"].includes(player.ability) ? 10 : 0;
+      break;
+    case "quick_counterattack":
+      core = averagePlayerStats(player, ["speed", "movement", "dribbling", "attack", "shooting"]);
+      abilityBonus = player.ability === "ghost_run" || player.ability === "eagle_eye" ? 12 : 0;
+      break;
+    case "wide_crossing":
+      core = averagePlayerStats(player, ["speed", "passing", "longPassing", "vision", "aerial"]);
+      abilityBonus = player.ability === "bullet_pass" ? 10 : player.ability === "powerhouse" ? 6 : 0;
+      break;
+    case "long_ball_target":
+      core = averagePlayerStats(player, ["longPassing", "vision", "aerial", "strength", "shooting"]);
+      abilityBonus = player.ability === "bullet_pass" || player.ability === "powerhouse" ? 12 : 0;
+      break;
+    default:
+      core = averagePlayerStats(player, ["passing", "movement", "stamina"]);
+  }
+
+  return core * 3.5 + abilityBonus;
+}
+
 function targetScore(
   buyerPlayers: PlayerCard[],
   player: PlayerCard,
   fee: number,
+  buyerDefinition: (typeof AI_TEAMS)[number],
 ): number {
   const bucket = roleBucket(player);
   const sameRole = buyerPlayers.filter((item) => roleBucket(item) === bucket);
@@ -1270,6 +1325,7 @@ function targetScore(
     upgrade * 4 +
     potential * 0.12 +
     valueScore +
+    tacticalIdentityFit(buyerDefinition, player) +
     Math.random() * 8
   );
 }
@@ -1313,9 +1369,13 @@ function generateAIMarketActivity(
   let nextTeam = team;
   let nextLeague = league;
   let aiToAiTransfers = 0;
+  const marketSeason = league.season ?? state.season;
+  const secondSeasonBoom = marketSeason === 2;
+  const activityChance = secondSeasonBoom ? 0.86 : 0.42;
+  const aiTransferLimit = secondSeasonBoom ? 4 : 2;
 
   for (const aiDefinition of AI_TEAMS) {
-    if (Math.random() > 0.42) continue;
+    if (Math.random() > activityChance) continue;
 
     const clubs = allClubPlayers(nextTeam, nextLeague);
     const buyer = clubs.find((club) => club.id === aiDefinition.id);
@@ -1355,7 +1415,7 @@ function generateAIMarketActivity(
           player,
           seller,
           fee,
-          score: targetScore(buyer.players, player, fee),
+          score: targetScore(buyer.players, player, fee, aiDefinition),
         };
       })
       .sort((a, b) => b.score - a.score);
@@ -1391,7 +1451,7 @@ function generateAIMarketActivity(
       continue;
     }
 
-    if (aiToAiTransfers >= 2) continue;
+    if (aiToAiTransfers >= aiTransferLimit) continue;
 
     if (amount >= transferThreshold(target.player)) {
       const result = completeTransfer(

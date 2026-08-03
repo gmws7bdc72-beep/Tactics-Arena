@@ -22,7 +22,6 @@ import {
   expandSquad,
   getPlayerOverall,
   randomizePlayerForNewSave,
-  rollNewSaveClubTalent,
 } from "./transferDatabase";
 
 export interface AITeamDef {
@@ -629,16 +628,9 @@ function buildRoundRobinMatchdays(ids: string[], seed: number): [string, string]
 export function createInitialAISquads(season = 1): Record<string, PlayerCard[]> {
   const squads = Object.fromEntries(
     AI_TEAMS.map((team) => {
-      const clubTalent = rollNewSaveClubTalent(team.tier);
       const players = expandSquad(team.players, team.id, team.tier, season)
         .map((player, index) =>
-          randomizePlayerForNewSave(
-            player,
-            team.id,
-            index,
-            team.tier,
-            clubTalent,
-          ),
+          randomizePlayerForNewSave(player, team.id, index),
         )
         .map((player) => ensurePlayerDevelopment(player, season));
       return [team.id, players];

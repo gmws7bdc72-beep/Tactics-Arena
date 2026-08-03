@@ -120,52 +120,57 @@ function randomInt(min: number, max: number): number {
 }
 
 /**
- * Rolls one club-wide talent level for a new career. The tier bands do not
- * overlap, so Tier 1 squads are strongest on average, while individual player
- * rolls can still create stars, weak links and surprise lower-tier standouts.
+ * Kept for backwards compatibility with older modules and saves.
+ * New-career player generation no longer uses club tiers or a shared club
+ * talent value: every player's attributes are rolled independently.
  */
-export function rollNewSaveClubTalent(tier: 1 | 2 | 3): number {
-  const [minimum, maximum] =
-    tier === 1 ? [8.2, 8.7] : tier === 2 ? [6.3, 6.9] : [4.8, 5.5];
-  return minimum + Math.random() * (maximum - minimum);
+export function rollNewSaveClubTalent(_tier: 1 | 2 | 3): number {
+  return randomInt(1, 10);
 }
 
-function triangularTalentNoise(scale: number): number {
-  return (Math.random() + Math.random() - 1) * scale;
+function fullyRandomStats(): PlayerStats {
+  // Deliberately no role bonuses, club bonuses, tier floors, template influence,
+  // starter bonuses or shared talent bands. Every attribute is an independent
+  // uniform 1-10 roll so a new career can produce specialists, misfits, stars,
+  // weak links and completely unexpected squad shapes.
+  return {
+    attack: randomInt(1, 10),
+    defense: randomInt(1, 10),
+    passing: randomInt(1, 10),
+    speed: randomInt(1, 10),
+    movement: randomInt(1, 10),
+    shooting: randomInt(1, 10),
+    dribbling: randomInt(1, 10),
+    tackling: randomInt(1, 10),
+    marking: randomInt(1, 10),
+    stamina: randomInt(1, 10),
+    strength: randomInt(1, 10),
+    vision: randomInt(1, 10),
+    longPassing: randomInt(1, 10),
+    aerial: randomInt(1, 10),
+  };
 }
 
 export function randomizePlayerForNewSave(
   template: PlayerCard,
   clubId: string,
   index: number,
-  tier?: 1 | 2 | 3,
-  clubTalent?: number,
+  _tier?: 1 | 2 | 3,
+  _clubTalent?: number,
 ): PlayerCard {
   const nameSeed = randomInt(1, 0x7fffffff);
   const name = generateUniquePlayerName(nameSeed, [template.name]);
-  const templateLevel = Math.max(
-    3,
-    Math.min(9, Math.round(getPlayerOverall(template) / 10)),
-  );
-  const tierLevel =
-    tier === undefined
-      ? templateLevel
-      : clubTalent ?? rollNewSaveClubTalent(tier);
-  const depthAdjustment = index < 6 ? 0.25 : -0.25;
-  const level = Math.max(
-    3,
-    Math.min(9, tierLevel + depthAdjustment + triangularTalentNoise(1.25)),
-  );
   const seed = randomInt(1, 0x7fffffff);
   const ability = template.role === "goalkeeper"
     ? "goalkeeper"
     : NEW_SAVE_ABILITIES[randomInt(0, NEW_SAVE_ABILITIES.length - 1)];
+
   return enrichMarketPlayer({
     ...template,
     id: `${clubId}_new_${Date.now().toString(36)}_${index}_${seed.toString(36)}`,
     name,
     ability,
-    stats: baseStats(template.role, level, seed),
+    stats: fullyRandomStats(),
     jerseyNumber: index + 1,
     age: undefined,
     potential: undefined,

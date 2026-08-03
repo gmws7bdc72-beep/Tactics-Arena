@@ -1,0 +1,12 @@
+FTA-A8
+
+- Corrects A7's tier-banded talent generation.
+- Every attribute for every newly generated player is now an independent random 1-10 roll.
+- New-save stats receive no tier floor, club-wide talent level, role bonus, template influence, starter bonus, or reserve penalty.
+- Tier 1 clubs are no longer guaranteed to spawn the strongest squads. Any club can begin with stars, specialists, terrible fits, or major weaknesses.
+- Player roles remain so formations and lineups stay legal, but the role does not shape the generated attributes.
+- Outfield abilities are rerolled independently; goalkeepers retain the Goalkeeper ability.
+- Season 2 now has a deliberate transfer-market boom: AI clubs search and bid much more aggressively.
+- AI recruitment now strongly scores tactical identity fit, so possession, pressing, counterattacking, crossing, direct and long-ball clubs pursue different profiles.
+- Existing player squads are not rerolled. Start a new career to generate the completely random league.
+- A7's Ghost Run movement cap and first-season wage reserve remain unchanged.

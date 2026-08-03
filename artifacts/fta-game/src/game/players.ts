@@ -8,7 +8,6 @@ import {
   expandSquad,
   getInitialSquadSize,
   randomizePlayerForNewSave,
-  rollNewSaveClubTalent,
 } from "./transferDatabase";
 
 export const ABILITIES: Record<AbilityId, Ability> = {
@@ -511,10 +510,9 @@ export function getDefaultSquad(): PlayerCard[] {
     (player) => !starters.some((starter) => starter.id === player.id),
   ).slice(0, Math.max(0, targetSize - starters.length));
 
-  const clubTalent = rollNewSaveClubTalent(1);
   return expandSquad([...starters, ...reserves], "player_team", 1, 1)
     .map((player, index) =>
-      randomizePlayerForNewSave(player, "player_team", index, 1, clubTalent),
+      randomizePlayerForNewSave(player, "player_team", index),
     );
 }
 
