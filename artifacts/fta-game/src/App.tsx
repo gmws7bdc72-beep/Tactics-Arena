@@ -5,6 +5,7 @@ import type {
   GameEvent,
   LeagueState,
   PlayoffBracket,
+  MatchStats,
 } from "./engine/types";
 import { useGameState } from "./hooks/useGameState";
 import Home from "./pages/Home";
@@ -72,6 +73,7 @@ interface MatchResult {
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
   penalties?: { player: number; ai: number };
+  stats?: MatchStats;
 }
 
 interface PlayoffContext {
@@ -224,6 +226,7 @@ export default function App() {
       aiScore: number;
       events: GameEvent[];
       penalties?: { player: number; ai: number };
+      stats?: MatchStats;
     }) => {
       if (!currentScheduledMatch || !currentOpponentDef) return;
 
@@ -269,6 +272,7 @@ export default function App() {
         opponentName: currentOpponentDef.name,
         playoffStage: null,
         penalties: result.penalties,
+        stats: result.stats,
       });
 
       setScreen("post-match");
@@ -290,6 +294,7 @@ export default function App() {
       aiScore: number;
       events: GameEvent[];
       penalties?: { player: number; ai: number };
+      stats?: MatchStats;
     }) => {
       if (!playoffContext) return;
 
@@ -365,6 +370,7 @@ export default function App() {
         opponentName: oppName,
         playoffStage: stage,
         penalties: result.penalties,
+        stats: result.stats,
       });
 
       setScreen("post-match");
@@ -773,6 +779,7 @@ export default function App() {
           autoSimHomeGoals={matchResult.autoSimHomeGoals}
           autoSimAwayGoals={matchResult.autoSimAwayGoals}
           penalties={matchResult.penalties}
+          stats={matchResult.stats}
           showNewSeason={showNewSeason}
           onNextMatch={() => {
             setMatchResult(null);

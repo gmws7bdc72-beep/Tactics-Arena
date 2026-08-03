@@ -5,6 +5,7 @@ import { FORMATIONS } from "./formations";
 import { PLAYERS_PER_TEAM } from "../engine/constants";
 import { createLeague } from "./league";
 import { ensurePlayerDevelopment, ensureTeamDevelopment } from "./training";
+import { enforceStartingAbilityCaps } from "./abilityLimits";
 
 const TEAM_KEY = "fta_team_clean_6v6_v1";
 const TEAM_BACKUP_KEY = "fta_team_clean_6v6_v1_backup";
@@ -128,9 +129,11 @@ function normalizeTeamForCurrentRules(team: TeamConfig): TeamConfig {
     repairPlayer(player, defaults[index % defaults.length], index),
   );
   const unique = [...new Map(repairedBase.map((player) => [player.id, player])).values()];
-  const players = expandSquad(unique, PLAYER_TEAM_ID, 2, 1)
-    .slice(0, MAX_SQUAD_SIZE)
-    .map((player, index) => repairPlayer(player, defaults[index % defaults.length], index));
+  const players = enforceStartingAbilityCaps(
+    expandSquad(unique, PLAYER_TEAM_ID, 2, 1)
+      .slice(0, MAX_SQUAD_SIZE)
+      .map((player, index) => repairPlayer(player, defaults[index % defaults.length], index)),
+  );
 
   return ensureTeamDevelopment({
     ...team,

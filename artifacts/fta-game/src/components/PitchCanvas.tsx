@@ -41,7 +41,10 @@ interface Props {
   aiTeamKitStyle?: KitStyle;
   aiTeamSleeveStyle?: SleeveStyle;
   pendingCommands: Map<string, Command>;
+  predictionCommands?: Map<string, Command>;
   selectedPlayerId: string | null;
+  predictionModeSelected?: boolean;
+  allowOpponentPrediction?: boolean;
   passTargetMode: boolean;
   passOriginPos?: Vec2;
   curveDraft?: {
@@ -685,7 +688,10 @@ export default function PitchCanvas({
   aiTeamKitStyle,
   aiTeamSleeveStyle,
   pendingCommands,
+  predictionCommands = new Map(),
   selectedPlayerId,
+  predictionModeSelected = false,
+  allowOpponentPrediction = false,
   passTargetMode,
   curveDraft,
   curveControlMode = false,
@@ -1086,24 +1092,24 @@ export default function PitchCanvas({
             drawPoly(
               ctx,
               corners,
-              "rgba(255,220,0,0.25)",
-              "rgba(255,220,0,0.75)",
+              predictionModeSelected ? "rgba(216,180,254,0.22)" : "rgba(255,220,0,0.25)",
+              predictionModeSelected ? "rgba(216,180,254,0.72)" : "rgba(255,220,0,0.75)",
               1.3,
             );
           } else if (selPlayer && state === "reachable") {
             drawPoly(
               ctx,
               corners,
-              "rgba(0,230,118,0.16)",
-              "rgba(0,230,118,0.45)",
+              predictionModeSelected ? "rgba(167,139,250,0.14)" : "rgba(0,230,118,0.16)",
+              predictionModeSelected ? "rgba(167,139,250,0.48)" : "rgba(0,230,118,0.45)",
               1.1,
             );
           } else if (selPlayer && state === "reachable-enemy") {
             drawPoly(
               ctx,
               corners,
-              "rgba(255,96,0,0.22)",
-              "rgba(255,96,0,0.65)",
+              predictionModeSelected ? "rgba(249,168,212,0.18)" : "rgba(255,96,0,0.22)",
+              predictionModeSelected ? "rgba(249,168,212,0.58)" : "rgba(255,96,0,0.65)",
               1.2,
             );
           } else if (selPlayer && state === "reachable-friendly") {
@@ -1262,6 +1268,116 @@ export default function PitchCanvas({
         }
       });
 
+      predictionCommands.forEach((cmd, playerId) => {
+        const player = frame.players.find((candidate) => candidate.id === playerId);
+        if (!player) return;
+
+        const signature = cmd.followUp
+          ? cmd.type === CommandType.MOVE ? "movePass" : "passMove"
+          : cmd.type === CommandType.SHOOT ? "shot"
+            : cmd.type === CommandType.PASS
+              ? cmd.passStyle === "long" ? "long" : "pass"
+              : "move";
+        const palette: Record<string, string> = {
+          move: "#a78bfa",
+          pass: "#93c5fd",
+          long: "#f9a8d4",
+          shot: "#d8b4fe",
+          movePass: "#c4b5fd",
+          passMove: "#bfdbfe",
+        };
+        const color = palette[signature];
+
+        const drawPredictionPath = (from: Vec2, to: Vec2, controls: Vec2[] = [], arc = false) => {
+          const points = controls.length >= 2
+            ? [from, ...sampleChainedCurve(from, controls, to)]
+            : [from, to];
+          const screenPoints = points.map(view.project);
+          ctx.save();
+          ctx.globalAlpha = 0.52;
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color;
+          ctx.lineWidth = arc ? 3.1 : 2.5;
+          ctx.lineCap = "round";
+          ctx.setLineDash(arc ? [5, 9] : [4, 8]);
+          ctx.beginPath();
+          ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
+          if (arc && controls.length < 2) {
+            const fromPoint = screenPoints[0];
+            const toPoint = screenPoints[screenPoints.length - 1];
+            const mid = {
+              x: (fromPoint.x + toPoint.x) / 2,
+              y: Math.min(fromPoint.y, toPoint.y) - Math.abs(toPoint.x - fromPoint.x) * 0.12 - 22,
+            };
+            ctx.quadraticCurveTo(mid.x, mid.y, toPoint.x, toPoint.y);
+          } else {
+            for (const point of screenPoints.slice(1)) ctx.lineTo(point.x, point.y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        };
+
+        const drawGhostPlayer = (position: Vec2) => {
+          const point = view.project(position);
+          const radius = view.radius(PLAYER_RADIUS, position.y);
+          ctx.save();
+          ctx.globalAlpha = 0.34;
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 5]);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y - radius * 1.35, radius * 0.42, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(point.x, point.y - radius * 0.9);
+          ctx.lineTo(point.x, point.y + radius * 0.7);
+          ctx.moveTo(point.x, point.y - radius * 0.25);
+          ctx.lineTo(point.x - radius * 0.72, point.y + radius * 0.15);
+          ctx.moveTo(point.x, point.y - radius * 0.25);
+          ctx.lineTo(point.x + radius * 0.72, point.y + radius * 0.15);
+          ctx.moveTo(point.x, point.y + radius * 0.7);
+          ctx.lineTo(point.x - radius * 0.55, point.y + radius * 1.45);
+          ctx.moveTo(point.x, point.y + radius * 0.7);
+          ctx.lineTo(point.x + radius * 0.55, point.y + radius * 1.45);
+          ctx.stroke();
+          ctx.restore();
+        };
+
+        const drawGhostBall = (position: Vec2) => {
+          const point = view.project(position);
+          ctx.save();
+          ctx.globalAlpha = 0.42;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, Math.max(3, view.radius(BALL_RADIUS, position.y)), 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        };
+
+        if (cmd.type === CommandType.MOVE && cmd.targetPosition) {
+          drawPredictionPath(player.position, cmd.targetPosition, cmd.curvePoints);
+          drawGhostPlayer(cmd.targetPosition);
+          if (cmd.followUp?.type === CommandType.PASS && cmd.followUp.targetPosition) {
+            drawPredictionPath(cmd.targetPosition, cmd.followUp.targetPosition, cmd.followUp.curvePoints, true);
+            drawGhostBall(cmd.followUp.targetPosition);
+          }
+        } else if (cmd.type === CommandType.PASS && cmd.targetPosition) {
+          drawPredictionPath(player.position, cmd.targetPosition, cmd.curvePoints, true);
+          drawGhostBall(cmd.targetPosition);
+          if (cmd.followUp?.type === CommandType.MOVE && cmd.followUp.targetPosition) {
+            drawPredictionPath(player.position, cmd.followUp.targetPosition, cmd.followUp.curvePoints);
+            drawGhostPlayer(cmd.followUp.targetPosition);
+          }
+        } else if (cmd.type === CommandType.SHOOT) {
+          const target = cmd.targetPosition ?? { x: -GOAL_DEPTH * 0.65, y: PITCH_HEIGHT / 2 };
+          drawPredictionPath(player.position, target, cmd.curvePoints);
+          drawGhostBall(target);
+        }
+      });
+
       if (curveDraft) {
         const points =
           curveDraft.controls.length >= 2
@@ -1271,13 +1387,13 @@ export default function PitchCanvas({
                 curveDraft.target,
               )]
             : [curveDraft.origin, ...curveDraft.controls, curveDraft.target];
-        drawProjectedPath(ctx, view, points, "#22d3ee", 4);
+        drawProjectedPath(ctx, view, points, predictionModeSelected ? "#e9d5ff" : "#22d3ee", 4);
 
         curveDraft.controls.forEach((control, index) => {
           const point = view.project(control);
           ctx.save();
           ctx.fillStyle = "#07111f";
-          ctx.strokeStyle = "#67e8f9";
+          ctx.strokeStyle = predictionModeSelected ? "#d8b4fe" : "#67e8f9";
           ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
@@ -2197,7 +2313,9 @@ export default function PitchCanvas({
     aiTeamKitStyle,
     aiTeamSleeveStyle,
     pendingCommands,
+    predictionCommands,
     selectedPlayerId,
+    predictionModeSelected,
     passTargetMode,
     curveDraft,
     phase,
@@ -2226,7 +2344,9 @@ export default function PitchCanvas({
             (p.position.x - pos.x) ** 2 + (p.position.y - pos.y) ** 2,
           );
 
-          if (d < hitR && p.teamId === selectableTeam) {
+          const predictionSelectable =
+            allowOpponentPrediction && activePlanningTeam === undefined && p.teamId === "ai";
+          if (d < hitR && (p.teamId === selectableTeam || predictionSelectable)) {
             onPlayerClick(p.id, pos);
             return;
           }
@@ -2238,7 +2358,8 @@ export default function PitchCanvas({
       const selPlayer = frame.players.find((p) => p.id === selectedPlayerId);
 
       if (!selPlayer) return;
-      if (selPlayer.teamId !== selectableTeam) return;
+      const actingTeam = selPlayer.teamId;
+      if (actingTeam !== selectableTeam && !(allowOpponentPrediction && activePlanningTeam === undefined && actingTeam === "ai")) return;
 
       // FTA_PASS_INTO_NET_V2
       const insideGoalDepth =
@@ -2285,12 +2406,12 @@ export default function PitchCanvas({
         return t.col === clickedCol && t.row === clickedRow;
       });
 
-      if (occupant?.teamId === selectableTeam && occupant.id !== selectedPlayerId) {
+      if (occupant?.teamId === actingTeam && occupant.id !== selectedPlayerId) {
         return;
       }
 
       const isEnemy =
-        occupant?.teamId !== undefined && occupant.teamId !== selectableTeam;
+        occupant?.teamId !== undefined && occupant.teamId !== actingTeam;
       const tileCenter = tileToPos(clickedCol, clickedRow);
 
       onTileClick(tileCenter, isEnemy);
@@ -2306,6 +2427,7 @@ export default function PitchCanvas({
       curveControlMode,
       onCurvePointClick,
       activePlanningTeam,
+      allowOpponentPrediction,
     ],
   );
 

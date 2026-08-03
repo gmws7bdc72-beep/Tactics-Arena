@@ -1,0 +1,7 @@
+- Default opponent ghost-prediction planning
+- Hidden partial-credit prediction scoring, including major curve bonuses
+- Hidden opponent-specific AI adaptation after repeated accurate reads
+- Post-match possession, shots, shots on target, passes, forward passes, interceptions, and offsides
+- Hidden AI learning from match statistics
+- Starting-lineup caps: 1 Ghost Run and 3 Bullet Pass players
+- Comic-style two-tone clink sound and ball rebound when a shot hits a post

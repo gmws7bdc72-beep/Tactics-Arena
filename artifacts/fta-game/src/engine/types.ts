@@ -264,6 +264,7 @@ export enum GameEventType {
   KICKOFF = "KICKOFF",
   OFFSIDE = "OFFSIDE",
   DRIBBLE = "DRIBBLE",
+  POST_HIT = "POST_HIT",
 }
 
 export interface GameEvent {
@@ -278,6 +279,32 @@ export interface GameEvent {
   effectPosition?: Vec2;
   effectDirection?: Vec2;
   effectIntensity?: number;
+  /** True when a deliberate shot's resolved target is inside the goal mouth. */
+  onTarget?: boolean;
+  /** Preserves pass type for match statistics. */
+  passStyle?: PassStyle;
+}
+
+
+export interface TeamMatchStats {
+  possessionTicks: number;
+  passesAttempted: number;
+  passesCompleted: number;
+  forwardPasses: number;
+  shots: number;
+  shotsOnTarget: number;
+  interceptions: number;
+  offsides: number;
+  longBallsAttempted: number;
+  longBallsCompleted: number;
+  dribblesWon: number;
+  physicalDuelsWon: number;
+  saves: number;
+}
+
+export interface MatchStats {
+  player: TeamMatchStats;
+  ai: TeamMatchStats;
 }
 
 export interface FrameSnapshot {
@@ -433,4 +460,6 @@ export interface SavedMatchState {
   replaySpeed: 1 | 6 | 8 | 10;
   replayPlaying: boolean;
   turnSaveCount: number;
+  predictionCommands?: [string, Command][];
+  matchStats?: MatchStats;
 }

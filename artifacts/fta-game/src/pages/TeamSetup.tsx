@@ -22,6 +22,7 @@ import {
 } from "../engine/constants";
 import { formatMoney } from "../game/transferDatabase";
 import { ABILITIES } from "../game/players";
+import { validateStartingAbilityCaps } from "../game/abilityLimits";
 
 interface Props {
   team: TeamConfig;
@@ -300,6 +301,7 @@ export default function TeamSetup({
     }),
   );
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
+  const [lineupError, setLineupError] = useState<string | null>(null);
   const [expandedTrainingId, setExpandedTrainingId] = useState<string | null>(
     null,
   );
@@ -332,6 +334,12 @@ export default function TeamSetup({
         players[candidateIndex],
         players[slotIndex],
       ];
+      const check = validateStartingAbilityCaps(players);
+      if (!check.valid) {
+        setLineupError(check.message ?? "That starting lineup exceeds an ability limit.");
+        return previous;
+      }
+      setLineupError(null);
       return { ...previous, players };
     });
     setActiveSlot(null);
@@ -405,6 +413,17 @@ export default function TeamSetup({
     return { averageMorale, seasonGrowth, improving };
   }, [currentTeam.players]);
 
+  const saveTeam = () => {
+    const check = validateStartingAbilityCaps(currentTeam.players);
+    if (!check.valid) {
+      setLineupError(check.message ?? "That starting lineup exceeds an ability limit.");
+      setTab("lineup");
+      return;
+    }
+    setLineupError(null);
+    onSave(ensureTeamDevelopment(currentTeam));
+  };
+
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -457,9 +476,17 @@ export default function TeamSetup({
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {tab === "lineup" && (
           <div>
-            <p className="text-gray-400 text-xs mb-3">
+            <p className="text-gray-400 text-xs mb-2">
               Tap a slot to change the player. Slot 1 is goalkeeper only.
             </p>
+            <div className="mb-3 rounded-xl border border-violet-300/15 bg-violet-300/[0.05] px-3 py-2 text-[10px] leading-4 text-violet-100/80">
+              Starting lineup limits: 1 Ghost Run · 3 Bullet Pass. Extra ability players may remain in the reserves.
+            </div>
+            {lineupError && (
+              <div className="mb-3 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-xs font-bold text-rose-200">
+                {lineupError}
+              </div>
+            )}
 
             <div className="space-y-2 mb-6">
               {currentTeam.players
@@ -1206,7 +1233,7 @@ export default function TeamSetup({
       <div className="px-4 pb-6">
         <button
           type="button"
-          onClick={() => onSave(ensureTeamDevelopment(currentTeam))}
+          onClick={saveTeam}
           className="w-full py-3.5 rounded-2xl text-white font-bold text-sm transition-all active:scale-95"
           style={{ background: "linear-gradient(135deg, #00e676, #00b288)" }}
         >

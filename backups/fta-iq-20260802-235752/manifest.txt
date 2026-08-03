@@ -1,0 +1,11 @@
+existing|src/App.tsx
+existing|src/components/PitchCanvas.tsx
+existing|src/engine/simulation.ts
+existing|src/engine/types.ts
+new|src/game/abilityLimits.ts
+new|src/game/matchStats.ts
+existing|src/game/persistence.ts
+new|src/game/predictionMemory.ts
+existing|src/pages/Match.tsx
+existing|src/pages/PostMatch.tsx
+existing|src/pages/TeamSetup.tsx

@@ -1,6 +1,7 @@
-import type { GameEvent, LeagueState, TeamConfig } from "../engine/types";
+import type { GameEvent, LeagueState, TeamConfig, MatchStats } from "../engine/types";
 import { GameEventType } from "../engine/types";
 import { getLeagueStandings, getTeamPoints } from "../game/league";
+import { possessionPercent } from "../game/matchStats";
 
 const PLAYER_ID = "player_team";
 
@@ -19,6 +20,7 @@ interface Props {
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
   penalties?: { player: number; ai: number };
+  stats?: MatchStats;
   showNewSeason?: boolean;
   onNextMatch: () => void;
   onHome: () => void;
@@ -46,6 +48,7 @@ export default function PostMatch({
   autoSimHomeGoals,
   autoSimAwayGoals,
   penalties,
+  stats,
   showNewSeason,
   onNextMatch,
   onHome,
@@ -91,6 +94,16 @@ export default function PostMatch({
     : displayLost
       ? "linear-gradient(135deg, rgba(255,82,82,0.15), rgba(211,47,47,0.08))"
       : "linear-gradient(135deg, rgba(255,235,59,0.15), rgba(255,152,0,0.08))";
+
+  const statRows = stats ? [
+    ["Possession", `${possessionPercent(stats, "player")}%`, `${possessionPercent(stats, "ai")}%`],
+    ["Shots", stats.player.shots, stats.ai.shots],
+    ["Shots on target", stats.player.shotsOnTarget, stats.ai.shotsOnTarget],
+    ["Passes", `${stats.player.passesCompleted}/${stats.player.passesAttempted}`, `${stats.ai.passesCompleted}/${stats.ai.passesAttempted}`],
+    ["Forward passes", stats.player.forwardPasses, stats.ai.forwardPasses],
+    ["Interceptions", stats.player.interceptions, stats.ai.interceptions],
+    ["Offsides", stats.player.offsides, stats.ai.offsides],
+  ] as const : [];
 
   // Auto-sim display
   if (isAutoSim && autoSimHomeName && autoSimAwayName) {
@@ -209,6 +222,34 @@ export default function PostMatch({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {stats && (
+          <section
+            className="overflow-hidden rounded-2xl"
+            style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center border-b border-white/10 px-3 py-3">
+              <div className="truncate text-left text-xs font-black text-white">{team.name}</div>
+              <div className="px-3 text-[10px] font-black uppercase tracking-widest text-gray-500">Match stats</div>
+              <div className="truncate text-right text-xs font-black text-white">{opponentName}</div>
+            </div>
+            <div className="divide-y divide-white/5">
+              {statRows.map(([label, playerValue, aiValue]) => {
+                const playerNumber = typeof playerValue === "number" ? playerValue : Number.parseFloat(String(playerValue));
+                const aiNumber = typeof aiValue === "number" ? aiValue : Number.parseFloat(String(aiValue));
+                const playerLeads = Number.isFinite(playerNumber) && Number.isFinite(aiNumber) && playerNumber > aiNumber;
+                const aiLeads = Number.isFinite(playerNumber) && Number.isFinite(aiNumber) && aiNumber > playerNumber;
+                return (
+                  <div key={label} className="grid grid-cols-[1fr_1.35fr_1fr] items-center px-3 py-2.5">
+                    <div className={`text-left text-sm font-black ${playerLeads ? "text-emerald-300" : "text-gray-200"}`}>{playerValue}</div>
+                    <div className="text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
+                    <div className={`text-right text-sm font-black ${aiLeads ? "text-rose-300" : "text-gray-200"}`}>{aiValue}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         {/* Playoff champion banner */}
         {isPlayoffComplete && champion && (
           <div
@@ -298,35 +339,6 @@ export default function PostMatch({
           </div>
         )}
 
-        {/* Match stats */}
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            {
-              label: "Goals",
-              player: events.filter(e => e.type === GameEventType.GOAL && e.teamId === "player").length,
-              ai: events.filter(e => e.type === GameEventType.GOAL && e.teamId === "ai").length,
-            },
-            {
-              label: "Shots",
-              player: events.filter(e => e.type === GameEventType.SHOT_ON_GOAL && e.teamId === "player").length,
-              ai: events.filter(e => e.type === GameEventType.SHOT_ON_GOAL && e.teamId === "ai").length,
-            },
-            {
-              label: "Saves",
-              player: events.filter(e => e.type === GameEventType.SAVE && e.teamId === "player").length,
-              ai: events.filter(e => e.type === GameEventType.SAVE && e.teamId === "ai").length,
-            },
-          ].map(stat => (
-            <div key={stat.label} className="rounded-xl p-3 text-center" style={{ background: "rgba(255,255,255,0.04)" }}>
-              <div className="text-gray-400 text-[10px] mb-1.5">{stat.label}</div>
-              <div className="flex items-center justify-between gap-1">
-                <span className="text-white font-bold text-sm">{stat.player}</span>
-                <span className="text-gray-600 text-[10px]">vs</span>
-                <span className="text-gray-400 font-bold text-sm">{stat.ai}</span>
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* Action buttons */}

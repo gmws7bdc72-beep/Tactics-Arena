@@ -388,6 +388,45 @@ function normalizeSimulationCommand(
       : undefined,
   };
 }
+function distancePointToSegment(point: Vec2, start: Vec2, end: Vec2): number {
+  const segment = vec2Sub(end, start);
+  const lengthSq = vec2Dot(segment, segment);
+  if (lengthSq <= 0.0001) return vec2Dist(point, start);
+  const t = clamp(vec2Dot(vec2Sub(point, start), segment) / lengthSq, 0, 1);
+  return vec2Dist(point, vec2Add(start, vec2Scale(segment, t)));
+}
+
+function resolveGoalPostCollision(ball: SimBall, previousPosition: Vec2): boolean {
+  if (ball.ownerId !== null || vec2Len(ball.velocity) < 1) return false;
+  const postRadius = 4.5;
+  const contactRadius = BALL_RADIUS + postRadius;
+  const posts: Vec2[] = [
+    { x: GOAL_LEFT_X, y: GOAL_TOP_Y },
+    { x: GOAL_LEFT_X, y: GOAL_BOTTOM_Y },
+    { x: GOAL_RIGHT_X, y: GOAL_TOP_Y },
+    { x: GOAL_RIGHT_X, y: GOAL_BOTTOM_Y },
+  ];
+
+  for (const post of posts) {
+    if (distancePointToSegment(post, previousPosition, ball.position) > contactRadius) continue;
+    let normal = vec2Normalize(vec2Sub(ball.position, post));
+    if (vec2Len(normal) < 0.01) normal = vec2Normalize(vec2Scale(ball.velocity, -1));
+    const incoming = ball.velocity;
+    ball.velocity = vec2Scale(
+      vec2Sub(incoming, vec2Scale(normal, 2 * vec2Dot(incoming, normal))),
+      0.72,
+    );
+    ball.position = vec2Add(post, vec2Scale(normal, contactRadius + 0.75));
+    ball.passTarget = undefined;
+    ball.passStart = undefined;
+    ball.curveMotion = undefined;
+    ball.travelSpeed = undefined;
+    ball.flightPeakHeight = undefined;
+    return true;
+  }
+  return false;
+}
+
 export function runSimulation(
   players: SimPlayer[],
   ball: SimBall,
@@ -478,6 +517,7 @@ export function runSimulation(
   const activeDuelEffects: ActiveDuelEffect[] = [];
   const lastDuelEffectTick = new Map<string, number>();
   let duelEffectSerial = 0;
+  let lastPostHitTick = -999;
   for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
@@ -490,7 +530,18 @@ export function runSimulation(
       passTracker,
       rng,
     );
+    const previousBallPosition = { ...simBall.position };
     updateBallPhysics(simBall, DELTA);
+    if (tick - lastPostHitTick > 5 && resolveGoalPostCollision(simBall, previousBallPosition)) {
+      lastPostHitTick = tick;
+      tickEvents.push({
+        type: GameEventType.POST_HIT,
+        tick,
+        teamId: passTracker.teamId ?? undefined,
+        playerId: passTracker.playerId ?? undefined,
+        message: "Off the post!",
+      });
+    }
     detectAndResolveEvents(
       simPlayers,
       simBall,
@@ -1149,11 +1200,16 @@ function updatePlayerMovement(
           player.state = PlayerState.RECOVERING;
           player.recoveryTimer = SHOT_RECOVERY;
 
+          const shotTarget = ball.passTarget;
+          const onTarget = !!shotTarget &&
+            shotTarget.y - BALL_RADIUS >= GOAL_TOP_Y &&
+            shotTarget.y + BALL_RADIUS <= GOAL_BOTTOM_Y;
           events.push({
             type: GameEventType.SHOT_ON_GOAL,
             tick,
             playerId: player.id,
             teamId: player.teamId,
+            onTarget,
             message: `${player.name} shoots at goal!`,
           });
         }
@@ -1859,6 +1915,7 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
+            passStyle: passTracker.type === "long_pass" ? "long" : "ground",
             message: passTracker.type === "long_pass" ? `${passTracker.name} launches it → ${winner.name}` : `${passTracker.name} → ${winner.name}`,
           });
         } else if (
@@ -1880,6 +1937,7 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
+            passStyle: passTracker.type === "long_pass" ? "long" : "ground",
             message: passTracker.type === "long_pass" ? `${winner.name} wins the aerial ball!` : `${winner.name} intercepts!`,
           });
         }
