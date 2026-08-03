@@ -1,0 +1,10 @@
+FTA-A10 — Full-height tutorial screen
+
+- Makes the tutorial control area grow to fill every remaining pixel of the mobile viewport.
+- Extends the lesson panel all the way to the bottom safe area instead of leaving a dead black strip.
+- Anchors Back / step count / Next at the true bottom of the tutorial panel.
+- Keeps lesson text independently scrollable when a short device leaves limited vertical room.
+- Removes the invisible mechanic-button row from overview, selection, movement, confirmation and offside explanation steps.
+- Keeps mechanic buttons visible only for lessons that actually teach an action, plus the final open challenge.
+- Moves Confirm and the lesson panel upward on non-command steps while retaining each exercise's custom pitch crop.
+- Does not alter normal career, local multiplayer or online match layouts.

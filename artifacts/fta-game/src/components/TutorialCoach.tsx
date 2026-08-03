@@ -37,9 +37,15 @@ export default function TutorialCoach({
   const progress = Math.round(((step + 1) / total) * 100);
 
   return (
-    <section className="border-t border-cyan-300/15 bg-[#07101c] px-3 pb-2.5 pt-2">
-      <div className="mx-auto w-full max-w-2xl">
-        <div className="h-1 overflow-hidden rounded-full bg-white/[0.06]">
+    <section
+      className="flex min-h-0 flex-1 flex-col border-t border-cyan-300/15 px-3 pb-2.5 pt-2"
+      style={{
+        background:
+          "linear-gradient(180deg, rgba(7,16,28,1) 0%, rgba(5,11,22,1) 100%)",
+      }}
+    >
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-2xl flex-col">
+        <div className="h-1 shrink-0 overflow-hidden rounded-full bg-white/[0.06]">
           <div
             className="h-full rounded-full transition-all duration-300"
             style={{
@@ -49,7 +55,7 @@ export default function TutorialCoach({
           />
         </div>
 
-        <div className="mt-2 flex items-start gap-2.5">
+        <div className="mt-2 flex min-h-0 flex-1 items-start gap-2.5 overflow-y-auto pr-0.5">
           <div
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-black text-[#04120d]"
             style={{ background: "linear-gradient(145deg,#6ee7b7,#22d3ee)" }}
@@ -77,7 +83,7 @@ export default function TutorialCoach({
           </div>
         </div>
 
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-auto flex shrink-0 items-center gap-2 border-t border-white/[0.05] pt-2.5">
           <button
             type="button"
             onClick={onBack}

@@ -1246,6 +1246,16 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const [tutorialFinalStartTurn, setTutorialFinalStartTurn] = useState<number | null>(null);
   const tutorial = MATCH_TUTORIAL_STEPS[tutorialStep];
   const lastTutorialSceneRef = useRef<TutorialSceneId | null>(null);
+  const tutorialShowsMechanicPad =
+    !tutorialMode ||
+    !tutorial ||
+    tutorial.requirement === "final" ||
+    tutorial.focus === "pass" ||
+    tutorial.focus === "longPass" ||
+    tutorial.focus === "combo" ||
+    tutorial.focus === "shoot" ||
+    tutorial.focus === "dive" ||
+    tutorial.focus === "curve";
 
   useEffect(() => {
     if (!tutorialMode || !tutorial) return;
@@ -1464,7 +1474,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
 
       {/* Controls bottom bar */}
       <div
-        className="flex-shrink-0 text-[11px] sm:text-sm"
+        className={`${tutorialMode ? "flex min-h-0 flex-1 flex-col" : "flex-shrink-0"} text-[11px] sm:text-sm`}
         style={{
           background: "rgba(0,0,0,0.62)",
           paddingBottom: "max(0px, env(safe-area-inset-bottom))",
@@ -1479,7 +1489,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
           </div>
         )}
 
-        {phase === "planning" && !comboActive && (
+        {phase === "planning" && !comboActive && tutorialShowsMechanicPad && (
           <MechanicPad
             onCancel={cancelAction}
             onPass={setPass}
