@@ -46,7 +46,7 @@ export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
 
 export const GOALS_TO_WIN = 3;
-export const MAX_MATCH_TURNS = 40;
+export const MAX_MATCH_TURNS = 30;
 export const PLAYERS_PER_TEAM = 6;
 
 export const AI_SHOT_RANGE = 200;
