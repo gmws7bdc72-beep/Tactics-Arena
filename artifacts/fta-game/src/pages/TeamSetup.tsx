@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, MouseEvent } from "react";
 import type {
   PlayerCard as PlayerCardType,
@@ -98,6 +98,43 @@ function statGainText(
     .join(" · ");
 }
 
+
+const STAT_ORDER = Object.keys(STAT_SHORT) as Array<
+  keyof PlayerCardType["stats"]
+>;
+
+function PlayerStatsGrid({ player }: { player: PlayerCardType }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+      <div className="mb-2 text-[9px] font-black uppercase tracking-wider text-gray-500">
+        Player stats
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {STAT_ORDER.map((key) => {
+          const value = player.stats[key];
+          return (
+            <div
+              key={key}
+              className="rounded-lg bg-white/[0.045] px-2 py-2 text-center"
+              title={key.replace(/([A-Z])/g, " $1")}
+            >
+              <div className="text-[8px] font-bold uppercase text-gray-500">
+                {STAT_SHORT[key]}
+              </div>
+              <div
+                className="mt-0.5 text-sm font-black"
+                style={{ color: toneForRating(value) }}
+              >
+                {value}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SquadManagementPanel({
   player,
   onUpdate,
@@ -117,6 +154,7 @@ function SquadManagementPanel({
     calculatePlayerOverall(player);
   const morale = player.development?.morale ?? 72;
   const listed = player.marketStatus === "listed";
+  const debtLocked = player.forcedListedForDebt === true;
   const askingPrice = player.askingPrice;
 
   const preset =
@@ -150,19 +188,22 @@ function SquadManagementPanel({
         <span
           className="text-[10px] font-bold"
           style={{
-            color:
-              player.marketStatus === "untouchable"
+            color: debtLocked
+              ? "#fbbf24"
+              : player.marketStatus === "untouchable"
                 ? "#38bdf8"
                 : listed
                   ? "#22c55e"
                   : "#9ca3af",
           }}
         >
-          {listed
-            ? "🏷️ Listed"
-            : player.marketStatus === "untouchable"
-              ? "🔒 Untouchable"
-              : "Available"}
+          {debtLocked
+            ? "⚠️ Debt listed"
+            : listed
+              ? "🏷️ Listed"
+              : player.marketStatus === "untouchable"
+                ? "🔒 Untouchable"
+                : "Available"}
         </span>
       </div>
 
@@ -199,8 +240,14 @@ function SquadManagementPanel({
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
+          disabled={debtLocked}
+          title={
+            debtLocked
+              ? "This player must remain listed until the club is out of debt."
+              : undefined
+          }
           onClick={() => onUpdate(listed ? "available" : "listed", undefined)}
-          className="rounded-lg px-2 py-2 text-[10px] font-black"
+          className="rounded-lg px-2 py-2 text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: listed
               ? "rgba(251,113,133,.12)"
@@ -208,10 +255,16 @@ function SquadManagementPanel({
             color: listed ? "#fb7185" : "#22c55e",
           }}
         >
-          {listed ? "Remove listing" : "Transfer list"}
+          {debtLocked ? "Debt locked" : listed ? "Remove listing" : "Transfer list"}
         </button>
         <button
           type="button"
+          disabled={debtLocked}
+          title={
+            debtLocked
+              ? "Debt-listed players cannot be made untouchable."
+              : undefined
+          }
           onClick={() =>
             onUpdate(
               player.marketStatus === "untouchable"
@@ -219,7 +272,7 @@ function SquadManagementPanel({
                 : "untouchable",
             )
           }
-          className="rounded-lg px-2 py-2 text-[10px] font-black"
+          className="rounded-lg px-2 py-2 text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: "rgba(56,189,248,.12)",
             color: "#38bdf8",
@@ -230,6 +283,13 @@ function SquadManagementPanel({
             : "Mark untouchable"}
         </button>
       </div>
+
+      {debtLocked && (
+        <div className="mt-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.07] px-2.5 py-2 text-[9px] leading-4 text-amber-200">
+          The club has been in debt for more than two paid weeks. This listing
+          unlocks automatically once the balance returns to zero or above.
+        </div>
+      )}
 
       {listed && (
         <div className="mt-2">
@@ -311,6 +371,50 @@ export default function TeamSetup({
   const [tab, setTab] = useState<"lineup" | "formation" | "training">(
     initialTab,
   );
+  const onSaveRef = useRef(onSave);
+  const latestTeamRef = useRef(currentTeam);
+  const hasMountedRef = useRef(false);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  useEffect(() => {
+    latestTeamRef.current = currentTeam;
+
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+
+    const check = validateStartingAbilityCaps(currentTeam.players);
+    if (!check.valid) return;
+
+    const timer = window.setTimeout(() => {
+      onSaveRef.current(ensureTeamDevelopment(currentTeam));
+    }, 220);
+
+    return () => window.clearTimeout(timer);
+  }, [currentTeam]);
+
+  useEffect(
+    () => () => {
+      const latest = latestTeamRef.current;
+      const check = validateStartingAbilityCaps(latest.players);
+      if (check.valid) {
+        onSaveRef.current(ensureTeamDevelopment(latest));
+      }
+    },
+    [],
+  );
+
+  const persistBeforeLeaving = () => {
+    const check = validateStartingAbilityCaps(currentTeam.players);
+    if (check.valid) {
+      onSaveRef.current(ensureTeamDevelopment(currentTeam));
+    }
+    onBack();
+  };
 
   const selectFormation = (formationId: string) => {
     const formation = FORMATIONS.find((item) => item.id === formationId);
@@ -370,11 +474,11 @@ export default function TeamSetup({
   ) => {
     setCurrentTeam((previous) => ({
       ...previous,
-      players: previous.players.map((player) =>
-        player.id === playerId
-          ? { ...player, marketStatus: status, askingPrice }
-          : player,
-      ),
+      players: previous.players.map((player) => {
+        if (player.id !== playerId) return player;
+        if (player.forcedListedForDebt && status !== "listed") return player;
+        return { ...player, marketStatus: status, askingPrice };
+      }),
     }));
   };
 
@@ -413,17 +517,6 @@ export default function TeamSetup({
     return { averageMorale, seasonGrowth, improving };
   }, [currentTeam.players]);
 
-  const saveTeam = () => {
-    const check = validateStartingAbilityCaps(currentTeam.players);
-    if (!check.valid) {
-      setLineupError(check.message ?? "That starting lineup exceeds an ability limit.");
-      setTab("lineup");
-      return;
-    }
-    setLineupError(null);
-    onSave(ensureTeamDevelopment(currentTeam));
-  };
-
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -432,17 +525,20 @@ export default function TeamSetup({
       <div className="flex items-center gap-3 px-4 pt-6 pb-4">
         <button
           type="button"
-          onClick={onBack}
+          onClick={persistBeforeLeaving}
           className="text-gray-400 hover:text-white transition-colors text-lg"
         >
           ←
         </button>
 
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="text-white text-lg font-bold">Team Setup</h1>
           <p className="text-gray-500 text-xs">
             Lineup, formation, and player development
           </p>
+        </div>
+        <div className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-emerald-300">
+          Autosaves
         </div>
       </div>
 
@@ -600,6 +696,10 @@ export default function TeamSetup({
                           </div>
 
                           <div className="mb-3">
+                            <PlayerStatsGrid player={player} />
+                          </div>
+
+                          <div className="mb-3">
                             <SquadManagementPanel
                               player={player}
                               onUpdate={(status, askingPrice) =>
@@ -744,6 +844,9 @@ export default function TeamSetup({
                               <div className="mt-1 text-[10px] leading-4 text-gray-300">
                                 {ABILITIES[player.ability]?.description ?? "No special ability."}
                               </div>
+                            </div>
+                            <div className="mb-3">
+                              <PlayerStatsGrid player={player} />
                             </div>
                             <SquadManagementPanel
                               player={player}
@@ -1230,16 +1333,6 @@ export default function TeamSetup({
         )}
       </div>
 
-      <div className="px-4 pb-6">
-        <button
-          type="button"
-          onClick={saveTeam}
-          className="w-full py-3.5 rounded-2xl text-white font-bold text-sm transition-all active:scale-95"
-          style={{ background: "linear-gradient(135deg, #00e676, #00b288)" }}
-        >
-          Save Team & Training
-        </button>
-      </div>
     </div>
   );
 }

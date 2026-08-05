@@ -170,6 +170,8 @@ export interface PlayerCard {
   marketValue?: number;
   weeklyWage?: number;
   marketStatus?: "available" | "listed" | "not_for_sale" | "untouchable";
+  /** True while club debt rules force this player to remain transfer-listed. */
+  forcedListedForDebt?: boolean;
   clubId?: string;
   askingPrice?: number;
   /** Preserved so season-end replacements can be audited in news and profiles. */

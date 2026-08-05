@@ -312,6 +312,116 @@ function allClubPlayers(team: TeamConfig, league: LeagueState): MarketClub[] {
   ];
 }
 
+
+function updateSquadDebtListings(
+  players: PlayerCard[],
+  forceListings: boolean,
+): { players: PlayerCard[]; newlyForced: PlayerCard[] } {
+  const forcedIds = new Set<string>();
+  if (forceListings) {
+    players
+      .filter((player) => player.forcedListedForDebt)
+      .forEach((player) => forcedIds.add(player.id));
+
+    [...players]
+      .sort(
+        (a, b) =>
+          getPlayerOverall(b) - getPlayerOverall(a) ||
+          (b.marketValue ?? 0) - (a.marketValue ?? 0),
+      )
+      .forEach((player) => {
+        if (forcedIds.size < 2) forcedIds.add(player.id);
+      });
+  }
+  const newlyForced: PlayerCard[] = [];
+
+  const nextPlayers = players.map((player) => {
+    const shouldForce = forcedIds.has(player.id);
+
+    if (shouldForce) {
+      if (!player.forcedListedForDebt) newlyForced.push(player);
+      return {
+        ...player,
+        marketStatus: "listed" as const,
+        askingPrice: player.askingPrice ?? player.marketValue,
+        forcedListedForDebt: true,
+      };
+    }
+
+    if (player.forcedListedForDebt) {
+      return {
+        ...player,
+        // The listing stays in place, but the manager can remove it again.
+        forcedListedForDebt: false,
+      };
+    }
+
+    return player;
+  });
+
+  return { players: nextPlayers, newlyForced };
+}
+
+export function enforceDebtTransferListings(
+  rawState: TransferMarketState,
+  team: TeamConfig,
+  league: LeagueState,
+): TransferActionResult {
+  let state = rawState;
+  let nextTeam = team;
+  const aiSquads = { ...(league.aiSquads ?? {}) };
+  let changedLeague = false;
+  const clubs = allClubPlayers(team, league);
+
+  clubs.forEach((club) => {
+    const finance = state.finances[club.id];
+    if (!finance) return;
+
+    const forceListings = finance.budget < 0 && finance.insolventWeeks > 2;
+    const result = updateSquadDebtListings(club.players, forceListings);
+
+    if (club.id === PLAYER_ID) {
+      nextTeam =
+        result.players === club.players
+          ? nextTeam
+          : { ...nextTeam, players: result.players };
+    } else {
+      aiSquads[club.id] = result.players;
+      changedLeague = true;
+    }
+
+    if (finance.budget >= 0 && finance.insolventWeeks !== 0) {
+      state = {
+        ...state,
+        finances: {
+          ...state.finances,
+          [club.id]: { ...finance, insolventWeeks: 0 },
+        },
+      };
+    }
+
+    if (result.newlyForced.length > 0) {
+      const names = result.newlyForced.map((player) => player.name).join(" and ");
+      state = addNews(
+        state,
+        `${club.name} have spent more than two paid weeks in debt. ${names} ${
+          result.newlyForced.length === 1 ? "was" : "were"
+        } automatically transfer-listed.`,
+        {
+          kind: "finance",
+          clubIds: [club.id],
+        },
+      );
+    }
+  });
+
+  return {
+    state,
+    team: nextTeam,
+    league: changedLeague ? { ...league, aiSquads } : league,
+  };
+}
+
 function clubName(team: TeamConfig, clubId: string): string {
   if (clubId === PLAYER_ID) return team.name;
   return AI_TEAMS.find((club) => club.id === clubId)?.name ?? clubId;
@@ -610,15 +720,15 @@ export function setPlayerMarketStatus(
 ): TeamConfig {
   return {
     ...team,
-    players: team.players.map((player) =>
-      player.id === playerId
-        ? {
-            ...player,
-            marketStatus: status,
-            askingPrice: status === "listed" ? nextAskingPrice : undefined,
-          }
-        : player,
-    ),
+    players: team.players.map((player) => {
+      if (player.id !== playerId) return player;
+      if (player.forcedListedForDebt && status !== "listed") return player;
+      return {
+        ...player,
+        marketStatus: status,
+        askingPrice: status === "listed" ? nextAskingPrice : undefined,
+      };
+    }),
   };
 }
 
@@ -758,6 +868,7 @@ function replaceInSquads(
     clubId: buyerId,
     marketStatus: "available",
     askingPrice: undefined,
+    forcedListedForDebt: false,
   };
 
   if (buyerId === PLAYER_ID) {
@@ -952,22 +1063,24 @@ function completeTransfer(
     },
   };
 
-  return {
-    state: addNews(
-      nextState,
-      `${offer.playerName} transferred from ${offer.toClubName} to ${
-        offer.fromClubName
-      } for $${Math.round(amount / 1_000_000)}M.`,
-      {
-        kind: "transfer",
-        playerId: offer.playerId,
-        clubIds: [offer.toClubId, offer.fromClubId],
-        amount,
-      },
-    ),
-    team: moved.team,
-    league: moved.league,
-  };
+  const completedState = addNews(
+    nextState,
+    `${offer.playerName} transferred from ${offer.toClubName} to ${
+      offer.fromClubName
+    } for $${Math.round(amount / 1_000_000)}M.`,
+    {
+      kind: "transfer",
+      playerId: offer.playerId,
+      clubIds: [offer.toClubId, offer.fromClubId],
+      amount,
+    },
+  );
+
+  return enforceDebtTransferListings(
+    completedState,
+    moved.team,
+    moved.league,
+  );
 }
 
 export function respondToOffer(
@@ -1503,27 +1616,24 @@ function applyWeeklyWages(
 
     const weeklyCharge = Math.max(0, finance.payroll);
     const charge = weeklyCharge * weeksDue;
-    const nextBudget = finance.budget - charge;
     if (clubId === PLAYER_ID) playerCharge = charge;
 
-    // Count only the individual paid weeks that actually ended below zero.
-    // This stays accurate when a restored save catches up several weeks at once.
-    const firstDebtWeek =
-      weeklyCharge <= 0
-        ? Number.POSITIVE_INFINITY
-        : finance.budget < 0
-          ? 1
-          : Math.floor(finance.budget / weeklyCharge) + 1;
-    const newlyInsolventWeeks = Math.max(0, weeksDue - firstDebtWeek + 1);
+    // Track consecutive paid weeks ending below zero. Recovering to a
+    // non-negative balance resets the streak immediately.
+    let runningBudget = finance.budget;
+    let insolventWeeks = sameSeason ? finance.insolventWeeks : 0;
+    for (let dueWeek = 0; dueWeek < weeksDue; dueWeek += 1) {
+      runningBudget -= weeklyCharge;
+      insolventWeeks = runningBudget < 0 ? insolventWeeks + 1 : 0;
+    }
 
     finances[clubId] = {
       ...finance,
-      budget: nextBudget,
+      budget: runningBudget,
       wagesPaid: (sameSeason ? finance.wagesPaid : 0) + charge,
       lastWageSeason: season,
       lastWageWeek: week,
-      insolventWeeks:
-        (sameSeason ? finance.insolventWeeks : 0) + newlyInsolventWeeks,
+      insolventWeeks,
     };
   });
 
@@ -1552,21 +1662,26 @@ export function processTransferWeek(
   league: LeagueState,
 ): TransferActionResult {
   const normalized = normalizeMarket(rawState, team, league);
-  const state = applyWeeklyWages(normalized, league);
+  const wageState = applyWeeklyWages(normalized, league);
+  const debtAdjusted = enforceDebtTransferListings(wageState, team, league);
   const season = league.season ?? 1;
 
   if (season <= 1) {
     return {
       state: {
-        ...state,
-        week: league.trainingWeek ?? state.week,
+        ...debtAdjusted.state,
+        week: league.trainingWeek ?? debtAdjusted.state.week,
       },
-      team,
-      league,
+      team: debtAdjusted.team,
+      league: debtAdjusted.league,
     };
   }
 
-  const resolved = resolveExistingOffers(state, team, league);
+  const resolved = resolveExistingOffers(
+    debtAdjusted.state,
+    debtAdjusted.team,
+    debtAdjusted.league,
+  );
   const generated = generateAIMarketActivity(
     resolved.state,
     resolved.team,
@@ -1650,15 +1765,16 @@ export function awardSeasonPrize(
   sorted.forEach((entry, index) => {
     const finance = finances[entry.id];
     const prize = prizeByPlace[index] ?? 5_000_000;
+    const nextBudget = (finance?.budget ?? 0) + prize;
     const nextFinance: ClubFinance = {
       clubId: entry.id,
-      budget: (finance?.budget ?? 0) + prize,
+      budget: nextBudget,
       wageBudget: finance?.wageBudget ?? 0,
       payroll: finance?.payroll ?? 0,
       wagesPaid: finance?.wagesPaid ?? 0,
       lastWageSeason: finance?.lastWageSeason ?? season,
       lastWageWeek: finance?.lastWageWeek ?? (league.trainingWeek ?? 0),
-      insolventWeeks: finance?.insolventWeeks ?? 0,
+      insolventWeeks: nextBudget >= 0 ? 0 : finance?.insolventWeeks ?? 0,
       sales: finance?.sales ?? 0,
       purchases: finance?.purchases ?? 0,
       prizeMoney: (finance?.prizeMoney ?? 0) + prize,

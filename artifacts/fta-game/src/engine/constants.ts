@@ -46,29 +46,33 @@ export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
 
 export const GOALS_TO_WIN = 3;
-export const MAX_MATCH_TURNS = 40;
+export const MAX_MATCH_TURNS = 30;
 export const PLAYERS_PER_TEAM = 6;
 
 export const AI_SHOT_RANGE = 200;
 export const AI_PASS_SAFE_DISTANCE = 120;
 
-// Speed stat → tile range per turn.
-// All ordinary players are capped at 2 tiles. Ghost Run is the only ability
-// that unlocks the elite 3-tile band at speed 9-10.
-export function speedToTiles(speed: number, ability?: string): number {
+// Movement stat → selectable tile range per turn.
+// Ordinary players are capped at 2 tiles. Ghost Run is the only ability that
+// unlocks the elite 3-tile band at Movement 9-10.
+export function movementToTiles(movement: number, ability?: string): number {
   const naturalRange = Math.min(
     3,
-    Math.ceil(Math.max(1, Math.min(10, speed)) / 4),
+    Math.ceil(Math.max(1, Math.min(10, movement)) / 4),
   );
   return ability === "ghost_run" ? naturalRange : Math.min(2, naturalRange);
 }
 
-// Compute linear pixel speed so the player covers their legal tile range in
-// roughly 75% of the turn. The same Ghost Run cap applies to both range and
-// visible running speed, so ordinary 9-10 speed players do not secretly move
-// at 3-tile pace.
+// Speed controls the player's actual running pace inside the route allowed by
+// Movement. Ordinary players remain capped at a 2-tile pace; Ghost Run can
+// reach the elite 3-tile pace at Speed 9-10.
 export function getLinearPixelSpeed(speed: number, ability?: string): number {
-  const tiles = speedToTiles(speed, ability);
+  const naturalPace = Math.min(
+    3,
+    Math.ceil(Math.max(1, Math.min(10, speed)) / 4),
+  );
+  const paceTiles =
+    ability === "ghost_run" ? naturalPace : Math.min(2, naturalPace);
   const targetTicks = TICKS_PER_TURN * 0.75;
-  return (tiles * TILE_W) / (targetTicks * DELTA);
+  return (paceTiles * TILE_W) / (targetTicks * DELTA);
 }

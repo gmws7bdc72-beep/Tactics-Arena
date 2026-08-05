@@ -16,6 +16,7 @@ import {
 } from "../game/training";
 import {
   awardSeasonPrize,
+  enforceDebtTransferListings,
   loadTransferMarket,
   normalizeMarket,
   saveTransferMarket,
@@ -284,13 +285,22 @@ export function useGameState() {
         nextTeam,
         nextLeague,
       );
-      setTeamState(nextTeam);
-      setLeagueState(nextLeague);
-      setMarketState(normalizedMarket);
-      saveTeam(nextTeam);
-      saveLeague(nextLeague);
-      saveTransferMarket(normalizedMarket);
-      saveCareerSnapshot(nextTeam, nextLeague, normalizedMarket);
+      const debtAdjusted = enforceDebtTransferListings(
+        normalizedMarket,
+        nextTeam,
+        nextLeague,
+      );
+      setTeamState(debtAdjusted.team);
+      setLeagueState(debtAdjusted.league);
+      setMarketState(debtAdjusted.state);
+      saveTeam(debtAdjusted.team);
+      saveLeague(debtAdjusted.league);
+      saveTransferMarket(debtAdjusted.state);
+      saveCareerSnapshot(
+        debtAdjusted.team,
+        debtAdjusted.league,
+        debtAdjusted.state,
+      );
     },
     [league, team, market],
   );

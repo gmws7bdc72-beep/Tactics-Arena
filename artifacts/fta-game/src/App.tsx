@@ -159,15 +159,12 @@ export default function App() {
   const [showTutorialWelcome, setShowTutorialWelcome] = useState(() =>
     shouldShowTutorialWelcome(),
   );
-  const knownIncomingOfferIds = useRef(
-    new Set(
-      market.offers
-        .filter(
-          (offer) =>
-            offer.toClubId === PLAYER_TEAM_ID_CONST &&
-            (offer.status === "pending" || offer.status === "countered"),
-        )
-        .map((offer) => offer.id),
+  const knownOfferStates = useRef(
+    new Map(
+      market.offers.map((offer) => [
+        offer.id,
+        `${offer.status}:${offer.counterAmount ?? ""}:${offer.counteredByClubId ?? ""}`,
+      ]),
     ),
   );
 
@@ -188,38 +185,56 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const activeIncoming = market.offers.filter(
-      (offer) =>
+    const notices: Array<{
+      kind: "offer" | "counter";
+      offer: (typeof market.offers)[number];
+    }> = [];
+
+    market.offers.forEach((offer) => {
+      const signature = `${offer.status}:${offer.counterAmount ?? ""}:${offer.counteredByClubId ?? ""}`;
+      const previous = knownOfferStates.current.get(offer.id);
+
+      const isNewIncomingOffer =
+        previous === undefined &&
         offer.toClubId === PLAYER_TEAM_ID_CONST &&
-        (offer.status === "pending" || offer.status === "countered"),
-    );
-    const newOffers = activeIncoming.filter(
-      (offer) => !knownIncomingOfferIds.current.has(offer.id),
-    );
+        offer.status === "pending";
 
-    activeIncoming.forEach((offer) =>
-      knownIncomingOfferIds.current.add(offer.id),
-    );
+      const isCounterofferForPlayer =
+        offer.fromClubId === PLAYER_TEAM_ID_CONST &&
+        offer.status === "countered" &&
+        offer.counteredByClubId !== PLAYER_TEAM_ID_CONST &&
+        previous !== signature;
 
-    if (newOffers.length === 0) return;
+      if (isNewIncomingOffer) notices.push({ kind: "offer", offer });
+      if (isCounterofferForPlayer) notices.push({ kind: "counter", offer });
 
-    const latest = newOffers[0];
-    toast(
-      newOffers.length === 1
-        ? "📩 New transfer offer"
-        : `📩 ${newOffers.length} new transfer offers`,
-      {
-        description:
-          newOffers.length === 1
-            ? `${latest.fromClubName} offered ${formatMoney(
-                latest.counterAmount ?? latest.amount,
-              )} for ${latest.playerName}. Check Market → Offers.`
-            : `Latest: ${latest.fromClubName} offered ${formatMoney(
-                latest.counterAmount ?? latest.amount,
-              )} for ${latest.playerName}.`,
-        duration: 2200,
-      },
-    );
+      knownOfferStates.current.set(offer.id, signature);
+    });
+
+    if (notices.length === 0) return;
+
+    const latest = notices[notices.length - 1];
+    const counterCount = notices.filter((notice) => notice.kind === "counter").length;
+    const offerCount = notices.length - counterCount;
+
+    const title =
+      notices.length === 1
+        ? latest.kind === "counter"
+          ? "🔁 New counteroffer"
+          : "📩 New transfer offer"
+        : counterCount > 0 && offerCount > 0
+          ? `📩 ${notices.length} transfer updates`
+          : counterCount > 0
+            ? `🔁 ${counterCount} new counteroffers`
+            : `📩 ${offerCount} new transfer offers`;
+
+    const amount = latest.offer.counterAmount ?? latest.offer.amount;
+    const description =
+      latest.kind === "counter"
+        ? `${latest.offer.toClubName} countered at ${formatMoney(amount)} for ${latest.offer.playerName}. Check Market → Offers.`
+        : `${latest.offer.fromClubName} offered ${formatMoney(amount)} for ${latest.offer.playerName}. Check Market → Offers.`;
+
+    toast(title, { description, duration: 2600 });
   }, [market.offers]);
 
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
@@ -573,7 +588,6 @@ export default function App() {
           team={team}
           onSave={(t: TeamConfig) => {
             updateTeam(t);
-            goToMenuTab("home");
           }}
           initialTab={setupTab}
           onBack={() => goToMenuTab("home")}

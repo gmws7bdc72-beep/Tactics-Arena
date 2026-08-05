@@ -39,7 +39,7 @@ import {
   GRID_COLS,
   GRID_ROWS,
   getLinearPixelSpeed,
-  speedToTiles,
+  movementToTiles,
   BALL_RADIUS,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
@@ -996,7 +996,7 @@ function snapshotFrame(
       jerseyNumber: p.jerseyNumber,
       role: p.role,
       appearance: p.appearance,
-      tileRange: speedToTiles(p.stats.speed, p.ability),
+      tileRange: movementToTiles(p.stats.movement, p.ability),
       offside: offsidePlayers.has(p.id),
     })),
     ball: {

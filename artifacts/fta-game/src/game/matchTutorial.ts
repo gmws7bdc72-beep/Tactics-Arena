@@ -71,7 +71,7 @@ export const MATCH_TUTORIAL_STEPS: MatchTutorialStep[] = [
   {
     title: "Create a short run",
     body: "Tap a reachable tile ahead of the selected player. The solid route is a real command that will be attempted during the next phase.",
-    hint: "Ordinary players can run at most two tiles. Ghost Run can unlock the third tile.",
+    hint: "Movement sets the selectable route: ordinary players can target at most two tiles, while Ghost Run can unlock a third. Speed controls how quickly the player travels that route.",
     focus: "pitch",
     requirement: "move",
     scene: "movement",

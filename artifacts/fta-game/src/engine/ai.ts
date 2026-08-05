@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
+import { GRID_COLS, GRID_ROWS, movementToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
 import {
   curvePointLimitForCommand,
   curveRouteFitsMoveBudget,
@@ -149,7 +149,7 @@ function moveStep(
 
   const isGK = player.role === "goalkeeper";
   // GK gets 2 tiles so they can quickly return to goal after chasing loose balls
-  const range = isGK ? 2 : speedToTiles(player.stats.speed, player.ability);
+  const range = isGK ? 2 : movementToTiles(player.stats.movement, player.ability);
   const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
 
   let best: TilePos = from;
@@ -183,7 +183,7 @@ function chaseLooseBall(
   _friendly: Set<string>
 ): Command {
   const isGK = player.role === "goalkeeper";
-  const range = speedToTiles(player.stats.speed, player.ability); // full speed — not the GK-limited 1
+  const range = movementToTiles(player.stats.movement, player.ability); // full Movement range — not the GK-limited range
   const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId);
 
   // GK targets ball clamped to their zone; outfield targets ball directly
@@ -691,7 +691,7 @@ function pressCarrier(
   };
 
   const isGK = player.role === "goalkeeper";
-  const range = isGK ? 2 : speedToTiles(player.stats.speed, player.ability);
+  const range = isGK ? 2 : movementToTiles(player.stats.movement, player.ability);
   const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
 
   let best: TilePos = from;
@@ -791,7 +791,7 @@ function tier1Possession(
       //     Creates better angles and draws defenders before the pass.
       if (isDeepBuilder && !fwdThreat) {
         if (Math.random() < 0.65) {
-          const dribRange = Math.min(2, speedToTiles(player.stats.speed, player.ability));
+          const dribRange = Math.min(2, movementToTiles(player.stats.movement, player.ability));
           const destCol = Math.max(0, pt.col - dribRange);
           // Coordinate receiver to stay at their current tile
           const fwdMoveTile = posToTile(fwdTarget.position);
@@ -822,14 +822,14 @@ function tier1Possession(
       // 4d. Dribbler style with space → Move+Pass at higher pace
       if (style === "dribbler") {
         if (Math.random() < 0.55) {
-          const dribRange = speedToTiles(player.stats.speed, player.ability);
+          const dribRange = movementToTiles(player.stats.movement, player.ability);
           const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
           const dribblerFwdTile = posToTile(fwdTarget.position);
           if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: dribblerFwdTile };
           return moveAndPass(destTile, fwdTarget);
         }
         // Otherwise just carry with a slight row juke
-        const dribRange = speedToTiles(player.stats.speed, player.ability);
+        const dribRange = movementToTiles(player.stats.movement, player.ability);
         const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
         return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
       }
@@ -873,7 +873,7 @@ function tier1Possession(
     // 6. No pass: dribble forward with a row juke
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
-      const dribRange = speedToTiles(player.stats.speed, player.ability);
+      const dribRange = movementToTiles(player.stats.movement, player.ability);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
@@ -1093,7 +1093,7 @@ function tier2Possession(
       const advTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6)
         ?? bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (advTarget && Math.random() < 0.45) {
-        const dribRange = speedToTiles(player.stats.speed, player.ability);
+        const dribRange = movementToTiles(player.stats.movement, player.ability);
         const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
         return moveAndPass(destTile, advTarget);
       }
@@ -1145,7 +1145,7 @@ function tier2Possession(
     // Dribble forward with a row juke to sidestep defenders.
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
-      const dribRange = speedToTiles(player.stats.speed, player.ability);
+      const dribRange = movementToTiles(player.stats.movement, player.ability);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
@@ -1263,8 +1263,8 @@ function tier3Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // Just dribble forward — very predictable; still uses player's speed range
-    const dribRange = speedToTiles(player.stats.speed, player.ability);
+    // Just dribble forward — very predictable; still uses the player's Movement range
+    const dribRange = movementToTiles(player.stats.movement, player.ability);
     return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
@@ -1394,7 +1394,7 @@ function addTacticalCurve(
         player.position,
         curvePoints,
         target,
-        player.stats.speed,
+        player.stats.movement,
         player.ability,
       );
     if (curvePoints && routeAllowed) primary = { ...command, curvePoints };
@@ -1848,7 +1848,7 @@ export function generateAICommands(
         const isGK = player.role === "goalkeeper";
 
         if (!isGK) {
-          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed, player.ability));
+          const fwd = Math.max(0, pt.col - movementToTiles(player.stats.movement, player.ability));
 
           cmd = {
             type: CommandType.MOVE,
@@ -2074,10 +2074,10 @@ function bestLongBallTarget(
   const pick = candidates[0];
   if (!pick) return null;
 
-  const runnerSpeed = statOr(pick.p.stats.speed, 6);
+  const runnerMovement = statOr(pick.p.stats.movement, 6);
   const lead = tactic.progression === "counter" || tactic.id === "quick_counterattack" ? 2 : 1;
   const landingTile: TilePos = {
-    col: Math.max(1, pick.t.col - Math.min(lead, Math.max(1, speedToTiles(runnerSpeed, pick.p.ability) - 1))),
+    col: Math.max(1, pick.t.col - Math.min(lead, Math.max(1, movementToTiles(runnerMovement, pick.p.ability) - 1))),
     row: Math.max(0, Math.min(GRID_ROWS - 1, pick.t.row)),
   };
 
@@ -2666,7 +2666,7 @@ function interceptFutureBallTile(
 
 function receiverReachableTile(receiver: SimPlayer, wantedTile: TilePos): TilePos {
   const from = posToTile(receiver.position);
-  const maxStep = speedToTiles(receiver.stats.speed, receiver.ability);
+  const maxStep = movementToTiles(receiver.stats.movement, receiver.ability);
 
   const dc = Math.sign(wantedTile.col - from.col);
   const dr = Math.sign(wantedTile.row - from.row);
@@ -2696,7 +2696,7 @@ function predictPlayerReachTiles(playerPlayers: SimPlayer[]): Set<string> {
 
   for (const p of playerPlayers) {
     const t = posToTile(p.position);
-    const range = speedToTiles(p.stats.speed, p.ability);
+    const range = movementToTiles(p.stats.movement, p.ability);
     const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId);
 
     for (const r of reachable) {
@@ -2843,7 +2843,7 @@ function possessionRiskBuffCommand(
   return {
     type: CommandType.MOVE,
     targetPosition: tileToPos(
-      Math.max(0, pt.col - speedToTiles(player.stats.speed, player.ability)),
+      Math.max(0, pt.col - movementToTiles(player.stats.movement, player.ability)),
       pt.row,
     ),
   };
@@ -3245,7 +3245,7 @@ function creativeCarryBuffCommand(
 
   const hardPressed = isHardPressed(pt, playerPlayers);
 
-  const range = speedToTiles(player.stats.speed, player.ability);
+  const range = movementToTiles(player.stats.movement, player.ability);
 
   const reachable = getReachableTiles(
     pt.col,

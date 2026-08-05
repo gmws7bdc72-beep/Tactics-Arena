@@ -1,10 +1,10 @@
 import type { Command, PlayerStats, Vec2 } from "./types";
 import { CommandType } from "./types";
 import {
-  getLinearPixelSpeed,
+  movementToTiles,
   PITCH_HEIGHT,
   PITCH_WIDTH,
-  TURN_DURATION,
+  TILE_W,
 } from "./constants";
 
 export type CurveMechanic = "move" | "groundPass" | "longPass" | "shot";
@@ -333,10 +333,10 @@ export function curveRouteFitsMoveBudget(
   start: Vec2,
   controls: Vec2[],
   target: Vec2,
-  speed: number,
+  movement: number,
   ability?: string,
 ): boolean {
-  const maximumDistance = getLinearPixelSpeed(speed, ability) * TURN_DURATION;
+  const maximumDistance = movementToTiles(movement, ability) * TILE_W;
   return curveRouteLength(start, controls, target) <= maximumDistance + 1;
 }
 

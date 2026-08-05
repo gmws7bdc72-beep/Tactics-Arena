@@ -1,0 +1,13 @@
+FTA-A13
+
+- Adds brief toast notifications when an AI club counters one of your transfer bids.
+- Movement now determines selectable tile range; Speed determines how quickly the player covers that route.
+- Keeps the existing Ghost Run rule: ordinary players are capped at two tiles, while eligible Ghost Run players can unlock three.
+- Reduces the maximum match length from 40 turns to 30 in normal and online matches.
+- Team Setup now autosaves lineup swaps, formation changes, player names, market settings, training focus, and training intensity.
+- Removes the bottom save button and adds an Autosaves indicator.
+- Shows all 14 attributes when a starter or reserve is expanded in Team Setup.
+- Tracks consecutive paid weeks below zero for every club.
+- After more than two consecutive paid weeks in debt, a club's two highest-rated players are automatically transfer-listed.
+- Debt-forced listings cannot be removed or changed to untouchable while the club remains below zero.
+- Forced locks clear immediately when transfers or prize money restore the club to a non-negative balance.

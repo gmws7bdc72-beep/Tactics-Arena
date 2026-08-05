@@ -1,6 +1,6 @@
 import type { Command, MatchStats, SimBall, SimPlayer, TeamTactic, Vec2 } from "../engine/types";
 import { CommandType } from "../engine/types";
-import { GRID_COLS, GRID_ROWS, TILE_H, TILE_W, speedToTiles } from "../engine/constants";
+import { GRID_COLS, GRID_ROWS, TILE_H, TILE_W, movementToTiles } from "../engine/constants";
 import { posToTile, tileToPos } from "../engine/grid";
 
 const KEY = "fta_hidden_tactical_memory_v1";
@@ -246,7 +246,7 @@ function seeded(seed: number): () => number {
 function clampTileTarget(player: SimPlayer, target: Vec2, rowShift: number, colShift: number): Vec2 {
   const from = posToTile(player.position);
   const original = posToTile(target);
-  const maxRange = speedToTiles(player.stats.speed, player.ability);
+  const maxRange = movementToTiles(player.stats.movement, player.ability);
   let col = Math.max(0, Math.min(GRID_COLS - 1, original.col + colShift));
   let row = Math.max(0, Math.min(GRID_ROWS - 1, original.row + rowShift));
   const dc = col - from.col;
