@@ -451,14 +451,22 @@ function keepGoalkeeperFirst(players: PlayerCard[]): PlayerCard[] {
   return ordered;
 }
 
-function sellerCanRelease(players: PlayerCard[], playerId: string): boolean {
+function sellerCanRelease(
+  players: PlayerCard[],
+  playerId: string,
+  replacementGoalkeeper?: PlayerCard,
+): boolean {
   const player = players.find((item) => item.id === playerId);
   if (!player) return false;
 
   const remaining = players.filter((item) => item.id !== playerId);
+  const keepsGoalkeeper = remaining.some((item) => item.role === "goalkeeper");
+  const receivesGoalkeeperSwap =
+    player.role === "goalkeeper" && replacementGoalkeeper?.role === "goalkeeper";
+
   return (
-    remaining.length >= MIN_MATCH_SQUAD_SIZE &&
-    remaining.some((item) => item.role === "goalkeeper")
+    remaining.length + (receivesGoalkeeperSwap ? 1 : 0) >= MIN_MATCH_SQUAD_SIZE &&
+    (keepsGoalkeeper || receivesGoalkeeperSwap)
   );
 }
 
@@ -469,12 +477,18 @@ function buyerCanRegister(
   amount: number,
 ): string | null {
   if (!finance) return "The buying club has no finance record.";
-  if (players.length >= MAX_SQUAD_SIZE)
+  const replacedGoalkeeper =
+    player.role === "goalkeeper"
+      ? players.find((current) => current.role === "goalkeeper")
+      : undefined;
+  const effectiveSquadSize = players.length - (replacedGoalkeeper ? 1 : 0);
+  if (effectiveSquadSize >= MAX_SQUAD_SIZE)
     return "The buying squad is already full.";
   if (amount > finance.budget) return "The buying club cannot afford the fee.";
 
   const wage = player.weeklyWage ?? 0;
-  if (finance.payroll + wage > finance.wageBudget) {
+  const replacedWage = replacedGoalkeeper?.weeklyWage ?? 0;
+  if (finance.payroll - replacedWage + wage > finance.wageBudget) {
     return "The buying club has no room in its wage budget.";
   }
 
@@ -766,7 +780,13 @@ export function placeUserOffer(
     return addNews(state, `${player.name} is not available for transfer.`);
   }
 
-  if (!sellerCanRelease(seller.players, player.id)) {
+  if (!sellerCanRelease(
+    seller.players,
+    player.id,
+    player.role === "goalkeeper"
+      ? team.players.find((item) => item.role === "goalkeeper")
+      : undefined,
+  )) {
     return addNews(
       state,
       `Offer blocked: ${seller.name} must keep six players and a goalkeeper.`,
@@ -841,27 +861,43 @@ function replaceInSquads(
   league: LeagueState;
   player?: PlayerCard;
 } {
-  let bought: PlayerCard | undefined;
-  const nextTeam: TeamConfig = {
-    ...team,
-    players: [...team.players],
-  };
+  const nextTeam: TeamConfig = { ...team, players: [...team.players] };
   const aiSquads = { ...(league.aiSquads ?? {}) };
 
-  if (sellerId === PLAYER_ID) {
-    bought = nextTeam.players.find((player) => player.id === playerId);
-    nextTeam.players = keepGoalkeeperFirst(
-      nextTeam.players.filter((player) => player.id !== playerId),
-    );
-  } else {
-    const sellerSquad = [...(aiSquads[sellerId] ?? aiBaseSquad(sellerId))];
-    bought = sellerSquad.find((player) => player.id === playerId);
-    aiSquads[sellerId] = keepGoalkeeperFirst(
-      sellerSquad.filter((player) => player.id !== playerId),
-    );
-  }
+  const getSquad = (clubId: string): PlayerCard[] =>
+    clubId === PLAYER_ID
+      ? [...nextTeam.players]
+      : [...(aiSquads[clubId] ?? aiBaseSquad(clubId))];
+  const setSquad = (clubId: string, players: PlayerCard[]) => {
+    const ordered = keepGoalkeeperFirst(players);
+    if (clubId === PLAYER_ID) nextTeam.players = ordered;
+    else aiSquads[clubId] = ordered;
+  };
 
+  const sellerSquad = getSquad(sellerId);
+  const buyerSquad = getSquad(buyerId);
+  const bought = sellerSquad.find((player) => player.id === playerId);
   if (!bought) return { team, league };
+
+  const displacedGoalkeeper =
+    bought.role === "goalkeeper"
+      ? buyerSquad.find((player) => player.role === "goalkeeper")
+      : undefined;
+
+  const nextSeller = sellerSquad.filter((player) => player.id !== playerId);
+  const nextBuyer = displacedGoalkeeper
+    ? buyerSquad.filter((player) => player.id !== displacedGoalkeeper.id)
+    : buyerSquad;
+
+  if (displacedGoalkeeper) {
+    nextSeller.push({
+      ...displacedGoalkeeper,
+      clubId: sellerId,
+      marketStatus: "available",
+      askingPrice: undefined,
+      forcedListedForDebt: false,
+    });
+  }
 
   const moved: PlayerCard = {
     ...bought,
@@ -870,15 +906,10 @@ function replaceInSquads(
     askingPrice: undefined,
     forcedListedForDebt: false,
   };
+  nextBuyer.push(moved);
 
-  if (buyerId === PLAYER_ID) {
-    nextTeam.players = keepGoalkeeperFirst([...nextTeam.players, moved]);
-  } else {
-    aiSquads[buyerId] = keepGoalkeeperFirst([
-      ...(aiSquads[buyerId] ?? aiBaseSquad(buyerId)),
-      moved,
-    ]);
-  }
+  setSquad(sellerId, nextSeller);
+  setSquad(buyerId, nextBuyer);
 
   return {
     team: nextTeam,
@@ -914,7 +945,13 @@ function completeTransfer(
     };
   }
 
-  if (!sellerCanRelease(seller.players, player.id)) {
+  if (!sellerCanRelease(
+    seller.players,
+    player.id,
+    player.role === "goalkeeper"
+      ? buyer.players.find((item) => item.role === "goalkeeper")
+      : undefined,
+  )) {
     const next = {
       ...state,
       offers: state.offers.map(
@@ -961,6 +998,11 @@ function completeTransfer(
     };
   }
 
+  const displacedGoalkeeper =
+    player.role === "goalkeeper"
+      ? buyer.players.find((item) => item.role === "goalkeeper")
+      : undefined;
+
   const moved = replaceInSquads(
     team,
     league,
@@ -978,18 +1020,19 @@ function completeTransfer(
   }
 
   const wage = moved.player.weeklyWage ?? 0;
+  const displacedWage = displacedGoalkeeper?.weeklyWage ?? 0;
   const finances: Record<string, ClubFinance> = {
     ...state.finances,
     [offer.fromClubId]: {
       ...buyerFinance,
       budget: buyerFinance.budget - amount,
-      payroll: buyerFinance.payroll + wage,
+      payroll: Math.max(0, buyerFinance.payroll - displacedWage + wage),
       purchases: buyerFinance.purchases + amount,
     },
     [offer.toClubId]: {
       ...sellerFinance,
       budget: sellerFinance.budget + amount,
-      payroll: Math.max(0, sellerFinance.payroll - wage),
+      payroll: Math.max(0, sellerFinance.payroll - wage + displacedWage),
       sales: sellerFinance.sales + amount,
     },
   };
@@ -1353,7 +1396,7 @@ function roleBucket(player: PlayerCard): RoleBucket {
 }
 
 function desiredRoleCount(bucket: RoleBucket, squadSize: number): number {
-  if (bucket === "goalkeeper") return squadSize >= 13 ? 2 : 1;
+  if (bucket === "goalkeeper") return 1;
   if (bucket === "defender") return Math.max(3, Math.round(squadSize * 0.3));
   if (bucket === "midfielder") return Math.max(3, Math.round(squadSize * 0.3));
   return Math.max(3, Math.round(squadSize * 0.28));
@@ -1410,6 +1453,15 @@ function tacticalIdentityFit(
       core = averagePlayerStats(player, ["passing", "movement", "stamina"]);
   }
 
+  if (player.role === "goalkeeper" && player.ability === "sweeper_keeper") {
+    const wantsSweeper =
+      team.tacticId === "slow_possession" ||
+      team.tacticId === "balanced_build_up" ||
+      team.tacticId === "counter_press" ||
+      team.tacticId === "quick_counterattack";
+    abilityBonus += wantsSweeper ? 22 : 3;
+  }
+
   return core * 3.5 + abilityBonus;
 }
 
@@ -1432,6 +1484,21 @@ function targetScore(
   const potential = player.potential ?? getPlayerOverall(player);
   const value = player.marketValue ?? fee;
   const valueScore = value > 0 ? Math.min(12, (value / fee) * 6) : 0;
+  const currentGoalkeeper = buyerPlayers.find((item) => item.role === "goalkeeper");
+  const sweeperFriendly =
+    buyerDefinition.tacticId === "slow_possession" ||
+    buyerDefinition.tacticId === "balanced_build_up" ||
+    buyerDefinition.tacticId === "counter_press" ||
+    buyerDefinition.tacticId === "quick_counterattack";
+  const goalkeeperReplacementBonus =
+    player.role === "goalkeeper" &&
+    player.ability === "sweeper_keeper" &&
+    currentGoalkeeper?.ability !== "sweeper_keeper" &&
+    sweeperFriendly
+      ? 85
+      : player.role === "goalkeeper" && currentGoalkeeper
+        ? -55
+        : 0;
 
   return (
     shortage * 40 +
@@ -1439,6 +1506,7 @@ function targetScore(
     potential * 0.12 +
     valueScore +
     tacticalIdentityFit(buyerDefinition, player) +
+    goalkeeperReplacementBonus +
     Math.random() * 8
   );
 }
@@ -1492,7 +1560,7 @@ function generateAIMarketActivity(
 
     const clubs = allClubPlayers(nextTeam, nextLeague);
     const buyer = clubs.find((club) => club.id === aiDefinition.id);
-    if (!buyer || buyer.players.length >= MAX_SQUAD_SIZE) continue;
+    if (!buyer) continue;
 
     const finance = nextState.finances[buyer.id];
     if (!finance) continue;
@@ -1502,7 +1570,13 @@ function generateAIMarketActivity(
       .flatMap((seller) => seller.players.map((player) => ({ player, seller })))
       .filter(({ player, seller }) => {
         if (player.marketStatus !== "listed") return false;
-        if (!sellerCanRelease(seller.players, player.id)) return false;
+        if (!sellerCanRelease(
+          seller.players,
+          player.id,
+          player.role === "goalkeeper"
+            ? buyer.players.find((item) => item.role === "goalkeeper")
+            : undefined,
+        )) return false;
 
         const fee = askingPrice(player);
         if (fee > finance.budget * 0.7) return false;

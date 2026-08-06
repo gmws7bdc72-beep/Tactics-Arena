@@ -1094,6 +1094,7 @@ export default function TeamSetup({
                   development.focus,
                 );
                 const history = development.history.slice(-6);
+                const lastAbilityUnlock = history[history.length - 1]?.abilityUnlocked;
                 const expanded = expandedTrainingId === player.id;
 
                 return (
@@ -1129,6 +1130,11 @@ export default function TeamSetup({
                             {development.lastWeekGrowth > 0 && (
                               <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[8px] font-black text-emerald-400">
                                 IMPROVED
+                              </span>
+                            )}
+                            {lastAbilityUnlock && (
+                              <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[8px] font-black text-violet-300">
+                                {ABILITIES[lastAbilityUnlock].name.toUpperCase()}
                               </span>
                             )}
                           </div>
@@ -1315,8 +1321,13 @@ export default function TeamSetup({
                                       {entry.progressGain}% progress
                                     </div>
                                   </div>
-                                  <div className="max-w-[48%] text-right text-[9px] font-bold text-emerald-400">
-                                    {statGainText(entry.statGains)}
+                                  <div className="max-w-[52%] text-right text-[9px] font-bold text-emerald-400">
+                                    <div>{statGainText(entry.statGains)}</div>
+                                    {entry.abilityUnlocked && (
+                                      <div className="mt-1 text-violet-300">
+                                        Learned {ABILITIES[entry.abilityUnlocked].name}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               ))}

@@ -47,6 +47,12 @@ export const ABILITIES: Record<AbilityId, Ability> = {
     name: "Goalkeeper",
     description: "+35% save rate on shots and superior loose-ball control",
   },
+  sweeper_keeper: {
+    id: "sweeper_keeper",
+    name: "Sweeper Keeper",
+    description:
+      "Elite goalkeeper who keeps the normal save bonus, moves at full pace, and may leave the penalty area to sweep danger",
+  },
   none: { id: "none", name: "No Ability", description: "No special ability" },
 };
 

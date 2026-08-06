@@ -1,4 +1,4 @@
-import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX } from "./constants";
+import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, goalkeeperColumnBounds } from "./constants";
 import type { Vec2 } from "./types";
 
 export function tileToPos(col: number, row: number): Vec2 {
@@ -37,7 +37,8 @@ export function getReachableTiles(
   row: number,
   range: number,
   isGK: boolean,
-  teamId: "player" | "ai"
+  teamId: "player" | "ai",
+  ability?: string,
 ): { col: number; row: number }[] {
   const tiles: { col: number; row: number }[] = [];
   for (let dc = -range; dc <= range; dc++) {
@@ -49,8 +50,8 @@ export function getReachableTiles(
       const nr = row + dr;
       if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
       if (isGK) {
-        if (teamId === "player" && (nc < GK_COLS_PLAYER_MIN || nc > GK_COLS_PLAYER_MAX)) continue;
-        if (teamId === "ai" && (nc < GK_COLS_AI_MIN || nc > GK_COLS_AI_MAX)) continue;
+        const bounds = goalkeeperColumnBounds(teamId, ability);
+        if (nc < bounds.min || nc > bounds.max) continue;
       }
       tiles.push({ col: nc, row: nr });
     }
@@ -70,11 +71,14 @@ export function tileKey(col: number, row: number): string {
 }
 
 // Clamp a tile to the GK zone
-export function clampToGKZone(col: number, row: number, teamId: "player" | "ai"): { col: number; row: number } {
-  if (teamId === "player") {
-    return { col: Math.max(GK_COLS_PLAYER_MIN, Math.min(GK_COLS_PLAYER_MAX, col)), row };
-  }
-  return { col: Math.max(GK_COLS_AI_MIN, Math.min(GK_COLS_AI_MAX, col)), row };
+export function clampToGKZone(
+  col: number,
+  row: number,
+  teamId: "player" | "ai",
+  ability?: string,
+): { col: number; row: number } {
+  const bounds = goalkeeperColumnBounds(teamId, ability);
+  return { col: Math.max(bounds.min, Math.min(bounds.max, col)), row };
 }
 
 
@@ -89,6 +93,7 @@ export function getDiveReachableTiles(
   row: number,
   range: number,
   teamId: "player" | "ai",
+  ability?: string,
 ): { col: number; row: number }[] {
   const tiles: { col: number; row: number }[] = [];
   for (let dc = -range; dc <= range; dc += 1) {
@@ -98,8 +103,8 @@ export function getDiveReachableTiles(
       const nc = col + dc;
       const nr = row + dr;
       if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
-      if (teamId === "player" && (nc < GK_COLS_PLAYER_MIN || nc > GK_COLS_PLAYER_MAX)) continue;
-      if (teamId === "ai" && (nc < GK_COLS_AI_MIN || nc > GK_COLS_AI_MAX)) continue;
+      const bounds = goalkeeperColumnBounds(teamId, ability);
+      if (nc < bounds.min || nc > bounds.max) continue;
       tiles.push({ col: nc, row: nr });
     }
   }

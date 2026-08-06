@@ -93,6 +93,8 @@ export interface DevelopmentHistoryEntry {
   overallBefore: number;
   overallAfter: number;
   moraleAfter: number;
+  /** Ability learned during this training week, when one was unlocked. */
+  abilityUnlocked?: AbilityId;
 }
 
 export interface PlayerDevelopment {
@@ -149,6 +151,7 @@ export type AbilityId =
   | "powerhouse"
   | "shadow_mark"
   | "goalkeeper"
+  | "sweeper_keeper"
   | "none";
 
 export interface Ability {
@@ -328,6 +331,8 @@ export interface FrameSnapshot {
     jerseyNumber: number;
     role: PlayerRole;
     appearance?: PlayerAppearance;
+    /** Ability copied from the authoritative SimPlayer into the render snapshot. */
+    ability: AbilityId;
     tileRange: number;
     offside?: boolean;
   }[];

@@ -1,0 +1,29 @@
+FTA-A14F — Ability development, Sweeper Keepers, and goalkeeper squad repair
+
+ABILITY DEVELOPMENT
+- Weekly training can now develop special abilities.
+- Reaching minimum attributes only makes an ability eligible; it never guarantees it.
+- Position suitability is evaluated first.
+- Higher relevant attributes and overall rating improve the unlock chance.
+- Age, morale, training focus, and a hidden player-specific affinity influence the weekly roll.
+- Outfield players can develop Ghost Run, Bullet Pass, Eagle Eye, Iron Tackle, Powerhouse, or Shadow Mark.
+- Training history records newly developed abilities and Team Setup displays them.
+
+SWEEPER KEEPER
+- Added Sweeper Keeper as a goalkeeper-only ability.
+- Requires strong Speed, Defense, Movement, Aerial, and overall quality before it can develop.
+- Only Sweeper Keepers may leave the penalty area.
+- Ordinary goalkeepers are confined to the same legal box limits for both the player and AI.
+- Removed the previous player-only extra-column goalkeeper advantage.
+- Sweeper Keepers receive an extended but bounded roaming zone and retain goalkeeper save behavior.
+
+AI
+- AI Sweeper Keepers rush through balls and dangerous loose balls, support possession build-up, and position higher when the tactic suits it.
+- Possession, balanced build-up, counter-pressing, and quick-counter teams are more likely to train or recruit a Sweeper Keeper.
+- AI transfer scoring values Sweeper Keepers according to tactical fit.
+
+GOALKEEPER SQUAD RULE
+- Every squad is normalized to exactly one goalkeeper.
+- Existing saves with duplicate goalkeepers keep the best one and replace extras with outfield players.
+- Reserve generation can no longer create an accidental second goalkeeper.
+- Goalkeeper transfers replace/exchange the current keeper so neither club ends with zero or two goalkeepers.

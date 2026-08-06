@@ -53,7 +53,19 @@ export function enrichMarketPlayer(raw: PlayerCard, clubId = raw.clubId ?? "free
 }
 
 function roleForIndex(index: number): PlayerCard["role"] {
-  const roles: PlayerCard["role"][] = ["goalkeeper","defender","defender","defender","midfielder","midfielder","midfielder","forward","forward","striker"];
+  // Every club already owns its one goalkeeper. Reserve generation must never
+  // silently create a second one.
+  const roles: PlayerCard["role"][] = [
+    "defender",
+    "defender",
+    "defender",
+    "midfielder",
+    "midfielder",
+    "midfielder",
+    "forward",
+    "forward",
+    "striker",
+  ];
   return roles[index % roles.length];
 }
 
@@ -96,13 +108,48 @@ export function getInitialSquadSize(clubId: string): number {
 
 export function expandSquad(players: PlayerCard[], clubId: string, tier: 1 | 2 | 3 = 2, season = 1): PlayerCard[] {
   registerGeneratedPlayerNames(players.map((player) => player.name));
-  const targetSize = Math.max(players.length, getInitialSquadSize(clubId));
-  const unique = new Map(players.map((player) => [player.id, enrichMarketPlayer(player, clubId, season)]));
+  const requestedSize = Math.min(
+    MAX_SQUAD_SIZE,
+    Math.max(players.length, getInitialSquadSize(clubId)),
+  );
+
+  const enriched = players.map((player) => enrichMarketPlayer(player, clubId, season));
+  const goalkeepers = enriched
+    .filter((player) => player.role === "goalkeeper")
+    .sort((a, b) => getPlayerOverall(b) - getPlayerOverall(a));
+  const outfield = enriched.filter((player) => player.role !== "goalkeeper");
+
+  let goalkeeper = goalkeepers[0];
+  if (!goalkeeper) {
+    const seed = hash(`${clubId}:${season}:required-goalkeeper`);
+    goalkeeper = enrichMarketPlayer(
+      {
+        id: `${clubId}_required_gk_${season}`,
+        name: generateUniquePlayerName(seed),
+        role: "goalkeeper",
+        jerseyNumber: 1,
+        ability: "goalkeeper",
+        stats: baseStats("goalkeeper", tier === 1 ? 7 : tier === 2 ? 6 : 5, seed),
+      },
+      clubId,
+      season,
+    );
+  }
+
+  const unique = new Map<string, PlayerCard>();
+  unique.set(goalkeeper.id, {
+    ...goalkeeper,
+    ability:
+      goalkeeper.ability === "sweeper_keeper" ? "sweeper_keeper" : "goalkeeper",
+  });
+  for (const player of outfield) unique.set(player.id, player);
+
   let index = 0;
-  while (unique.size < targetSize) {
+  while (unique.size < requestedSize) {
     const generated = generateReservePlayer(clubId, index++, tier, season);
     unique.set(generated.id, generated);
   }
+
   return [...unique.values()].slice(0, MAX_SQUAD_SIZE);
 }
 
@@ -181,7 +228,18 @@ function rollNewSaveAbility(
   template: PlayerCard,
   stats: PlayerStats,
 ): PlayerCard["ability"] {
-  if (template.role === "goalkeeper") return "goalkeeper";
+  if (template.role === "goalkeeper") {
+    const provisionalPlayer: PlayerCard = { ...template, stats, ability: "goalkeeper" };
+    const overall = getPlayerOverall(provisionalPlayer);
+    const sweeperEligible =
+      overall >= 75 &&
+      stats.speed >= 8 &&
+      stats.defense >= 8 &&
+      stats.movement >= 7;
+    return sweeperEligible && Math.random() < 0.22
+      ? "sweeper_keeper"
+      : "goalkeeper";
+  }
 
   // Abilities remain common enough to shape squads, but they are no longer
   // handed to nearly every outfield player. A failed special roll always

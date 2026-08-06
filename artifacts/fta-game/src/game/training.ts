@@ -1,4 +1,5 @@
 import type {
+  AbilityId,
   PlayerCard,
   PlayerDevelopment,
   PlayerStats,
@@ -274,14 +275,25 @@ export function ensurePlayerDevelopment(player: PlayerCard, season = 1): PlayerC
           overallBefore: round1(entry.overallBefore ?? overall),
           overallAfter: round1(entry.overallAfter ?? overall),
           moraleAfter: clamp(Math.round(entry.moraleAfter ?? 72), 25, 100),
+          abilityUnlocked: entry.abilityUnlocked,
         }))
       : [],
   };
+
+  const normalizedAbility: AbilityId =
+    player.role === "goalkeeper"
+      ? player.ability === "sweeper_keeper"
+        ? "sweeper_keeper"
+        : "goalkeeper"
+      : player.ability === "goalkeeper" || player.ability === "sweeper_keeper"
+        ? "none"
+        : player.ability;
 
   return {
     ...player,
     age,
     stats,
+    ability: normalizedAbility,
     development,
   };
 }
@@ -367,6 +379,141 @@ function pickGrowthStat(
   return ranked[0];
 }
 
+
+type DevelopableAbility = Exclude<AbilityId, "none" | "goalkeeper">;
+
+interface AbilityDevelopmentCandidate {
+  ability: DevelopableAbility;
+  minimumOverall: number;
+  relevantStats: Array<[keyof PlayerStats, number]>;
+  roleWeight: number;
+  focusWeight: number;
+}
+
+function deterministicUnit(value: string): number {
+  return (hashString(value) % 1_000_000) / 1_000_000;
+}
+
+function roleWeightForAbility(
+  player: PlayerCard,
+  ability: DevelopableAbility,
+): number {
+  if (ability === "sweeper_keeper") {
+    return player.role === "goalkeeper" ? 1.35 : 0;
+  }
+  if (player.role === "goalkeeper") return 0;
+
+  const weights: Record<Exclude<DevelopableAbility, "sweeper_keeper">, Record<PlayerCard["role"], number>> = {
+    ghost_run: { goalkeeper: 0, defender: 0.42, midfielder: 0.82, forward: 1.25, striker: 1.18 },
+    bullet_pass: { goalkeeper: 0, defender: 0.92, midfielder: 1.28, forward: 0.72, striker: 0.45 },
+    eagle_eye: { goalkeeper: 0, defender: 0.28, midfielder: 0.62, forward: 1.08, striker: 1.3 },
+    iron_tackle: { goalkeeper: 0, defender: 1.3, midfielder: 0.82, forward: 0.35, striker: 0.2 },
+    powerhouse: { goalkeeper: 0, defender: 1.05, midfielder: 0.75, forward: 0.92, striker: 1.05 },
+    shadow_mark: { goalkeeper: 0, defender: 1.3, midfielder: 0.88, forward: 0.3, striker: 0.18 },
+  };
+
+  return weights[ability][player.role];
+}
+
+function focusWeightForAbility(
+  focus: TrainingFocus,
+  ability: DevelopableAbility,
+): number {
+  const preferred: Record<DevelopableAbility, TrainingFocus[]> = {
+    ghost_run: ["movement"],
+    bullet_pass: ["passing", "longPassing"],
+    eagle_eye: ["shooting"],
+    iron_tackle: ["defending"],
+    powerhouse: ["defending", "shooting", "movement"],
+    shadow_mark: ["defending"],
+    sweeper_keeper: ["movement", "goalkeeping"],
+  };
+  return preferred[ability].includes(focus) ? 1.55 : focus === "balanced" ? 1.08 : 0.9;
+}
+
+function abilityCandidates(player: PlayerCard, focus: TrainingFocus): AbilityDevelopmentCandidate[] {
+  const s = normalizePlayerStats(player);
+  const overall = calculatePlayerOverall(player);
+  const candidates: Array<Omit<AbilityDevelopmentCandidate, "roleWeight" | "focusWeight">> = [
+    { ability: "ghost_run", minimumOverall: 7, relevantStats: [["speed", 8], ["movement", 8], ["dribbling", 6]] },
+    { ability: "bullet_pass", minimumOverall: 7, relevantStats: [["passing", 8], ["vision", 8], ["longPassing", 6]] },
+    { ability: "eagle_eye", minimumOverall: 7, relevantStats: [["shooting", 9], ["attack", 7], ["vision", 6]] },
+    { ability: "iron_tackle", minimumOverall: 7, relevantStats: [["tackling", 8], ["defense", 7], ["strength", 7]] },
+    { ability: "powerhouse", minimumOverall: 7, relevantStats: [["strength", 9], ["defense", 6], ["tackling", 6]] },
+    { ability: "shadow_mark", minimumOverall: 7, relevantStats: [["marking", 8], ["defense", 8], ["tackling", 6]] },
+    { ability: "sweeper_keeper", minimumOverall: 7.5, relevantStats: [["speed", 8], ["defense", 8], ["movement", 7], ["aerial", 6]] },
+  ];
+
+  return candidates
+    .filter((candidate) => overall >= candidate.minimumOverall)
+    .filter((candidate) => candidate.relevantStats.every(([key, minimum]) => s[key] >= minimum))
+    .map((candidate) => ({
+      ...candidate,
+      roleWeight: roleWeightForAbility(player, candidate.ability),
+      focusWeight: focusWeightForAbility(focus, candidate.ability),
+    }))
+    .filter((candidate) => candidate.roleWeight > 0);
+}
+
+function abilityDevelopmentChance(
+  player: PlayerCard,
+  candidate: AbilityDevelopmentCandidate,
+): number {
+  const s = normalizePlayerStats(player);
+  const overall = calculatePlayerOverall(player);
+  const surplus = candidate.relevantStats.reduce(
+    (sum, [key, minimum]) => sum + Math.max(0, s[key] - minimum),
+    0,
+  );
+  const averageRelevant = candidate.relevantStats.reduce((sum, [key]) => sum + s[key], 0) /
+    candidate.relevantStats.length;
+  const statQuality = 0.012 + surplus * 0.012 + Math.max(0, averageRelevant - 7.5) * 0.012;
+  const overallBonus = Math.max(0, overall - candidate.minimumOverall) * 0.012;
+  const age = player.age ?? 24;
+  const ageWeight = age <= 21 ? 1.45 : age <= 25 ? 1.2 : age <= 29 ? 1 : 0.62;
+  const morale = player.development?.morale ?? 72;
+  const moraleWeight = morale >= 90 ? 1.25 : morale >= 70 ? 1 : morale >= 50 ? 0.8 : 0.55;
+  const affinity = 0.78 + deterministicUnit(`${player.id}:ability-affinity:${candidate.ability}`) * 0.5;
+
+  return clamp(
+    (statQuality + overallBonus) * candidate.roleWeight * candidate.focusWeight * ageWeight * moraleWeight * affinity,
+    0,
+    0.32,
+  );
+}
+
+function maybeDevelopAbility(
+  player: PlayerCard,
+  focus: TrainingFocus,
+  season: number,
+  week: number,
+): { player: PlayerCard; unlocked?: AbilityId } {
+  const canDevelopOutfield = player.role !== "goalkeeper" && player.ability === "none";
+  const canDevelopSweeper = player.role === "goalkeeper" && player.ability === "goalkeeper";
+  if (!canDevelopOutfield && !canDevelopSweeper) return { player };
+
+  const candidates = abilityCandidates(player, focus).filter((candidate) =>
+    canDevelopSweeper ? candidate.ability === "sweeper_keeper" : candidate.ability !== "sweeper_keeper",
+  );
+  if (candidates.length === 0) return { player };
+
+  const successful = candidates
+    .map((candidate) => {
+      const chance = abilityDevelopmentChance(player, candidate);
+      const roll = deterministicUnit(`${player.id}:${season}:${week}:ability-roll:${candidate.ability}`);
+      return { candidate, chance, roll, margin: chance - roll };
+    })
+    .filter((attempt) => attempt.margin >= 0)
+    .sort((a, b) => b.margin - a.margin)[0];
+
+  if (!successful) return { player };
+
+  return {
+    player: { ...player, ability: successful.candidate.ability },
+    unlocked: successful.candidate.ability,
+  };
+}
+
 export function advancePlayerTraining(
   rawPlayer: PlayerCard,
   context: TrainingWeekContext,
@@ -426,7 +573,7 @@ export function advancePlayerTraining(
     25,
     100,
   );
-  const updatedPlayer: PlayerCard = {
+  let updatedPlayer: PlayerCard = {
     ...player,
     stats,
     development: {
@@ -441,6 +588,13 @@ export function advancePlayerTraining(
       history: development.history,
     },
   };
+  const abilityResult = maybeDevelopAbility(
+    updatedPlayer,
+    focus,
+    context.season,
+    context.week,
+  );
+  updatedPlayer = abilityResult.player;
   const overallAfter = calculatePlayerOverall(updatedPlayer);
 
   updatedPlayer.development = {
@@ -456,6 +610,7 @@ export function advancePlayerTraining(
         overallBefore,
         overallAfter,
         moraleAfter: morale,
+        abilityUnlocked: abilityResult.unlocked,
       },
     ].slice(-24),
   };
@@ -514,6 +669,16 @@ export function chooseAITrainingFocus(
     scores.longPassing = 12 - (s.longPassing + s.vision) / 2;
     scores.movement = 10 - (s.movement + s.speed) / 2;
     scores.balanced = 4;
+
+    const sweeperFriendlyTactic =
+      tacticId === "slow_possession" ||
+      tacticId === "balanced_build_up" ||
+      tacticId === "counter_press" ||
+      tacticId === "quick_counterattack";
+    if (sweeperFriendlyTactic && player.ability !== "sweeper_keeper") {
+      scores.movement += 5.5;
+      scores.goalkeeping += 1.2;
+    }
   } else if (player.role === "defender") {
     scores.defending = 16 - (s.defense + s.tackling + s.marking) / 3;
     scores.movement = 12 - (s.movement + s.speed) / 2;

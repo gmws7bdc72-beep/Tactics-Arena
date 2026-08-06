@@ -39,11 +39,41 @@ export const PASS_RECOVERY = 0.2;
 export const SHOT_WIND_UP = 0.30;
 export const SHOT_RECOVERY = 0.6;
 
-// GK zone: cols 0-2 for player team GK, last 3 cols for AI GK
+// Traditional goalkeeper zone: the three columns inside each penalty area.
+// Both sides now follow the same rule. The old player-only 0-10 allowance is gone.
 export const GK_COLS_PLAYER_MIN = 0;
-export const GK_COLS_PLAYER_MAX = 10;
+export const GK_COLS_PLAYER_MAX = 2;
 export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
+
+// Sweeper Keepers may advance three additional columns beyond the box.
+export const SWEEPER_GK_COLS_PLAYER_MIN = 0;
+export const SWEEPER_GK_COLS_PLAYER_MAX = 5;
+export const SWEEPER_GK_COLS_AI_MIN = GRID_COLS - 6;
+export const SWEEPER_GK_COLS_AI_MAX = GRID_COLS - 1;
+
+export function isSweeperKeeperAbility(ability?: string): boolean {
+  return ability === "sweeper_keeper";
+}
+
+export function isGoalkeeperAbility(ability?: string): boolean {
+  return ability === "goalkeeper" || ability === "sweeper_keeper";
+}
+
+export function goalkeeperColumnBounds(
+  teamId: "player" | "ai",
+  ability?: string,
+): { min: number; max: number } {
+  if (isSweeperKeeperAbility(ability)) {
+    return teamId === "player"
+      ? { min: SWEEPER_GK_COLS_PLAYER_MIN, max: SWEEPER_GK_COLS_PLAYER_MAX }
+      : { min: SWEEPER_GK_COLS_AI_MIN, max: SWEEPER_GK_COLS_AI_MAX };
+  }
+
+  return teamId === "player"
+    ? { min: GK_COLS_PLAYER_MIN, max: GK_COLS_PLAYER_MAX }
+    : { min: GK_COLS_AI_MIN, max: GK_COLS_AI_MAX };
+}
 
 export const GOALS_TO_WIN = 3;
 export const MAX_MATCH_TURNS = 30;
@@ -53,26 +83,30 @@ export const AI_SHOT_RANGE = 200;
 export const AI_PASS_SAFE_DISTANCE = 120;
 
 // Movement stat → selectable tile range per turn.
-// Ordinary players are capped at 2 tiles. Ghost Run is the only ability that
-// unlocks the elite 3-tile band at Movement 9-10.
+// Ordinary outfield players are capped at 2 tiles. Ghost Run unlocks the
+// elite 3-tile band, while Sweeper Keeper receives the same full movement band.
 export function movementToTiles(movement: number, ability?: string): number {
   const naturalRange = Math.min(
     3,
     Math.ceil(Math.max(1, Math.min(10, movement)) / 4),
   );
-  return ability === "ghost_run" ? naturalRange : Math.min(2, naturalRange);
+  return ability === "ghost_run" || ability === "sweeper_keeper"
+    ? naturalRange
+    : Math.min(2, naturalRange);
 }
 
 // Speed controls the player's actual running pace inside the route allowed by
-// Movement. Ordinary players remain capped at a 2-tile pace; Ghost Run can
-// reach the elite 3-tile pace at Speed 9-10.
+// Movement. Ordinary players remain capped at a 2-tile pace; Ghost Run and
+// Sweeper Keeper can reach the elite 3-tile pace at Speed 9-10.
 export function getLinearPixelSpeed(speed: number, ability?: string): number {
   const naturalPace = Math.min(
     3,
     Math.ceil(Math.max(1, Math.min(10, speed)) / 4),
   );
   const paceTiles =
-    ability === "ghost_run" ? naturalPace : Math.min(2, naturalPace);
+    (ability === "ghost_run" || ability === "sweeper_keeper")
+      ? naturalPace
+      : Math.min(2, naturalPace);
   const targetTicks = TICKS_PER_TURN * 0.75;
   return (paceTiles * TILE_W) / (targetTicks * DELTA);
 }

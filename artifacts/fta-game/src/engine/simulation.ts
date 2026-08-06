@@ -40,6 +40,8 @@ import {
   GRID_ROWS,
   getLinearPixelSpeed,
   movementToTiles,
+  goalkeeperColumnBounds,
+  isGoalkeeperAbility,
   BALL_RADIUS,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
@@ -257,11 +259,8 @@ function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
 
   // GK must stay in their zone even when retreating
   if (loser.role === "goalkeeper") {
-    if (loser.teamId === "player") {
-      retreatCol = clamp(retreatCol, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
-    } else {
-      retreatCol = clamp(retreatCol, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
-    }
+    const bounds = goalkeeperColumnBounds(loser.teamId, loser.ability);
+    retreatCol = clamp(retreatCol, bounds.min, bounds.max);
   }
 
   loser.position = tileToPos(retreatCol, retreatRow);
@@ -332,15 +331,14 @@ function endPlannedContribution(player: SimPlayer): void {
   player.state = PlayerState.RECOVERING;
   player.recoveryTimer = Math.max(player.recoveryTimer, 0.45);
 }
-function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
+function clampGKTarget(
+  target: Vec2,
+  teamId: "player" | "ai",
+  ability?: string,
+): Vec2 {
   const t = posToTile(target);
-  let col = t.col;
-  if (teamId === "player") {
-    col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
-  } else {
-    col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
-  }
-  return tileToPos(col, t.row);
+  const bounds = goalkeeperColumnBounds(teamId, ability);
+  return tileToPos(clamp(t.col, bounds.min, bounds.max), t.row);
 }
 
 interface BallTracker {
@@ -500,7 +498,7 @@ export function runSimulation(
     ) {
       p.command = {
         ...p.command,
-        targetPosition: clampGKTarget(p.command.targetPosition, p.teamId),
+        targetPosition: clampGKTarget(p.command.targetPosition, p.teamId, p.ability),
       };
     }
   }
@@ -705,9 +703,8 @@ export function runSimulation(
         const nr = clamp(t.row + dr, 0, GRID_ROWS - 1);
 
         if (loser.role === "goalkeeper") {
-          nc = loser.teamId === "player"
-            ? clamp(nc, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
-            : clamp(nc, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+          const bounds = goalkeeperColumnBounds(loser.teamId, loser.ability);
+          nc = clamp(nc, bounds.min, bounds.max);
         }
 
         const ak = `${nc},${nr}`;
@@ -793,11 +790,8 @@ export function runSimulation(
     if (p.role === "goalkeeper") {
       const t = posToTile(p.position);
       let col = t.col;
-      if (p.teamId === "player") {
-        col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
-      } else {
-        col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
-      }
+      const bounds = goalkeeperColumnBounds(p.teamId, p.ability);
+      col = clamp(col, bounds.min, bounds.max);
       if (col !== t.col) p.position = tileToPos(col, t.row);
     }
   }
@@ -996,6 +990,7 @@ function snapshotFrame(
       jerseyNumber: p.jerseyNumber,
       role: p.role,
       appearance: p.appearance,
+      ability: p.ability,
       tileRange: movementToTiles(p.stats.movement, p.ability),
       offside: offsidePlayers.has(p.id),
     })),
@@ -1284,9 +1279,8 @@ function updatePlayerMovement(
         for (let dc = -maxTiles; dc <= maxTiles; dc++) {
           for (let dr = -maxTiles; dr <= maxTiles; dr++) {
             if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
-            const candidateCol = player.teamId === "player"
-              ? clamp(from.col + dc, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
-              : clamp(from.col + dc, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+            const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
+            const candidateCol = clamp(from.col + dc, bounds.min, bounds.max);
             const candidateRow = clamp(from.row + dr, 0, GRID_ROWS - 1);
             const idealCol = from.col + rawDc * scale;
             const idealRow = from.row + rawDr * scale;
@@ -1738,7 +1732,7 @@ function detectAndResolveEvents(
         // deterministically when two players arrive at the same loose ball.
         score += (player.stats.movement / 10) * 0.12;
         if (player.ability === "iron_tackle") score += 0.15;
-        if (player.ability === "goalkeeper") score += 0.35;
+        if (isGoalkeeperAbility(player.ability)) score += 0.35;
         candidates.push({ player, score });
       }
     }
@@ -1796,7 +1790,7 @@ function detectAndResolveEvents(
             passTracker.teamId !== null &&
             passTracker.teamId !== loser.teamId
           ) {
-            if (passTracker.type === "shot" && loser.ability === "goalkeeper") {
+            if (passTracker.type === "shot" && isGoalkeeperAbility(loser.ability)) {
               events.push({
                 type: GameEventType.SAVE,
                 tick,
@@ -1920,7 +1914,7 @@ function detectAndResolveEvents(
           });
         } else if (
           passTracker.type === "shot" &&
-          winner.ability === "goalkeeper"
+          isGoalkeeperAbility(winner.ability)
         ) {
           events.push({
             type: GameEventType.SAVE,

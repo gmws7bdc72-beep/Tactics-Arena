@@ -1,0 +1,18 @@
+FTA-A14G changes
+
+Compile fix
+- Adds each SimPlayer's authoritative ability to Match.tsx's initial FrameSnapshot.
+- Adds each SimPlayer's authoritative ability to OnlineMatch.tsx's fallback FrameSnapshot.
+- Fixes the two TS2741 errors reported at Match.tsx:113 and OnlineMatch.tsx:680.
+- Keeps ability required on render snapshots so Sweeper Keeper pitch restrictions remain type-safe.
+
+Included A14 systems
+- Players may probabilistically develop fitting abilities through weekly training.
+- Position suitability is evaluated before an ability can develop.
+- Better supporting attributes improve the chance without guaranteeing an unlock.
+- Age, morale, training focus and intensity influence development.
+- Adds Sweeper Keeper.
+- Only Sweeper Keepers can leave the penalty area.
+- Removes the player-only goalkeeper roaming advantage.
+- AI understands Sweeper Keeper positioning, tactical usage, training and recruitment.
+- Squad repair and generation enforce exactly one goalkeeper per team.

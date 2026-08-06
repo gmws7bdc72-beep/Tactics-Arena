@@ -795,6 +795,7 @@ export default function PitchCanvas({
       range,
       isGK,
       selPlayer.teamId,
+      selPlayer.ability,
     );
 
     for (const t of reachable) {
@@ -2488,6 +2489,7 @@ export default function PitchCanvas({
           range,
           isGK,
           selPlayer.teamId,
+          selPlayer.ability,
         );
         const isReachable = reachable.some(
           (t) => t.col === clickedCol && t.row === clickedRow,

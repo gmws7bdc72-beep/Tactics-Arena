@@ -2,7 +2,7 @@ import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
 import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, movementToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
+import { GRID_COLS, GRID_ROWS, movementToTiles, getLinearPixelSpeed, goalkeeperColumnBounds, isSweeperKeeperAbility, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
 import {
   curvePointLimitForCommand,
   curveRouteFitsMoveBudget,
@@ -149,8 +149,10 @@ function moveStep(
 
   const isGK = player.role === "goalkeeper";
   // GK gets 2 tiles so they can quickly return to goal after chasing loose balls
-  const range = isGK ? 2 : movementToTiles(player.stats.movement, player.ability);
-  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
+  const range = isGK
+    ? movementToTiles(player.stats.movement, player.ability)
+    : movementToTiles(player.stats.movement, player.ability);
+  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId, player.ability);
 
   let best: TilePos = from;
   let bestDist = tileDist(from, to);
@@ -184,11 +186,12 @@ function chaseLooseBall(
 ): Command {
   const isGK = player.role === "goalkeeper";
   const range = movementToTiles(player.stats.movement, player.ability); // full Movement range — not the GK-limited range
-  const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId);
+  const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId, player.ability);
 
   // GK targets ball clamped to their zone; outfield targets ball directly
-  const gkMin = player.teamId === "ai" ? GK_COLS_AI_MIN : GK_COLS_PLAYER_MIN;
-  const gkMax = player.teamId === "ai" ? GK_COLS_AI_MAX : GK_COLS_PLAYER_MAX;
+  const gkBounds = goalkeeperColumnBounds(player.teamId, player.ability);
+  const gkMin = gkBounds.min;
+  const gkMax = gkBounds.max;
   const target: TilePos = isGK
     ? { col: Math.max(gkMin, Math.min(gkMax, ballTile.col)), row: Math.max(0, Math.min(GRID_ROWS - 1, ballTile.row)) }
     : ballTile;
@@ -691,8 +694,10 @@ function pressCarrier(
   };
 
   const isGK = player.role === "goalkeeper";
-  const range = isGK ? 2 : movementToTiles(player.stats.movement, player.ability);
-  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
+  const range = isGK
+    ? movementToTiles(player.stats.movement, player.ability)
+    : movementToTiles(player.stats.movement, player.ability);
+  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId, player.ability);
 
   let best: TilePos = from;
   let bestDist = tileDist(from, interceptTile);
@@ -745,7 +750,8 @@ function tier1Possession(
         }
       }
       // Absolutely no teammate reachable — GK dribbles forward to create a passing angle
-      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
+      const dribCol = Math.max(bounds.min, pt.col - movementToTiles(player.stats.movement, player.ability));
       return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
@@ -1074,7 +1080,8 @@ function tier2Possession(
         }
       }
       // Absolutely no teammate reachable — dribble forward to create passing angle
-      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
+      const dribCol = Math.max(bounds.min, pt.col - movementToTiles(player.stats.movement, player.ability));
       return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
@@ -1458,7 +1465,8 @@ function plannedAIGoalkeeperDive(
   for (let dc = -maxTiles; dc <= maxTiles; dc += 1) {
     for (let dr = -maxTiles; dr <= maxTiles; dr += 1) {
       if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
-      const col = Math.max(GK_COLS_AI_MIN, Math.min(GK_COLS_AI_MAX, from.col + dc));
+      const bounds = goalkeeperColumnBounds(goalkeeper.teamId, goalkeeper.ability);
+      const col = Math.max(bounds.min, Math.min(bounds.max, from.col + dc));
       const row = Math.max(0, Math.min(GRID_ROWS - 1, from.row + dr));
       const error = Math.abs(row - targetRow) * 2 + Math.abs(col - goalLineCol);
       if (error < bestError) {
@@ -1470,6 +1478,69 @@ function plannedAIGoalkeeperDive(
 
   if (best.col === from.col && best.row === from.row) return null;
   return { type: CommandType.DIVE, targetPosition: tileToPos(best.col, best.row) };
+}
+
+
+function sweeperKeeperTacticalCommand(
+  goalkeeper: SimPlayer,
+  current: Command,
+  hasBall: boolean,
+  aiHasBall: boolean,
+  playerHasBall: boolean,
+  ballOwner: SimPlayer | null,
+  ballTile: TilePos,
+  tactic: TeamTactic,
+): Command {
+  if (
+    goalkeeper.role !== "goalkeeper" ||
+    !isSweeperKeeperAbility(goalkeeper.ability)
+  ) {
+    return current;
+  }
+
+  const from = posToTile(goalkeeper.position);
+  const bounds = goalkeeperColumnBounds(goalkeeper.teamId, goalkeeper.ability);
+  const range = movementToTiles(goalkeeper.stats.movement, goalkeeper.ability);
+  const clampTarget = (col: number, row: number): Command => ({
+    type: CommandType.MOVE,
+    targetPosition: tileToPos(
+      Math.max(bounds.min, Math.min(bounds.max, col)),
+      Math.max(0, Math.min(GRID_ROWS - 1, row)),
+    ),
+  });
+
+  if (hasBall) {
+    // Keep a sensible pass/long ball. Only replace passive keeper movement.
+    if (current.type !== CommandType.MOVE) return current;
+    const possessionSupport =
+      tactic.id === "slow_possession" ||
+      tactic.id === "balanced_build_up" ||
+      tactic.id === "counter_press";
+    if (possessionSupport) {
+      return clampTarget(from.col - Math.min(range, 2), ballTile.row);
+    }
+    return current;
+  }
+
+  if (playerHasBall && ballOwner) {
+    const ownerTile = posToTile(ballOwner.position);
+    const dangerStart = GRID_COLS - 7;
+    const closeEnough = tileDist(from, ownerTile) <= range + 2.25;
+    if (ownerTile.col >= dangerStart && closeEnough) {
+      // Meet the attacker one tile goal-side instead of recklessly charging past.
+      return clampTarget(ownerTile.col + 1, ownerTile.row);
+    }
+  }
+
+  if (aiHasBall) {
+    const highLine = tactic.defensiveLine >= 6 || tactic.id === "counter_press";
+    if (highLine) {
+      const supportCol = Math.max(bounds.min, GK_COLS_AI_MIN - 1);
+      return clampTarget(supportCol, Math.max(2, Math.min(6, ballTile.row)));
+    }
+  }
+
+  return current;
 }
 
 export function generateAICommands(
@@ -1895,6 +1966,17 @@ export function generateAICommands(
         tactic,
       );
     }
+
+    cmd = sweeperKeeperTacticalCommand(
+      player,
+      cmd,
+      hasBall,
+      aiHasBall,
+      playerHasBall,
+      ballOwner,
+      ballTile,
+      tactic,
+    );
 
     logCommand(player.id, cmd);
     commands.set(player.id, cmd);
@@ -2697,7 +2779,7 @@ function predictPlayerReachTiles(playerPlayers: SimPlayer[]): Set<string> {
   for (const p of playerPlayers) {
     const t = posToTile(p.position);
     const range = movementToTiles(p.stats.movement, p.ability);
-    const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId);
+    const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId, p.ability);
 
     for (const r of reachable) {
       danger.add(tileKey(r.col, r.row));
