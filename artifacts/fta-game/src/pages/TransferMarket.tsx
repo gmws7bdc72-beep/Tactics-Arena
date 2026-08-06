@@ -83,6 +83,26 @@ function activeOffer(status: OfferStatus): boolean {
   return ACTIVE_STATUSES.includes(status);
 }
 
+const MIN_CUSTOM_BID = 250_000;
+const BID_STEP = 250_000;
+
+function roundBid(amount: number): number {
+  return Math.max(
+    MIN_CUSTOM_BID,
+    Math.round(amount / BID_STEP) * BID_STEP,
+  );
+}
+
+function millionsInput(amount: number): string {
+  return (amount / 1_000_000).toFixed(2).replace(/\.00$/, "");
+}
+
+function parseMillions(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return roundBid(fallback);
+  return roundBid(parsed * 1_000_000);
+}
+
 export default function TransferMarket({
   team,
   league,
@@ -95,6 +115,12 @@ export default function TransferMarket({
   const [role, setRole] = useState<RoleFilter>("all");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [customBidMillions, setCustomBidMillions] = useState<
+    Record<string, string>
+  >({});
+  const [counterBidMillions, setCounterBidMillions] = useState<
+    Record<string, string>
+  >({});
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [expandedReportSeason, setExpandedReportSeason] = useState<
     number | null
@@ -210,6 +236,12 @@ export default function TransferMarket({
     const result = respondToOffer(market, team, league, id, action, amount);
     onChange(result.state, result.team, result.league);
   };
+
+  const customBidAmount = (playerId: string, fallback: number): number =>
+    parseMillions(customBidMillions[playerId] ?? millionsInput(fallback), fallback);
+
+  const customCounterAmount = (offerId: string, fallback: number): number =>
+    parseMillions(counterBidMillions[offerId] ?? millionsInput(fallback), fallback);
 
   return (
     <div
@@ -657,35 +689,102 @@ export default function TransferMarket({
                           · {existingBid.status}
                         </div>
                       ) : (
-                        <div className="grid grid-cols-3 gap-2">
-                          {[0.9, 1, 1.12].map((multiplier, index) => (
-                            <button
-                              key={multiplier}
-                              type="button"
-                              disabled={!canBid}
-                              onClick={() =>
-                                submitOffer(
-                                  player,
-                                  club.id,
-                                  club.name,
-                                  Math.round(ask * multiplier),
-                                )
-                              }
-                              className="rounded-lg px-2 py-2 text-[10px] font-black disabled:opacity-30"
-                              style={{
-                                background: "rgba(34,197,94,.13)",
-                                color: "#22c55e",
-                              }}
-                            >
-                              {index === 0
-                                ? "Low"
-                                : index === 1
-                                  ? "Ask"
-                                  : "Strong"}
-                              <br />
-                              {formatMoney(ask * multiplier)}
-                            </button>
-                          ))}
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-3 gap-2">
+                            {[0.9, 1, 1.12].map((multiplier, index) => (
+                              <button
+                                key={multiplier}
+                                type="button"
+                                disabled={!canBid}
+                                onClick={() =>
+                                  submitOffer(
+                                    player,
+                                    club.id,
+                                    club.name,
+                                    roundBid(ask * multiplier),
+                                  )
+                                }
+                                className="rounded-lg px-2 py-2 text-[10px] font-black disabled:opacity-30"
+                                style={{
+                                  background: "rgba(34,197,94,.13)",
+                                  color: "#22c55e",
+                                }}
+                              >
+                                {index === 0
+                                  ? "Low"
+                                  : index === 1
+                                    ? "Ask"
+                                    : "Strong"}
+                                <br />
+                                {formatMoney(roundBid(ask * multiplier))}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div
+                            className="rounded-xl p-2.5"
+                            style={{
+                              background: "rgba(56,189,248,.055)",
+                              border: "1px solid rgba(56,189,248,.16)",
+                            }}
+                          >
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                              <label
+                                htmlFor={`custom-bid-${player.id}`}
+                                className="text-[9px] font-black uppercase tracking-wider text-sky-300"
+                              >
+                                Custom bid
+                              </label>
+                              <span className="text-[9px] text-gray-500">
+                                Enter amount in millions
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-[1fr_auto] gap-2">
+                              <div className="flex min-w-0 items-center rounded-lg border border-white/10 bg-black/20 px-2">
+                                <span className="mr-1 text-xs font-black text-gray-400">
+                                  $
+                                </span>
+                                <input
+                                  id={`custom-bid-${player.id}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0.25"
+                                  step="0.25"
+                                  value={
+                                    customBidMillions[player.id] ??
+                                    millionsInput(ask)
+                                  }
+                                  onChange={(event) =>
+                                    setCustomBidMillions((current) => ({
+                                      ...current,
+                                      [player.id]: event.target.value,
+                                    }))
+                                  }
+                                  className="min-w-0 flex-1 bg-transparent py-2 text-sm font-black text-white outline-none"
+                                  aria-label={`Custom bid for ${player.name} in millions`}
+                                />
+                                <span className="ml-1 text-[10px] font-black text-gray-500">
+                                  M
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={!canBid}
+                                onClick={() =>
+                                  submitOffer(
+                                    player,
+                                    club.id,
+                                    club.name,
+                                    customBidAmount(player.id, ask),
+                                  )
+                                }
+                                className="rounded-lg px-3 py-2 text-[10px] font-black text-sky-300 disabled:opacity-30"
+                                style={{ background: "rgba(56,189,248,.14)" }}
+                              >
+                                Bid {formatMoney(customBidAmount(player.id, ask))}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
 
@@ -785,34 +884,89 @@ export default function TransferMarket({
                         </button>
                       </div>
                     ) : (
-                      <div className="mt-2 grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => act(offer.id, "accept")}
-                          className="rounded bg-emerald-500/15 py-2 text-[10px] font-black text-emerald-400"
+                      <div className="mt-2 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => act(offer.id, "accept")}
+                            className="rounded bg-emerald-500/15 py-2 text-[10px] font-black text-emerald-400"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => act(offer.id, "reject")}
+                            className="rounded bg-rose-500/15 py-2 text-[10px] font-black text-rose-400"
+                          >
+                            Reject
+                          </button>
+                        </div>
+
+                        <div
+                          className="rounded-lg p-2"
+                          style={{
+                            background: "rgba(56,189,248,.07)",
+                            border: "1px solid rgba(56,189,248,.16)",
+                          }}
                         >
-                          Accept
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => act(offer.id, "reject")}
-                          className="rounded bg-rose-500/15 py-2 text-[10px] font-black text-rose-400"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            act(
-                              offer.id,
-                              "counter",
-                              Math.round(offer.amount * 1.15),
-                            )
-                          }
-                          className="rounded bg-sky-500/15 py-2 text-[10px] font-black text-sky-400"
-                        >
-                          Negotiate +15%
-                        </button>
+                          <label
+                            htmlFor={`counter-bid-${offer.id}`}
+                            className="mb-1 block text-[9px] font-black uppercase tracking-wider text-sky-300"
+                          >
+                            Choose your counteroffer
+                          </label>
+                          <div className="grid grid-cols-[1fr_auto] gap-2">
+                            <div className="flex min-w-0 items-center rounded-lg border border-white/10 bg-black/20 px-2">
+                              <span className="mr-1 text-xs font-black text-gray-400">
+                                $
+                              </span>
+                              <input
+                                id={`counter-bid-${offer.id}`}
+                                type="number"
+                                inputMode="decimal"
+                                min="0.25"
+                                step="0.25"
+                                value={
+                                  counterBidMillions[offer.id] ??
+                                  millionsInput(offer.amount * 1.15)
+                                }
+                                onChange={(event) =>
+                                  setCounterBidMillions((current) => ({
+                                    ...current,
+                                    [offer.id]: event.target.value,
+                                  }))
+                                }
+                                className="min-w-0 flex-1 bg-transparent py-2 text-sm font-black text-white outline-none"
+                                aria-label={`Counteroffer for ${offer.playerName} in millions`}
+                              />
+                              <span className="ml-1 text-[10px] font-black text-gray-500">
+                                M
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                act(
+                                  offer.id,
+                                  "counter",
+                                  customCounterAmount(
+                                    offer.id,
+                                    offer.amount * 1.15,
+                                  ),
+                                )
+                              }
+                              className="rounded bg-sky-500/15 px-3 py-2 text-[10px] font-black text-sky-400"
+                            >
+                              Counter{" "}
+                              {formatMoney(
+                                customCounterAmount(
+                                  offer.id,
+                                  offer.amount * 1.15,
+                                ),
+                              )}
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

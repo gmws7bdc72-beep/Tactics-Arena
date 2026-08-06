@@ -1,0 +1,20 @@
+FTA-A15 changes
+
+Custom user bidding
+- Keeps the Low, Ask and Strong quick-bid buttons.
+- Adds a custom bid field to every eligible player card.
+- Custom fees are entered in millions and rounded to the nearest $250,000.
+- The exact custom amount is shown on the submit button before the bid is sent.
+- Normal budget, wage, squad-size and availability validation still applies.
+
+Custom counteroffers
+- Incoming AI offers now allow any custom counteroffer amount.
+- Replaces the fixed +15% negotiation button with an editable amount field.
+- Counteroffers remain pending until the AI club answers during transfer processing.
+
+AI bid selection
+- AI clubs now deliberately choose their own fee instead of using one narrow random multiplier.
+- Bid size responds to positional shortage, upgrade quality, tactical fit, player status and available budget.
+- Desperate or perfect-fit buyers can bid strongly above asking price.
+- Bargain hunters can test sellers with lower offers, especially for debt-listed players.
+- AI selling clubs also choose varied counteroffer amounts based on squad depth, listing status and negotiating leverage.

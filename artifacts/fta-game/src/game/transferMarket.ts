@@ -506,6 +506,19 @@ function askingPrice(player: PlayerCard): number {
   );
 }
 
+const TRANSFER_BID_STEP = 250_000;
+
+function clampNumber(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function roundTransferBid(amount: number): number {
+  return Math.max(
+    TRANSFER_BID_STEP,
+    Math.round(amount / TRANSFER_BID_STEP) * TRANSFER_BID_STEP,
+  );
+}
+
 function transferThreshold(player: PlayerCard): number {
   const ask = askingPrice(player);
 
@@ -513,6 +526,34 @@ function transferThreshold(player: PlayerCard): number {
   if (player.marketStatus === "available") return Math.round(ask * 1.08);
 
   return Number.POSITIVE_INFINITY;
+}
+
+function chooseAISellerCounterAmount(
+  player: PlayerCard,
+  offer: TransferOffer,
+  sellerPlayers: PlayerCard[],
+): number {
+  const ask = askingPrice(player);
+  const offered = currentOfferAmount(offer);
+  const roleDepth = sellerPlayers.filter(
+    (candidate) => roleBucket(candidate) === roleBucket(player),
+  ).length;
+  const scarcityPremium = roleDepth <= 2 ? 0.08 : roleDepth === 3 ? 0.035 : 0;
+  const statusAdjustment =
+    player.forcedListedForDebt
+      ? -0.08
+      : player.marketStatus === "listed"
+        ? -0.025
+        : 0.045;
+  const negotiationNoise = -0.025 + Math.random() * 0.09;
+  const chosenMultiplier = clampNumber(
+    0.98 + scarcityPremium + statusAdjustment + negotiationNoise,
+    0.9,
+    1.22,
+  );
+  const chosen = Math.max(offered * 1.04, ask * chosenMultiplier);
+
+  return roundTransferBid(Math.min(ask * 1.28, chosen));
 }
 
 export function createTransferMarket(
@@ -1325,10 +1366,15 @@ function resolveExistingOffers(
         nextTeam = result.team;
         nextLeague = result.league;
       } else if (amount >= threshold * 0.75) {
+        const chosenCounter = chooseAISellerCounterAmount(
+          player,
+          offer,
+          seller.players,
+        );
         nextState = counterOffer(
           nextState,
           offer,
-          threshold,
+          chosenCounter,
           seller.id,
           `${seller.name} countered for ${player.name}.`,
           week,
@@ -1511,6 +1557,51 @@ function targetScore(
   );
 }
 
+function chooseAIBidAmount(
+  buyerPlayers: PlayerCard[],
+  player: PlayerCard,
+  fee: number,
+  finance: ClubFinance,
+  buyerDefinition: (typeof AI_TEAMS)[number],
+): number {
+  const bucket = roleBucket(player);
+  const sameRole = buyerPlayers.filter((item) => roleBucket(item) === bucket);
+  const desiredCount = desiredRoleCount(bucket, buyerPlayers.length + 1);
+  const shortage = Math.max(0, desiredCount - sameRole.length);
+  const averageOverall =
+    sameRole.reduce((sum, item) => sum + getPlayerOverall(item), 0) /
+    Math.max(1, sameRole.length);
+  const upgrade = getPlayerOverall(player) - averageOverall;
+  const identityFit = tacticalIdentityFit(buyerDefinition, player);
+  const fitBoost = clampNumber((identityFit - 18) / 420, -0.025, 0.14);
+  const needBoost = clampNumber(shortage * 0.055, 0, 0.165);
+  const upgradeBoost = clampNumber(Math.max(0, upgrade) * 0.012, 0, 0.11);
+  const statusAdjustment =
+    player.forcedListedForDebt
+      ? -0.09
+      : player.marketStatus === "listed"
+        ? -0.045
+        : 0.035;
+  const negotiationStyle = -0.055 + Math.random() * 0.16;
+  const multiplier = clampNumber(
+    0.91 +
+      fitBoost +
+      needBoost +
+      upgradeBoost +
+      statusAdjustment +
+      negotiationStyle,
+    0.72,
+    1.3,
+  );
+  const urgencyBudgetShare = shortage > 0 || upgrade >= 2 ? 0.78 : 0.66;
+  const affordableMaximum = Math.max(
+    TRANSFER_BID_STEP,
+    Math.min(finance.budget, finance.budget * urgencyBudgetShare),
+  );
+
+  return roundTransferBid(Math.min(fee * multiplier, affordableMaximum));
+}
+
 function createAIOffer(
   state: TransferMarketState,
   buyer: MarketClub,
@@ -1579,13 +1670,14 @@ function generateAIMarketActivity(
         )) return false;
 
         const fee = askingPrice(player);
-        if (fee > finance.budget * 0.7) return false;
+        const minimumPlausibleBid = roundTransferBid(fee * 0.72);
+        if (minimumPlausibleBid > finance.budget * 0.78) return false;
 
         const registrationError = buyerCanRegister(
           buyer.players,
           finance,
           player,
-          fee,
+          minimumPlausibleBid,
         );
         if (registrationError) return false;
 
@@ -1598,19 +1690,33 @@ function generateAIMarketActivity(
       })
       .map(({ player, seller }) => {
         const fee = askingPrice(player);
+        const amount = chooseAIBidAmount(
+          buyer.players,
+          player,
+          fee,
+          finance,
+          aiDefinition,
+        );
         return {
           player,
           seller,
           fee,
-          score: targetScore(buyer.players, player, fee, aiDefinition),
+          amount,
+          score:
+            targetScore(buyer.players, player, fee, aiDefinition) +
+            Math.max(0, (fee - amount) / Math.max(1, fee)) * 4,
         };
       })
+      .filter(
+        ({ player, amount }) =>
+          !buyerCanRegister(buyer.players, finance, player, amount),
+      )
       .sort((a, b) => b.score - a.score);
 
     const target = candidates[0];
     if (!target) continue;
 
-    const amount = Math.round(target.fee * (0.9 + Math.random() * 0.18));
+    const amount = target.amount;
     nextState = createAIOffer(
       nextState,
       buyer,
