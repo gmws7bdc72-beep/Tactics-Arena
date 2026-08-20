@@ -1400,7 +1400,15 @@ function executePass(
     y: PITCH_HEIGHT / 2,
   };
 
-  if (isLongBall && !cmd.coordinated) {
+  // FTA_LONG_BALL_GOAL_DEPTH_PVP4
+  // A deliberate long-ball target inside goal depth stays inside the goal.
+  const requestedGoalDepth =
+    isLongBall &&
+    (targetPos.x < 0 || targetPos.x > PITCH_WIDTH) &&
+    targetPos.y >= GOAL_TOP_Y &&
+    targetPos.y <= GOAL_BOTTOM_Y;
+
+  if (isLongBall && !cmd.coordinated && !requestedGoalDepth) {
     const longPassing =
       typeof player.stats.longPassing === "number"
         ? player.stats.longPassing

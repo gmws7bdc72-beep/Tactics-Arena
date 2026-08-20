@@ -59,8 +59,53 @@ interface Props {
 const PLAYBACK_FPS = 48;
 const ONLINE_TURN_TIME = 25;
 
+// FTA_PVP4_GOAL_KICKOFF_MAXED_LONGGOAL
+// Online matches are an even tactics sandbox: every on-pitch player is maxed,
+// while special abilities remain sensible for the player's football role.
+const ONLINE_MAX_STATS: PlayerCard["stats"] = {
+  attack: 10,
+  defense: 10,
+  passing: 10,
+  speed: 10,
+  movement: 10,
+  shooting: 10,
+  dribbling: 10,
+  tackling: 10,
+  marking: 10,
+  stamina: 10,
+  strength: 10,
+  vision: 10,
+  longPassing: 10,
+  aerial: 10,
+};
+
+function onlineAbilityFor(card: PlayerCard): PlayerCard["ability"] {
+  const seed = Math.abs(card.jerseyNumber ?? 0);
+  switch (card.role) {
+    case "goalkeeper":
+      return "goalkeeper";
+    case "defender": {
+      const pool: PlayerCard["ability"][] = ["iron_tackle", "shadow_mark", "powerhouse"];
+      return pool[seed % pool.length];
+    }
+    case "midfielder": {
+      const pool: PlayerCard["ability"][] = ["bullet_pass", "shadow_mark", "ghost_run"];
+      return pool[seed % pool.length];
+    }
+    case "forward": {
+      const pool: PlayerCard["ability"][] = ["ghost_run", "eagle_eye", "powerhouse"];
+      return pool[seed % pool.length];
+    }
+    case "striker": {
+      const pool: PlayerCard["ability"][] = ["eagle_eye", "ghost_run", "powerhouse"];
+      return pool[seed % pool.length];
+    }
+  }
+  return "none";
+}
+
+
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
-  const legacyStats = card.stats as PlayerCard["stats"] & { luck?: number };
   return {
     id: `${teamId}_${card.id}`,
     teamId,
@@ -69,11 +114,9 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     velocity: { x: 0, y: 0 },
     startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
-    stats: {
-      ...card.stats,
-      movement: legacyStats.movement ?? legacyStats.luck ?? 5,
-    },
-    ability: card.ability,
+    stats: { ...ONLINE_MAX_STATS },
+
+    ability: onlineAbilityFor(card),
     command: null,
     commandExecuted: false,
     stateTimer: 0,
@@ -94,15 +137,87 @@ function makeInitPlayers(p1Team: TeamSummary, p2Team: TeamSummary): { players: S
   const p2Players = p2Team.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
     makeSimPlayer(card, "ai", p2Formation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
   );
-
-  const kickoffOwner = p1Players.find(p => p.role === "goalkeeper") ?? p1Players[0];
+  // FTA_PVP4_INITIAL_KICKOFF
+  const kickoffOwner =
+    p1Players.find(p => p.role === "striker") ??
+    p1Players.find(p => p.role === "forward") ??
+    p1Players.find(p => p.role === "midfielder") ??
+    p1Players[0];
+  if (kickoffOwner) {
+    kickoffOwner.position = { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
+  }
   const ball: SimBall = {
-    position: { ...kickoffOwner.position },
+    position: kickoffOwner
+      ? { ...kickoffOwner.position }
+      : { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 },
     velocity: { x: 0, y: 0 },
-    ownerId: kickoffOwner.id,
+    ownerId: kickoffOwner?.id ?? null,
     height: 0,
   };
   return { players: [...p1Players, ...p2Players], ball };
+}
+
+function resetOnlineKickoff(
+  players: SimPlayer[],
+  concedingTeam: "player" | "ai",
+): { players: SimPlayer[]; ball: SimBall } {
+  const resetPlayers = players.map((player) => ({
+    ...player,
+    position: { ...player.startPosition },
+    velocity: { x: 0, y: 0 },
+    state: "IDLE" as SimPlayer["state"],
+    command: null,
+    commandExecuted: false,
+    stateTimer: 0,
+    recoveryTimer: 0,
+  }));
+
+  const rolePriority: Record<SimPlayer["role"], number> = {
+    striker: 0,
+    forward: 1,
+    midfielder: 2,
+    defender: 3,
+    goalkeeper: 4,
+  };
+
+  const candidates = resetPlayers
+    .filter((player) => player.teamId === concedingTeam)
+    .sort((a, b) => rolePriority[a.role] - rolePriority[b.role] || a.jerseyNumber - b.jerseyNumber);
+  const kicker = candidates[0];
+
+  if (!kicker) {
+    return {
+      players: resetPlayers,
+      ball: {
+        position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 },
+        velocity: { x: 0, y: 0 },
+        ownerId: null,
+        height: 0,
+        passTarget: undefined,
+        passStyle: undefined,
+        passStart: undefined,
+        curveMotion: undefined,
+      },
+    };
+  }
+
+  // The conceding team starts the next turn with an actual center-spot kickoff.
+  kicker.position = { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
+  kicker.velocity = { x: 0, y: 0 };
+
+  return {
+    players: resetPlayers,
+    ball: {
+      position: { ...kicker.position },
+      velocity: { x: 0, y: 0 },
+      ownerId: kicker.id,
+      height: 0,
+      passTarget: undefined,
+      passStyle: undefined,
+      passStart: undefined,
+      curveMotion: undefined,
+    },
+  };
 }
 
 export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave }: Props) {
@@ -150,6 +265,10 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const [opponentLeft, setOpponentLeft] = useState(false);
 
   const animRef = useRef<number | null>(null);
+
+  // FTA_PVP4_GOAL_KICKOFF_MAXED_LONGGOAL
+  // A goal is consumed once, then the NEXT server turn starts from a clean kickoff.
+  const pendingKickoffTeamRef = useRef<"player" | "ai" | null>(null);
 
   const clearSelection = useCallback(() => {
     setSelectedPlayerId(null);
@@ -205,11 +324,34 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       if (!fp) return p;
       return { ...p, position: { ...fp.position }, velocity: { ...fp.velocity }, state: fp.state, command: null, commandExecuted: false };
     });
-    const newBall = { position: { ...lastFrame.ball.position }, velocity: { ...lastFrame.ball.velocity }, ownerId: lastFrame.ball.ownerId, height: 0, passStyle: undefined, passStart: undefined };
+
+    const liveBall: SimBall = {
+      position: { ...lastFrame.ball.position },
+      velocity: { ...lastFrame.ball.velocity },
+      ownerId: lastFrame.ball.ownerId,
+      height: 0,
+      passTarget: undefined,
+      passStyle: undefined,
+      passStart: undefined,
+      curveMotion: undefined,
+    };
+
+    const concedingTeam: "player" | "ai" | null =
+      goalsDelta.p1 > 0
+        ? "ai"
+        : goalsDelta.p2 > 0
+          ? "player"
+          : null;
+
+    // Critical fix: a goal marks a pending restart. The net ball is NEVER
+    // allowed to become the starting ball for the next planning turn.
+    pendingKickoffTeamRef.current = concedingTeam;
+
     setPlayers(newPlayers);
     playersRef.current = newPlayers;
-    setBall(newBall);
-    ballRef.current = newBall;
+    setBall(liveBall);
+    ballRef.current = liveBall;
+    setCurrentFrame(null);
 
     getSocket().emit("turn:ready", { goalsDelta });
     setPendingCommands(new Map());
@@ -297,6 +439,24 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       turn: number;
       maxTurns: number;
     }) => {
+      const kickoffTeam = pendingKickoffTeamRef.current;
+      if (kickoffTeam) {
+        const restart = resetOnlineKickoff(playersRef.current, kickoffTeam);
+        setPlayers(restart.players);
+        playersRef.current = restart.players;
+        setBall(restart.ball);
+        ballRef.current = restart.ball;
+        setCurrentFrame(null);
+        pendingKickoffTeamRef.current = null;
+
+        // Nothing from the scoring turn survives into the kickoff.
+        const clearedCommands = new Map<string, Command>();
+        setPendingCommands(clearedCommands);
+        pendingCommandsRef.current = clearedCommands;
+        setOpponentSubmitted(false);
+        clearSelection();
+      }
+
       setScore(score);
       setTurn(nextTurn);
       setPhase("planning");
