@@ -13,6 +13,9 @@ export interface TeamSummary {
 
 interface RoomPlayer {
   socketId: string;
+  // FTA_NET1_RECONNECT_GRACE
+  clientId: string;
+  connected: boolean;
   team: TeamSummary;
   submitted: boolean;
   commands: unknown[] | null;
@@ -27,10 +30,12 @@ export interface Room {
   turn: number;
   maxTurns: number;
   score: { p1: number; p2: number };
+  simulationSeed?: number;
 }
 
 const rooms = new Map<string, Room>();
 const socketToRoom = new Map<string, string>();
+const clientToRoom = new Map<string, string>();
 
 function generateCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -41,13 +46,13 @@ function generateCode(): string {
   return code;
 }
 
-export function createRoom(socketId: string, team: TeamSummary): Room {
+export function createRoom(socketId: string, team: TeamSummary, clientId = socketId): Room {
   let code: string;
   do { code = generateCode(); } while (rooms.has(code));
 
   const room: Room = {
     code,
-    p1: { socketId, team, submitted: false, commands: null, ready: false },
+    p1: { socketId, clientId, connected: true, team, submitted: false, commands: null, ready: false },
     p2: null,
     phase: "waiting",
     turn: 1,
@@ -56,6 +61,7 @@ export function createRoom(socketId: string, team: TeamSummary): Room {
   };
   rooms.set(code, room);
   socketToRoom.set(socketId, code);
+  clientToRoom.set(clientId, code);
   return room;
 }
 
@@ -63,6 +69,7 @@ export function joinRoom(
   socketId: string,
   code: string,
   team: TeamSummary,
+  clientId = socketId,
 ): { room: Room; role: TeamRole } | { error: string } {
   const upper = code.toUpperCase();
   const room = rooms.get(upper);
@@ -77,9 +84,10 @@ export function joinRoom(
     };
   }
 
-  room.p2 = { socketId, team, submitted: false, commands: null, ready: false };
+  room.p2 = { socketId, clientId, connected: true, team, submitted: false, commands: null, ready: false };
   room.phase = "planning";
   socketToRoom.set(socketId, upper);
+  clientToRoom.set(clientId, upper);
   return { room, role: "p2" };
 }
 
@@ -114,7 +122,9 @@ export function bothSubmitted(room: Room): boolean {
 
 export function startSimulation(room: Room): number {
   room.phase = "simulating";
-  return Math.floor(Math.random() * 999983);
+  const seed = Math.floor(Math.random() * 999983);
+  room.simulationSeed = seed;
+  return seed;
 }
 
 export function markReady(
@@ -125,11 +135,13 @@ export function markReady(
   if (!room || room.phase !== "simulating") return null;
 
   if (room.p1?.socketId === socketId) {
-    room.p1.ready = true;
-    room.score.p1 += goalsDelta.p1;
-    room.score.p2 += goalsDelta.p2;
+    if (!room.p1.ready) {
+      room.p1.ready = true;
+      room.score.p1 += goalsDelta.p1;
+      room.score.p2 += goalsDelta.p2;
+    }
   } else if (room.p2?.socketId === socketId) {
-    room.p2.ready = true;
+    if (!room.p2.ready) room.p2.ready = true;
   } else {
     return null;
   }
@@ -142,9 +154,87 @@ export function bothReady(room: Room): boolean {
 
 export function startNextTurn(room: Room): void {
   room.turn += 1;
+  room.simulationSeed = undefined;
   room.phase = room.turn > room.maxTurns ? "finished" : "planning";
   if (room.p1) { room.p1.submitted = false; room.p1.commands = null; room.p1.ready = false; }
   if (room.p2) { room.p2.submitted = false; room.p2.commands = null; room.p2.ready = false; }
+}
+
+// FTA_NET1_RECONNECT_GRACE
+export function bothConnected(room: Room): boolean {
+  return !!(room.p1?.connected && room.p2?.connected);
+}
+
+export function resumeClient(
+  clientId: string,
+  newSocketId: string,
+): { room: Room; role: TeamRole } | null {
+  const code = clientToRoom.get(clientId);
+  if (!code) return null;
+  const room = rooms.get(code);
+  if (!room) {
+    clientToRoom.delete(clientId);
+    return null;
+  }
+
+  const candidates: Array<[TeamRole, RoomPlayer | null]> = [["p1", room.p1], ["p2", room.p2]];
+  for (const [role, player] of candidates) {
+    if (!player || player.clientId !== clientId) continue;
+    socketToRoom.delete(player.socketId);
+    player.socketId = newSocketId;
+    player.connected = true;
+    socketToRoom.set(newSocketId, code);
+    return { room, role };
+  }
+  return null;
+}
+
+export function markSocketDisconnected(
+  socketId: string,
+): { room: Room; role: TeamRole; clientId: string } | null {
+  const code = socketToRoom.get(socketId);
+  if (!code) return null;
+  socketToRoom.delete(socketId);
+  const room = rooms.get(code);
+  if (!room) return null;
+
+  if (room.p1?.socketId === socketId) {
+    room.p1.connected = false;
+    return { room, role: "p1", clientId: room.p1.clientId };
+  }
+  if (room.p2?.socketId === socketId) {
+    room.p2.connected = false;
+    return { room, role: "p2", clientId: room.p2.clientId };
+  }
+  return null;
+}
+
+export function finalizeDisconnectedClient(
+  clientId: string,
+): { room: Room; role: TeamRole } | null {
+  const code = clientToRoom.get(clientId);
+  if (!code) return null;
+  const room = rooms.get(code);
+  if (!room) {
+    clientToRoom.delete(clientId);
+    return null;
+  }
+
+  if (room.p1?.clientId === clientId) {
+    if (room.p1.connected) return null;
+    clientToRoom.delete(clientId);
+    room.p1 = null;
+    if (!room.p2) rooms.delete(code);
+    return { room, role: "p1" };
+  }
+  if (room.p2?.clientId === clientId) {
+    if (room.p2.connected) return null;
+    clientToRoom.delete(clientId);
+    room.p2 = null;
+    if (!room.p1) rooms.delete(code);
+    return { room, role: "p2" };
+  }
+  return null;
 }
 
 export function removeSocket(socketId: string): { room: Room; role: TeamRole } | null {
