@@ -660,7 +660,7 @@ export function normalizeMarket(
     finances[club.id] = {
       clubId: club.id,
       budget: old?.budget ?? openingClubBudget(currentPayroll, league, index),
-      wageBudget: old?.wageBudget ?? currentPayroll * 1.35 + 50_000,
+      wageBudget: Math.max(old?.wageBudget ?? 0, currentPayroll * 1.35 + 50_000),
       payroll: currentPayroll,
       wagesPaid: sameSeason ? old?.wagesPaid ?? 0 : 0,
       lastWageSeason: normalizedSeason,
@@ -678,19 +678,43 @@ export function normalizeMarket(
     };
   });
 
-  const offers = (state.offers ?? []).map((offer) => ({
-    ...offer,
-    amount: Math.max(0, Math.round(offer.amount ?? 0)),
-    createdSeason: Math.max(
+  const marketSeason = Math.max(
+    1,
+    Math.round(league.season ?? state.season ?? 1),
+  );
+  const marketWeek = Math.max(
+    0,
+    Math.round(league.trainingWeek ?? state.week ?? 0),
+  );
+  const offers = (state.offers ?? []).map((offer): TransferOffer => {
+    const createdSeason = Math.max(
       1,
-      Math.round(offer.createdSeason ?? state.season ?? league.season ?? 1),
-    ),
-    createdWeek: Math.max(0, Math.round(offer.createdWeek ?? 0)),
-    status: validOfferStatus(offer.status) ? offer.status : "pending",
-  }));
+      Math.round(offer.createdSeason ?? state.season ?? marketSeason),
+    );
+    const normalizedStatus: OfferStatus = validOfferStatus(offer.status)
+      ? offer.status
+      : "pending";
+    const status: OfferStatus =
+      ACTIVE_OFFER_STATUSES.includes(normalizedStatus) &&
+      createdSeason < marketSeason
+        ? "withdrawn"
+        : normalizedStatus;
 
-  const season = league.season ?? state.season ?? 1;
-  const week = league.trainingWeek ?? state.week ?? 0;
+    return {
+      ...offer,
+      amount: Math.max(0, Math.round(offer.amount ?? 0)),
+      createdSeason,
+      createdWeek: Math.max(0, Math.round(offer.createdWeek ?? 0)),
+      status,
+      lastUpdatedWeek:
+        status === "withdrawn" && normalizedStatus !== "withdrawn"
+          ? marketWeek
+          : offer.lastUpdatedWeek,
+    };
+  });
+
+  const season = marketSeason;
+  const week = marketWeek;
   const legacyNews = Array.isArray(state.news) ? state.news : [];
   const newsFeed =
     Array.isArray(state.newsFeed) && state.newsFeed.length > 0
@@ -847,10 +871,12 @@ export function placeUserOffer(
     return addNews(state, `Offer blocked: ${registrationError}`);
   }
 
+  const currentSeason = league.season ?? state.season;
   const duplicate = state.offers.some(
     (offer) =>
       offer.playerId === player.id &&
       offer.fromClubId === PLAYER_ID &&
+      (offer.createdSeason ?? currentSeason) === currentSeason &&
       isActiveOffer(offer),
   );
 
