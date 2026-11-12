@@ -31,7 +31,6 @@ export function getAdjacentTiles(col: number, row: number): { col: number; row: 
 }
 
 // Get all tiles reachable from (col, row) within Chebyshev distance `range`.
-// Optionally constrained to GK zone for goalkeeper roles.
 export function getReachableTiles(
   col: number,
   row: number,
@@ -70,7 +69,7 @@ export function tileKey(col: number, row: number): string {
   return `${col},${row}`;
 }
 
-// Clamp a tile to the GK zone
+// Legacy helper retained for callers that still normalize goalkeeper targets.
 export function clampToGKZone(
   col: number,
   row: number,

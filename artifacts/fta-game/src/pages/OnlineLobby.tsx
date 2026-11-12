@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import type { TeamConfig } from "../engine/types";
+import type { PlayerCard, TeamConfig } from "../engine/types";
+import { PLAYERS_PER_TEAM } from "../engine/constants";
+import { LEBRON_ONLINE_CARD } from "../game/onlineSpecialPlayers";
 import type { TeamSummary } from "./OnlineMatch";
 import { getSocket } from "../lib/socket";
 
@@ -21,7 +23,34 @@ type LobbyState =
   | { stage: "joining" }
   | { stage: "error"; message: string };
 
-function toTeamSummary(team: TeamConfig): TeamSummary {
+function toTeamSummary(team: TeamConfig, includeLeBron: boolean): TeamSummary {
+  const players: PlayerCard[] = [...team.players];
+  if (includeLeBron) {
+    const activeLeBronIndex = players
+      .slice(0, PLAYERS_PER_TEAM)
+      .findIndex((player) => player.id === LEBRON_ONLINE_CARD.id);
+    const replaceIndex = players
+      .slice(0, PLAYERS_PER_TEAM)
+      .findIndex((player) => player.role === "forward" || player.role === "striker");
+    const targetIndex = replaceIndex >= 0 ? replaceIndex : PLAYERS_PER_TEAM - 1;
+    const existingLeBronIndex = players.findIndex(
+      (player) => player.id === LEBRON_ONLINE_CARD.id,
+    );
+
+    if (activeLeBronIndex < 0 && targetIndex < players.length) {
+      const displacedPlayer = players[targetIndex];
+      if (existingLeBronIndex >= 0) {
+        [players[targetIndex], players[existingLeBronIndex]] = [
+          players[existingLeBronIndex],
+          players[targetIndex],
+        ];
+      } else {
+        players[targetIndex] = LEBRON_ONLINE_CARD;
+        players.push(displacedPlayer);
+      }
+    }
+  }
+
   return {
     rulesVersion: 8,
     name: team.name,
@@ -31,7 +60,7 @@ function toTeamSummary(team: TeamConfig): TeamSummary {
     sleeveStyle: team.sleeveStyle,
     crestIcon: team.crestIcon,
     formationId: team.formationId,
-    players: team.players,
+    players,
     tier: 1,
   };
 }
@@ -39,6 +68,7 @@ function toTeamSummary(team: TeamConfig): TeamSummary {
 export default function OnlineLobby({ team, onGameReady, onBack }: Props) {
   const [state, setState] = useState<LobbyState>({ stage: "idle" });
   const [joinCode, setJoinCode] = useState("");
+  const [includeLeBron, setIncludeLeBron] = useState(false);
 
   useEffect(() => {
     const socket = getSocket();
@@ -85,14 +115,14 @@ export default function OnlineLobby({ team, onGameReady, onBack }: Props) {
   }, [state, joinCode, onGameReady]);
 
   const handleCreate = () => {
-    const summary = toTeamSummary(team);
+    const summary = toTeamSummary(team, includeLeBron);
     getSocket().emit("room:create", { team: summary });
   };
 
   const handleJoin = () => {
     if (!joinCode.trim()) return;
     setState({ stage: "joining" });
-    const summary = toTeamSummary(team);
+    const summary = toTeamSummary(team, includeLeBron);
     getSocket().emit("room:join", { code: joinCode.trim(), team: summary });
   };
 
@@ -115,6 +145,29 @@ export default function OnlineLobby({ team, onGameReady, onBack }: Props) {
 
         {state.stage === "idle" && (
           <div className="flex flex-col gap-4">
+            <label
+              className="flex cursor-pointer items-start gap-3 rounded-xl border p-4"
+              style={{
+                background: includeLeBron ? "rgba(245,158,11,0.12)" : "rgba(255,255,255,0.04)",
+                borderColor: includeLeBron ? "rgba(245,158,11,0.55)" : "rgba(255,255,255,0.1)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={includeLeBron}
+                onChange={(event) => setIncludeLeBron(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-amber-400"
+              />
+              <span>
+                <span className="block text-sm font-bold text-white">
+                  Add LeBron James to my lineup
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-white/55">
+                  He takes a forward spot and can launch from behind halfway. Logo shots are wildly inaccurate.
+                </span>
+              </span>
+            </label>
+
             {/* Create */}
             <button
               onClick={handleCreate}

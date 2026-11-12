@@ -1199,13 +1199,20 @@ function updatePlayerMovement(
           const onTarget = !!shotTarget &&
             shotTarget.y - BALL_RADIUS >= GOAL_TOP_Y &&
             shotTarget.y + BALL_RADIUS <= GOAL_BOTTOM_Y;
+          const lebronLogoShot =
+            player.cardId === "lebron_james" &&
+            (player.teamId === "player"
+              ? player.position.x < PITCH_WIDTH / 2
+              : player.position.x > PITCH_WIDTH / 2);
           events.push({
             type: GameEventType.SHOT_ON_GOAL,
             tick,
             playerId: player.id,
             teamId: player.teamId,
             onTarget,
-            message: `${player.name} shoots at goal!`,
+            message: lebronLogoShot
+              ? `${player.name} launches a full-court prayer!`
+              : `${player.name} shoots at goal!`,
           });
         }
       }
@@ -1497,7 +1504,14 @@ function executeShot(
   const shooting = Math.max(1, Math.min(10, player.stats.shooting));
   const rangePressure = Math.max(0, distanceTiles - 3) * 0.12;
   const skillError = (11 - shooting) * 0.08;
-  const maxErrorTiles = Math.min(2.25, rangePressure + skillError);
+  const lebronLogoShot =
+    player.cardId === "lebron_james" &&
+    (attackingRight
+      ? player.position.x < PITCH_WIDTH / 2
+      : player.position.x > PITCH_WIDTH / 2);
+  const maxErrorTiles = lebronLogoShot
+    ? Math.min(16, Math.max(9, distanceTiles * 1.4))
+    : Math.min(2.25, rangePressure + skillError);
   const errorY =
     (rng() * 2 - 1) * maxErrorTiles * Math.max(TILE_W, TILE_H);
 

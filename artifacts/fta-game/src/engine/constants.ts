@@ -39,14 +39,13 @@ export const PASS_RECOVERY = 0.2;
 export const SHOT_WIND_UP = 0.30;
 export const SHOT_RECOVERY = 0.6;
 
-// Traditional goalkeeper zone: the three columns inside each penalty area.
-// Both sides now follow the same rule. The old player-only 0-10 allowance is gone.
+// Retain the former box columns for AI positioning and defensive reference.
 export const GK_COLS_PLAYER_MIN = 0;
 export const GK_COLS_PLAYER_MAX = 2;
 export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
 
-// Sweeper Keepers may advance three additional columns beyond the box.
+// Legacy AI preference bands; they no longer restrict goalkeeper movement.
 export const SWEEPER_GK_COLS_PLAYER_MIN = 0;
 export const SWEEPER_GK_COLS_PLAYER_MAX = 5;
 export const SWEEPER_GK_COLS_AI_MIN = GRID_COLS - 6;
@@ -61,18 +60,12 @@ export function isGoalkeeperAbility(ability?: string): boolean {
 }
 
 export function goalkeeperColumnBounds(
-  teamId: "player" | "ai",
-  ability?: string,
+  _teamId: "player" | "ai",
+  _ability?: string,
 ): { min: number; max: number } {
-  if (isSweeperKeeperAbility(ability)) {
-    return teamId === "player"
-      ? { min: SWEEPER_GK_COLS_PLAYER_MIN, max: SWEEPER_GK_COLS_PLAYER_MAX }
-      : { min: SWEEPER_GK_COLS_AI_MIN, max: SWEEPER_GK_COLS_AI_MAX };
-  }
-
-  return teamId === "player"
-    ? { min: GK_COLS_PLAYER_MIN, max: GK_COLS_PLAYER_MAX }
-    : { min: GK_COLS_AI_MIN, max: GK_COLS_AI_MAX };
+  // Goalkeepers can now roam the full pitch. Keep this helper as a compatibility
+  // boundary for movement, collision, and dive code that still calls it.
+  return { min: 0, max: GRID_COLS - 1 };
 }
 
 export const GOALS_TO_WIN = 3;

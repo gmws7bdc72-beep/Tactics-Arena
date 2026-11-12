@@ -306,6 +306,7 @@ export default function OnlineMatch({
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setShotTargetMode(false);
+    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
@@ -679,6 +680,8 @@ export default function OnlineMatch({
       setSelectedPlayerId(playerId);
       setPassTargetMode(false);
       setLongPassTargetMode(false);
+      setShotTargetMode(false);
+      setDiveTargetMode(false);
       setComboActive(false);
       setComboStep(1);
       setComboStoredMove(null);
@@ -703,9 +706,9 @@ export default function OnlineMatch({
     }
 
     if (shotTargetMode) {
-      const selected = currentFrame?.players.find(
-        (player) => player.id === selectedPlayerId,
-      );
+      const selected =
+        currentFrame?.players.find((player) => player.id === selectedPlayerId) ??
+        playersRef.current.find((player) => player.id === selectedPlayerId);
       if (!selected) return;
 
       const attackingRight = selected.teamId === "player";
@@ -814,6 +817,7 @@ export default function OnlineMatch({
     if (!selectedPlayerId) return;
     setPassTargetMode(false);
     setLongPassTargetMode(false);
+    setDiveTargetMode(false);
     setShotTargetMode(true);
   }, [selectedPlayerId]);
   const setPass = useCallback(() => {
@@ -873,16 +877,21 @@ export default function OnlineMatch({
   const tileSize = isMobile ? 32 : 40;
 
   const selectedSimPlayer = selectedPlayerId
-    ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ?? null
+    ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ??
+      players.find((player) => player.id === selectedPlayerId) ??
+      null
     : null;
 
   const goalkeeperCanDive =
     !!selectedSimPlayer &&
     selectedSimPlayer.role === "goalkeeper" &&
-    currentFrame?.ball.ownerId !== selectedSimPlayer.id;
+    (currentFrame?.ball.ownerId ?? ball.ownerId) !== selectedSimPlayer.id;
 
   const beginGoalkeeperDive = useCallback(() => {
     if (!selectedPlayerId || !goalkeeperCanDive) return;
+    setShotTargetMode(false);
+    setPassTargetMode(false);
+    setLongPassTargetMode(false);
     setDiveTargetMode(true);
   }, [selectedPlayerId, goalkeeperCanDive]);
 
@@ -943,7 +952,7 @@ export default function OnlineMatch({
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
           onCurvePointClick={curve.addControl}
-          passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode}
+          passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode || diveTargetMode}
           curveDraft={curve.preview}
           curveControlMode={curve.placingControls}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}
@@ -963,6 +972,25 @@ export default function OnlineMatch({
         <div className="flex items-center justify-center py-1 px-4 text-xs font-semibold"
           style={{ background: "rgba(34,197,94,0.1)", color: "#86efac" }}>
           {oppTeam.name} is ready — finish your plan!
+        </div>
+      )}
+      {phase === "planning" && (shotTargetMode || diveTargetMode) && (
+        <div
+          role="status"
+          className="flex items-center justify-center px-3 py-1.5 text-center text-xs font-semibold"
+          style={{
+            background: diveTargetMode ? "rgba(34,211,238,0.12)" : "rgba(239,68,68,0.12)",
+            color: diveTargetMode ? "#a5f3fc" : "#fecaca",
+          }}
+        >
+          {diveTargetMode
+            ? "Tap a tile to choose where your goalkeeper dives."
+            : selectedPlayer?.cardId === "lebron_james" &&
+                (selectedPlayer.teamId === "player"
+                  ? selectedPlayer.position.x < PITCH_WIDTH / 2
+                  : selectedPlayer.position.x > PITCH_WIDTH / 2)
+              ? "Tap the goal to launch LeBron’s wildly inaccurate logo shot."
+              : "Tap the goal to aim your shot."}
         </div>
       )}
 
