@@ -1,5 +1,8 @@
 export type TeamRole = "p1" | "p2";
 
+export const ONLINE_MAX_TURNS = 30;
+export const ONLINE_TURN_TIME_MS = 25_000;
+
 export interface TeamSummary {
   rulesVersion?: number;
   name: string;
@@ -30,6 +33,10 @@ export interface Room {
   turn: number;
   maxTurns: number;
   score: { p1: number; p2: number };
+  turnDeadlineAt?: number;
+  winner?: TeamRole | "draw";
+  endReason?: "full_time" | "opponent_left";
+  turnResultApplied: boolean;
   simulationSeed?: number;
 }
 
@@ -56,8 +63,9 @@ export function createRoom(socketId: string, team: TeamSummary, clientId = socke
     p2: null,
     phase: "waiting",
     turn: 1,
-    maxTurns: 40,
+    maxTurns: ONLINE_MAX_TURNS,
     score: { p1: 0, p2: 0 },
+    turnResultApplied: false,
   };
   rooms.set(code, room);
   socketToRoom.set(socketId, code);
@@ -86,6 +94,7 @@ export function joinRoom(
 
   room.p2 = { socketId, clientId, connected: true, team, submitted: false, commands: null, ready: false };
   room.phase = "planning";
+  room.turnDeadlineAt = Date.now() + ONLINE_TURN_TIME_MS;
   socketToRoom.set(socketId, upper);
   clientToRoom.set(clientId, upper);
   return { room, role: "p2" };
@@ -100,9 +109,16 @@ export function getRoomBySocket(socketId: string): Room | null {
 export function submitCommands(
   socketId: string,
   commands: unknown[],
+  submittedTurn?: number,
 ): Room | null {
   const room = getRoomBySocket(socketId);
-  if (!room || room.phase !== "planning") return null;
+  if (
+    !room ||
+    room.phase !== "planning" ||
+    (submittedTurn != null && submittedTurn !== room.turn)
+  ) {
+    return null;
+  }
 
   if (room.p1?.socketId === socketId) {
     room.p1.submitted = true;
@@ -122,6 +138,8 @@ export function bothSubmitted(room: Room): boolean {
 
 export function startSimulation(room: Room): number {
   room.phase = "simulating";
+  room.turnDeadlineAt = undefined;
+  room.turnResultApplied = false;
   const seed = Math.floor(Math.random() * 999983);
   room.simulationSeed = seed;
   return seed;
@@ -130,18 +148,35 @@ export function startSimulation(room: Room): number {
 export function markReady(
   socketId: string,
   goalsDelta: { p1: number; p2: number },
+  completedTurn?: number,
 ): Room | null {
   const room = getRoomBySocket(socketId);
-  if (!room || room.phase !== "simulating") return null;
+  if (
+    !room ||
+    room.phase !== "simulating" ||
+    (completedTurn != null && completedTurn !== room.turn)
+  ) {
+    return null;
+  }
 
   if (room.p1?.socketId === socketId) {
     if (!room.p1.ready) {
       room.p1.ready = true;
-      room.score.p1 += goalsDelta.p1;
-      room.score.p2 += goalsDelta.p2;
+      if (!room.turnResultApplied) {
+        room.score.p1 += goalsDelta.p1;
+        room.score.p2 += goalsDelta.p2;
+        room.turnResultApplied = true;
+      }
     }
   } else if (room.p2?.socketId === socketId) {
-    if (!room.p2.ready) room.p2.ready = true;
+    if (!room.p2.ready) {
+      room.p2.ready = true;
+      if (!room.turnResultApplied) {
+        room.score.p1 += goalsDelta.p1;
+        room.score.p2 += goalsDelta.p2;
+        room.turnResultApplied = true;
+      }
+    }
   } else {
     return null;
   }
@@ -156,8 +191,42 @@ export function startNextTurn(room: Room): void {
   room.turn += 1;
   room.simulationSeed = undefined;
   room.phase = room.turn > room.maxTurns ? "finished" : "planning";
+  room.turnDeadlineAt =
+    room.phase === "planning" ? Date.now() + ONLINE_TURN_TIME_MS : undefined;
+  room.turnResultApplied = false;
   if (room.p1) { room.p1.submitted = false; room.p1.commands = null; room.p1.ready = false; }
   if (room.p2) { room.p2.submitted = false; room.p2.commands = null; room.p2.ready = false; }
+}
+
+export function expireMissingSubmissions(room: Room): boolean {
+  if (room.phase !== "planning") return false;
+  for (const player of [room.p1, room.p2]) {
+    if (player && !player.submitted) {
+      player.submitted = true;
+      player.commands = [];
+    }
+  }
+  return bothSubmitted(room);
+}
+
+export function completeMissingReady(room: Room): void {
+  if (room.phase !== "simulating") return;
+  if (room.p1) room.p1.ready = true;
+  if (room.p2) room.p2.ready = true;
+}
+
+export function markFinished(room: Room, reason: "full_time" | "opponent_left"): void {
+  room.phase = "finished";
+  room.turnDeadlineAt = undefined;
+  room.endReason = reason;
+  if (reason === "full_time") {
+    room.winner =
+      room.score.p1 > room.score.p2
+        ? "p1"
+        : room.score.p2 > room.score.p1
+          ? "p2"
+          : "draw";
+  }
 }
 
 // FTA_NET1_RECONNECT_GRACE
@@ -187,6 +256,24 @@ export function resumeClient(
     return { room, role };
   }
   return null;
+}
+
+export function getRoomByClient(clientId: string): Room | null {
+  const code = clientToRoom.get(clientId);
+  return code ? rooms.get(code) ?? null : null;
+}
+
+export function removeRoom(code: string): void {
+  const room = rooms.get(code);
+  if (!room) return;
+  for (const player of [room.p1, room.p2]) {
+    if (!player) continue;
+    socketToRoom.delete(player.socketId);
+    if (clientToRoom.get(player.clientId) === code) {
+      clientToRoom.delete(player.clientId);
+    }
+  }
+  rooms.delete(code);
 }
 
 export function markSocketDisconnected(
@@ -222,16 +309,10 @@ export function finalizeDisconnectedClient(
 
   if (room.p1?.clientId === clientId) {
     if (room.p1.connected) return null;
-    clientToRoom.delete(clientId);
-    room.p1 = null;
-    if (!room.p2) rooms.delete(code);
     return { room, role: "p1" };
   }
   if (room.p2?.clientId === clientId) {
     if (room.p2.connected) return null;
-    clientToRoom.delete(clientId);
-    room.p2 = null;
-    if (!room.p1) rooms.delete(code);
     return { room, role: "p2" };
   }
   return null;

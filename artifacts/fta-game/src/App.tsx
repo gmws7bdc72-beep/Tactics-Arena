@@ -61,6 +61,7 @@ interface OnlineGameConfig {
   p1Team: TeamSummary;
   p2Team: TeamSummary;
   roomCode: string;
+  turnDeadlineAt?: number;
 }
 
 interface MatchResult {
@@ -755,6 +756,7 @@ export default function App() {
           p1Team={onlineConfig.p1Team}
           p2Team={onlineConfig.p2Team}
           roomCode={onlineConfig.roomCode}
+          turnDeadlineAt={onlineConfig.turnDeadlineAt}
           onLeave={() => {
             setOnlineConfig(null);
             setScreen("home");

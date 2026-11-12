@@ -10,6 +10,7 @@ interface Props {
     p1Team: TeamSummary;
     p2Team: TeamSummary;
     roomCode: string;
+    turnDeadlineAt?: number;
   }) => void;
   onBack: () => void;
 }
@@ -53,7 +54,12 @@ export default function OnlineLobby({ team, onGameReady, onBack }: Props) {
     socket.on("room:ready", ({
       p1Team,
       p2Team,
-    }: { p1Team: TeamSummary; p2Team: TeamSummary }) => {
+      turnDeadlineAt,
+    }: {
+      p1Team: TeamSummary;
+      p2Team: TeamSummary;
+      turnDeadlineAt?: number;
+    }) => {
       const myRole: "p1" | "p2" =
         state.stage === "waiting" ? "p1" : "p2";
       onGameReady({
@@ -61,6 +67,7 @@ export default function OnlineLobby({ team, onGameReady, onBack }: Props) {
         p1Team,
         p2Team,
         roomCode: state.stage === "waiting" ? state.code : joinCode.toUpperCase(),
+        turnDeadlineAt,
       });
     });
 

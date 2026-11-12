@@ -23,6 +23,7 @@ import {
 import { formatMoney } from "../game/transferDatabase";
 import { ABILITIES } from "../game/players";
 import { validateStartingAbilityCaps } from "../game/abilityLimits";
+import { createCodeRewardSquad } from "../game/codeRewards";
 
 interface Props {
   team: TeamConfig;
@@ -362,6 +363,13 @@ export default function TeamSetup({
   );
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
   const [lineupError, setLineupError] = useState<string | null>(null);
+  const [teamCode, setTeamCode] = useState("");
+  const [pendingRewardPlayers, setPendingRewardPlayers] =
+    useState<PlayerCardType[] | null>(null);
+  const [codeFeedback, setCodeFeedback] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
   const [expandedTrainingId, setExpandedTrainingId] = useState<string | null>(
     null,
   );
@@ -425,6 +433,63 @@ export default function TeamSetup({
       formationId: formation.id,
       startPositions: formation.positions.map((position) => ({ ...position })),
     }));
+  };
+
+  const redeemTeamCode = () => {
+    const rewardPlayers = createCodeRewardSquad(teamCode);
+    if (!rewardPlayers) {
+      setPendingRewardPlayers(null);
+      setCodeFeedback({
+        success: false,
+        message: "That code is not valid.",
+      });
+      return;
+    }
+
+    const check = validateStartingAbilityCaps(rewardPlayers);
+    if (!check.valid) {
+      setPendingRewardPlayers(null);
+      setCodeFeedback({
+        success: false,
+        message: check.message ?? "This team exceeds a starting ability limit.",
+      });
+      return;
+    }
+
+    setPendingRewardPlayers(rewardPlayers);
+    setCodeFeedback(null);
+  };
+
+  const applyRewardTeam = () => {
+    if (!pendingRewardPlayers) return;
+    const rewardFormation =
+      FORMATIONS.find((formation) => formation.id === "2-1-2") ?? FORMATIONS[0];
+    const rewardTeam = ensureTeamDevelopment({
+      ...currentTeam,
+      players: pendingRewardPlayers,
+      formationId: rewardFormation.id,
+      startPositions: rewardFormation.positions.map((position) => ({
+        ...position,
+      })),
+    });
+    const check = validateStartingAbilityCaps(rewardTeam.players);
+    if (!check.valid) {
+      setCodeFeedback({
+        success: false,
+        message: check.message ?? "This team exceeds a starting ability limit.",
+      });
+      return;
+    }
+
+    setCurrentTeam(rewardTeam);
+    setPendingRewardPlayers(null);
+    setActiveSlot(null);
+    setLineupError(null);
+    setTeamCode("");
+    setCodeFeedback({
+      success: true,
+      message: "Redeemed! Your 16-player squad now has 85 OVR ratings.",
+    });
   };
 
   const swapPlayer = (slotIndex: number, newCard: PlayerCardType) => {
@@ -570,6 +635,80 @@ export default function TeamSetup({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
+        <section className="mb-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3">
+          <div className="mb-2">
+            <h2 className="text-xs font-black uppercase tracking-wide text-amber-200">
+              Redeem Team Code
+            </h2>
+            <p className="mt-1 text-[10px] text-amber-100/60">
+              A full 85 OVR squad; redeeming replaces your current squad.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={teamCode}
+              onChange={(event) => {
+                setTeamCode(event.target.value);
+                setPendingRewardPlayers(null);
+                setCodeFeedback(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") redeemTeamCode();
+              }}
+              autoCapitalize="none"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Team reward code"
+              placeholder="Enter code"
+              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs font-mono text-white outline-none focus:border-amber-300/50"
+            />
+            <button
+              type="button"
+              onClick={redeemTeamCode}
+              disabled={!teamCode.trim()}
+              className="rounded-lg px-3 py-2 text-xs font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ background: "#fbbf24" }}
+            >
+              Redeem
+            </button>
+          </div>
+          {pendingRewardPlayers && (
+            <div className="mt-3 rounded-lg border border-amber-300/20 bg-black/20 p-3">
+              <p className="text-[10px] leading-4 text-amber-100/80">
+                Replace your current 16-player squad? Your team name and kit will stay the same.
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={applyRewardTeam}
+                  className="rounded-md px-3 py-2 text-[10px] font-black text-slate-950"
+                  style={{ background: "#fbbf24" }}
+                >
+                  Replace Squad
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingRewardPlayers(null)}
+                  className="rounded-md border border-white/10 px-3 py-2 text-[10px] font-bold text-white/70"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {codeFeedback && (
+            <p
+              role="status"
+              className={`mt-2 text-[10px] font-bold ${
+                codeFeedback.success ? "text-emerald-300" : "text-rose-300"
+              }`}
+            >
+              {codeFeedback.message}
+            </p>
+          )}
+        </section>
+
         {tab === "lineup" && (
           <div>
             <p className="text-gray-400 text-xs mb-2">

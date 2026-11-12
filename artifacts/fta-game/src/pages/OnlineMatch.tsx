@@ -53,6 +53,7 @@ interface Props {
   p1Team: TeamSummary;
   p2Team: TeamSummary;
   roomCode: string;
+  turnDeadlineAt?: number;
   onLeave: () => void;
 }
 
@@ -220,7 +221,14 @@ function resetOnlineKickoff(
   };
 }
 
-export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave }: Props) {
+export default function OnlineMatch({
+  myRole,
+  p1Team,
+  p2Team,
+  roomCode,
+  turnDeadlineAt,
+  onLeave,
+}: Props) {
   const myTeamId: "player" | "ai" = myRole === "p1" ? "player" : "ai";
   const myTeam = myRole === "p1" ? p1Team : p2Team;
   const oppTeam = myRole === "p1" ? p2Team : p1Team;
@@ -236,7 +244,8 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
   const [score, setScore] = useState({ p1: 0, p2: 0 });
   const [turn, setTurn] = useState(1);
-  const [maxTurns] = useState(MAX_MATCH_TURNS);
+  const turnRef = useRef(1);
+  const [maxTurns, setMaxTurns] = useState(MAX_MATCH_TURNS);
   const [phase, setPhase] = useState<"planning" | "waiting" | "simulating" | "finished">("planning");
   const phaseRef = useRef<typeof phase>("planning");
   useEffect(() => { phaseRef.current = phase; }, [phase]);
@@ -265,6 +274,28 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const [opponentLeft, setOpponentLeft] = useState(false);
 
   const animRef = useRef<number | null>(null);
+  const confirmTurnRef = useRef<() => void>(() => {});
+
+  const startTimer = useCallback((deadlineAt?: number) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    const deadline =
+      typeof deadlineAt === "number" && Number.isFinite(deadlineAt)
+        ? deadlineAt
+        : Date.now() + ONLINE_TURN_TIME * 1000;
+
+    const updateRemaining = () => {
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining === 0) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = null;
+        if (phaseRef.current === "planning") confirmTurnRef.current();
+      }
+    };
+
+    timerRef.current = setInterval(updateRemaining, 250);
+    updateRemaining();
+  }, []);
 
   // FTA_PVP4_GOAL_KICKOFF_MAXED_LONGGOAL
   // A goal is consumed once, then the NEXT server turn starts from a clean kickoff.
@@ -318,7 +349,11 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   }, []);
 
   // ── Simulation playback ──────────────────────────────────────────────────
-  const finishSimulation = useCallback((lastFrame: FrameSnapshot, goalsDelta: { p1: number; p2: number }) => {
+  const finishSimulation = useCallback((
+    lastFrame: FrameSnapshot,
+    goalsDelta: { p1: number; p2: number },
+    completedTurn: number,
+  ) => {
     const newPlayers = playersRef.current.map(p => {
       const fp = lastFrame.players.find(f => f.id === p.id);
       if (!fp) return p;
@@ -353,7 +388,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
     ballRef.current = liveBall;
     setCurrentFrame(null);
 
-    getSocket().emit("turn:ready", { goalsDelta });
+    getSocket().emit("turn:ready", { goalsDelta, turn: completedTurn });
     setPendingCommands(new Map());
     setOpponentSubmitted(false);
   }, []);
@@ -361,6 +396,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
   const playbackFrames = useCallback((
     frames: FrameSnapshot[],
     goalsDelta: { p1: number; p2: number },
+    simulationTurn: number,
   ) => {
     let idx = 0;
     let startedAt: number | null = null;
@@ -388,7 +424,7 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       }
 
       if (idx >= frames.length) {
-        finishSimulation(frames[frames.length - 1], goalsDelta);
+        finishSimulation(frames[frames.length - 1], goalsDelta, simulationTurn);
         return;
       }
       animRef.current = requestAnimationFrame(animate);
@@ -408,10 +444,12 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       p1Commands,
       p2Commands,
       seed,
+      turn: simulationTurn,
     }: {
       p1Commands: [string, Command][];
       p2Commands: [string, Command][];
       seed: number;
+      turn: number;
     }) => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setPhase("simulating");
@@ -431,13 +469,68 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
       const p2Goals = events.filter(e => e.type === GameEventType.GOAL && e.teamId === "ai").length;
 
       const goalsDelta = { p1: p1Goals, p2: p2Goals };
-      playbackFrames(frames, goalsDelta);
+      playbackFrames(frames, goalsDelta, simulationTurn);
     });
 
-    socket.on("turn:done", ({ score, turn: nextTurn, maxTurns: mt }: {
+    socket.on("room:resumed", ({
+      turn: resumedTurn,
+      maxTurns: resumedMaxTurns,
+      score: resumedScore,
+      phase: resumedPhase,
+      turnDeadlineAt: resumedDeadline,
+      youSubmitted,
+      opponentSubmitted: resumedOpponentSubmitted,
+      endReason,
+    }: {
+      turn: number;
+      maxTurns: number;
+      score: { p1: number; p2: number };
+      phase: "waiting" | "planning" | "simulating" | "finished";
+      turnDeadlineAt?: number;
+      youSubmitted: boolean;
+      opponentSubmitted: boolean;
+      endReason?: "full_time" | "opponent_left";
+    }) => {
+      setTurn(resumedTurn);
+      turnRef.current = resumedTurn;
+      setMaxTurns(resumedMaxTurns);
+      setScore(resumedScore);
+      setOpponentSubmitted(resumedOpponentSubmitted);
+
+      if (resumedPhase === "finished") {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = null;
+        setOpponentLeft(endReason === "opponent_left");
+        setPhase("finished");
+        phaseRef.current = "finished";
+        return;
+      }
+
+      if (resumedPhase === "simulating") {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = null;
+        setPhase("simulating");
+        phaseRef.current = "simulating";
+        return;
+      }
+
+      if (youSubmitted) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = null;
+        setPhase("waiting");
+        phaseRef.current = "waiting";
+      } else {
+        setPhase("planning");
+        phaseRef.current = "planning";
+        startTimer(resumedDeadline);
+      }
+    });
+
+    socket.on("turn:done", ({ score, turn: nextTurn, maxTurns: mt, turnDeadlineAt: deadline }: {
       score: { p1: number; p2: number };
       turn: number;
       maxTurns: number;
+      turnDeadlineAt?: number;
     }) => {
       const kickoffTeam = pendingKickoffTeamRef.current;
       if (kickoffTeam) {
@@ -459,67 +552,63 @@ export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave 
 
       setScore(score);
       setTurn(nextTurn);
+      turnRef.current = nextTurn;
+      setMaxTurns(mt);
       setPhase("planning");
       phaseRef.current = "planning";
-      setTimeLeft(ONLINE_TURN_TIME);
-      startTimer();
-      void mt;
+      startTimer(deadline);
     });
 
-    socket.on("game:over", ({ score: finalScore }: { score: { p1: number; p2: number }; winner: string }) => {
+    socket.on("game:over", ({ score: finalScore, endReason }: {
+      score: { p1: number; p2: number };
+      winner: string;
+      endReason?: "full_time" | "opponent_left";
+    }) => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setScore(finalScore);
+      setOpponentLeft(endReason === "opponent_left");
       setPhase("finished");
       phaseRef.current = "finished";
     });
 
-    socket.on("room:opponent-left", () => {
+    socket.on("room:opponent-left", ({ score: finalScore }: {
+      score?: { p1: number; p2: number };
+      winner?: string;
+      endReason?: "full_time" | "opponent_left";
+    }) => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setOpponentLeft(true);
+      if (finalScore) setScore(finalScore);
       setPhase("finished");
+      phaseRef.current = "finished";
     });
 
     return () => {
       socket.off("turn:opponent-submitted");
       socket.off("turn:simulate");
+      socket.off("room:resumed");
       socket.off("turn:done");
       socket.off("game:over");
       socket.off("room:opponent-left");
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playbackFrames, clearSelection]);
-
-  // ── Turn timer ───────────────────────────────────────────────────────────
-  const confirmTurnRef = useRef<() => void>(() => {});
-
-  const startTimer = useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setTimeLeft(ONLINE_TURN_TIME);
-    timerRef.current = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          timerRef.current = null;
-          if (phaseRef.current === "planning") confirmTurnRef.current();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
+  }, [playbackFrames, clearSelection, startTimer]);
 
   // Start timer on mount
   useEffect(() => {
-    startTimer();
+    startTimer(turnDeadlineAt);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startTimer, turnDeadlineAt]);
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;
     const cmds = [...pendingCommandsRef.current.entries()];
     // Only include my team's commands
     const myCmds = cmds.filter(([id]) => id.startsWith(myTeamId + "_") || playersRef.current.find(p => p.id === id)?.teamId === myTeamId);
-    getSocket().emit("turn:commands", { commands: myCmds });
+    getSocket().emit("turn:commands", {
+      commands: myCmds,
+      turn: turnRef.current,
+    });
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     setPhase("waiting");
     phaseRef.current = "waiting";
