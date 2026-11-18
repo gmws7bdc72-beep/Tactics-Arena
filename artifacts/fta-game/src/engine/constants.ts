@@ -44,6 +44,7 @@ export const GK_COLS_PLAYER_MIN = 0;
 export const GK_COLS_PLAYER_MAX = 2;
 export const GK_COLS_AI_MIN = GRID_COLS - 3;
 export const GK_COLS_AI_MAX = GRID_COLS - 1;
+export const GOALKEEPER_REACH_TILES = 1.5;
 
 // Legacy AI preference bands; they no longer restrict goalkeeper movement.
 export const SWEEPER_GK_COLS_PLAYER_MIN = 0;

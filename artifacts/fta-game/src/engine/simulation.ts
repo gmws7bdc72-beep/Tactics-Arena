@@ -30,6 +30,7 @@ import {
   GOAL_RIGHT_X,
   GOAL_DEPTH,
   PLAYER_RADIUS,
+  GOALKEEPER_REACH_TILES,
   TILE_W,
   TILE_H,
   GK_COLS_PLAYER_MIN,
@@ -540,6 +541,21 @@ export function runSimulation(
         message: "Off the post!",
       });
     }
+    const goalResult = checkGoal(simBall, previousBallPosition);
+    if (goalResult) {
+      tickEvents.push({
+        type: GameEventType.GOAL,
+        tick,
+        teamId: goalResult,
+        message:
+          goalResult === "player"
+            ? "GOAL! Player scores!"
+            : "GOAL! Opponent scores!",
+      });
+      allEvents.push(...tickEvents);
+      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
+      break;
+    }
     detectAndResolveEvents(
       simPlayers,
       simBall,
@@ -633,22 +649,6 @@ export function runSimulation(
     previousPositions = new Map(
       simPlayers.map((player) => [player.id, { ...player.position }]),
     );
-
-    const goalResult = checkGoal(simBall);
-    if (goalResult) {
-      tickEvents.push({
-        type: GameEventType.GOAL,
-        tick,
-        teamId: goalResult,
-        message:
-          goalResult === "player"
-            ? "GOAL! Player scores!"
-            : "GOAL! Opponent scores!",
-      });
-      allEvents.push(...tickEvents);
-      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
-      break;
-    }
 
     allEvents.push(...tickEvents);
     frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
@@ -1275,7 +1275,7 @@ function updatePlayerMovement(
       if (player.role === "goalkeeper" && ball.ownerId !== player.id && cmd.targetPosition) {
         const from = posToTile(player.position);
         const wanted = posToTile(cmd.targetPosition);
-        const maxTiles = Math.max(player.stats.defense, player.stats.speed) >= 9 ? 2 : 1;
+        const maxTiles = GOALKEEPER_REACH_TILES;
         const rawDc = wanted.col - from.col;
         const rawDr = wanted.row - from.row;
         const rawLength = Math.hypot(rawDc, rawDr);
@@ -1283,8 +1283,8 @@ function updatePlayerMovement(
         let bestCol = from.col;
         let bestRow = from.row;
         let bestError = Number.POSITIVE_INFINITY;
-        for (let dc = -maxTiles; dc <= maxTiles; dc++) {
-          for (let dr = -maxTiles; dr <= maxTiles; dr++) {
+        for (let dc = -Math.ceil(maxTiles); dc <= Math.ceil(maxTiles); dc++) {
+          for (let dr = -Math.ceil(maxTiles); dr <= Math.ceil(maxTiles); dr++) {
             if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
             const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
             const candidateCol = clamp(from.col + dc, bounds.min, bounds.max);
@@ -1424,16 +1424,20 @@ function executePass(
       typeof player.stats.vision === "number"
         ? player.stats.vision
         : player.stats.passing;
-    const errorTiles = Math.max(0, 3 - Math.floor((longPassing + vision) / 5));
-    if (errorTiles > 0) {
-      const targetTile = posToTile(targetPos);
-      const dc = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
-      const dr = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
-      targetPos = tileToPos(
-        clamp(targetTile.col + dc, 0, GRID_COLS - 1),
-        clamp(targetTile.row + dr, 0, GRID_ROWS - 1),
-      );
-    }
+    const accuracy = clamp((longPassing + vision) / 20, 0, 1);
+    const maxErrorTiles = (1 - accuracy) * 1.5;
+    targetPos = {
+      x: clamp(
+        targetPos.x + (rng() * 2 - 1) * maxErrorTiles * TILE_W,
+        BALL_RADIUS,
+        PITCH_WIDTH - BALL_RADIUS,
+      ),
+      y: clamp(
+        targetPos.y + (rng() * 2 - 1) * maxErrorTiles * TILE_H,
+        BALL_RADIUS,
+        PITCH_HEIGHT - BALL_RADIUS,
+      ),
+    };
   }
 
   const abilityMultiplier = player.ability === "bullet_pass" ? 1.5 : 1;
@@ -1465,7 +1469,7 @@ function executePass(
   ball.velocity = vec2Scale(direction, passSpeed);
   ball.travelSpeed = passSpeed;
   ball.flightPeakHeight = isLongBall
-    ? clamp(22 + distanceTiles * 2.15, 28, 58)
+    ? clamp(18 + distanceTiles * 1.4, 24, 44)
     : 0;
   ball.passTarget = { ...targetPos };
   ball.passStart = { ...ball.position };
@@ -1510,8 +1514,8 @@ function executeShot(
       ? player.position.x < PITCH_WIDTH / 2
       : player.position.x > PITCH_WIDTH / 2);
   const maxErrorTiles = lebronLogoShot
-    ? Math.min(16, Math.max(9, distanceTiles * 1.4))
-    : Math.min(2.25, rangePressure + skillError);
+    ? Math.min(5.5, Math.max(3.4, distanceTiles * 0.38))
+    : Math.min(1.75, rangePressure + skillError);
   const errorY =
     (rng() * 2 - 1) * maxErrorTiles * Math.max(TILE_W, TILE_H);
 
@@ -1727,9 +1731,14 @@ function detectAndResolveEvents(
     const candidates: { player: SimPlayer; score: number }[] = [];
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
-      const canContestLongBall = longBallDirectionalContestAllowed(player, ball, dist);
+      const isGoalkeeper = player.role === "goalkeeper";
+      const controlRange = isGoalkeeper
+        ? Math.max(TILE_W, TILE_H) * GOALKEEPER_REACH_TILES
+        : INTERCEPTION_RADIUS;
+      const canContestLongBall =
+        isGoalkeeper || longBallDirectionalContestAllowed(player, ball, dist);
       if (
-        dist < INTERCEPTION_RADIUS &&
+        dist < controlRange &&
         canContestLongBall &&
         player.state !== PlayerState.RECOVERING
       ) {
@@ -1740,7 +1749,7 @@ function detectAndResolveEvents(
                 vec2Normalize(vec2Sub(ball.position, player.position)),
               )
             : 0;
-        let score = (INTERCEPTION_RADIUS - dist) / INTERCEPTION_RADIUS;
+        let score = (controlRange - dist) / controlRange;
         score += Math.max(0, velTowardBall) * 0.3;
         if (ball.passStyle === "long") {
           const aerial = typeof player.stats.aerial === "number" ? player.stats.aerial : player.stats.attack;
@@ -2160,23 +2169,49 @@ function constrainToField(players: SimPlayer[], ball: SimBall): void {
   }
 }
 
-function checkGoal(ball: SimBall): "player" | "ai" | null {
+function checkGoal(ball: SimBall, previousPosition: Vec2): "player" | "ai" | null {
   if (ball.ownerId !== null) return null;
 
-  const completelyBetweenPosts =
-    ball.position.y - BALL_RADIUS >= GOAL_TOP_Y &&
-    ball.position.y + BALL_RADIUS <= GOAL_BOTTOM_Y;
-  if (!completelyBetweenPosts) return null;
+  const lineY = (lineX: number): number => {
+    const deltaX = ball.position.x - previousPosition.x;
+    if (Math.abs(deltaX) < 0.001) return ball.position.y;
+    const progress = clamp((lineX - previousPosition.x) / deltaX, 0, 1);
+    return previousPosition.y + (ball.position.y - previousPosition.y) * progress;
+  };
+  const fitsBetweenPosts = (y: number) =>
+    y - BALL_RADIUS >= GOAL_TOP_Y &&
+    y + BALL_RADIUS <= GOAL_BOTTOM_Y;
 
-  const fullyInsideRightNet =
-    ball.position.x - BALL_RADIUS > GOAL_RIGHT_X &&
-    ball.position.x <= GOAL_RIGHT_X + GOAL_DEPTH;
-  if (fullyInsideRightNet) return "player";
+  // Score as soon as the ball's leading edge crosses the goal line. Height is
+  // deliberately ignored: a volley or lob is still a goal when it crosses.
+  const rightBallLine = GOAL_RIGHT_X - BALL_RADIUS;
+  const crossedRight =
+    ball.position.x > previousPosition.x &&
+    previousPosition.x < rightBallLine &&
+    ball.position.x >= rightBallLine;
+  if (crossedRight && fitsBetweenPosts(lineY(rightBallLine))) return "player";
 
-  const fullyInsideLeftNet =
-    ball.position.x + BALL_RADIUS < GOAL_LEFT_X &&
-    ball.position.x >= GOAL_LEFT_X - GOAL_DEPTH;
-  if (fullyInsideLeftNet) return "ai";
+  const leftBallLine = GOAL_LEFT_X + BALL_RADIUS;
+  const crossedLeft =
+    ball.position.x < previousPosition.x &&
+    previousPosition.x > leftBallLine &&
+    ball.position.x <= leftBallLine;
+  if (crossedLeft && fitsBetweenPosts(lineY(leftBallLine))) return "ai";
 
+  // Preserve recovery for a ball already inside the net when a turn resumes.
+  if (
+    ball.position.x > GOAL_RIGHT_X - BALL_RADIUS &&
+    ball.position.x <= GOAL_RIGHT_X + GOAL_DEPTH &&
+    fitsBetweenPosts(ball.position.y)
+  ) {
+    return "player";
+  }
+  if (
+    ball.position.x < GOAL_LEFT_X + BALL_RADIUS &&
+    ball.position.x >= GOAL_LEFT_X - GOAL_DEPTH &&
+    fitsBetweenPosts(ball.position.y)
+  ) {
+    return "ai";
+  }
   return null;
 }
