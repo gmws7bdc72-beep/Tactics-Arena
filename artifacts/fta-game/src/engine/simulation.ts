@@ -1732,13 +1732,20 @@ function detectAndResolveEvents(
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
       const isGoalkeeper = player.role === "goalkeeper";
+      const tileDistance = Math.hypot(
+        (player.position.x - ball.position.x) / TILE_W,
+        (player.position.y - ball.position.y) / TILE_H,
+      );
       const controlRange = isGoalkeeper
-        ? Math.max(TILE_W, TILE_H) * GOALKEEPER_REACH_TILES
+        ? GOALKEEPER_REACH_TILES
         : INTERCEPTION_RADIUS;
+      const controlDistance = isGoalkeeper ? tileDistance : dist;
       const canContestLongBall =
         isGoalkeeper || longBallDirectionalContestAllowed(player, ball, dist);
       if (
-        dist < controlRange &&
+        (isGoalkeeper
+          ? controlDistance <= controlRange + 0.001
+          : controlDistance < controlRange) &&
         canContestLongBall &&
         player.state !== PlayerState.RECOVERING
       ) {
@@ -1749,7 +1756,7 @@ function detectAndResolveEvents(
                 vec2Normalize(vec2Sub(ball.position, player.position)),
               )
             : 0;
-        let score = (controlRange - dist) / controlRange;
+        let score = (controlRange - controlDistance) / controlRange;
         score += Math.max(0, velTowardBall) * 0.3;
         if (ball.passStyle === "long") {
           const aerial = typeof player.stats.aerial === "number" ? player.stats.aerial : player.stats.attack;
