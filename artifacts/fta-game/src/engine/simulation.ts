@@ -1732,6 +1732,14 @@ function detectAndResolveEvents(
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
       const isGoalkeeper = player.role === "goalkeeper";
+      const isKeeperPassing =
+        isGoalkeeper &&
+        ball.passTarget !== undefined &&
+        passTracker.playerId === player.id &&
+        (passTracker.type === "pass" || passTracker.type === "long_pass");
+      // A keeper's extended idle reach must not pull back a ball they just
+      // passed. Keep the passer out of loose-ball contests until that pass ends.
+      if (isKeeperPassing) continue;
       const tileDistance = Math.hypot(
         (player.position.x - ball.position.x) / TILE_W,
         (player.position.y - ball.position.y) / TILE_H,
