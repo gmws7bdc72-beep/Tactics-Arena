@@ -1,7 +1,6 @@
-import type { GameEvent, LeagueState, TeamConfig, MatchStats } from "../engine/types";
+import type { GameEvent, LeagueState, TeamConfig } from "../engine/types";
 import { GameEventType } from "../engine/types";
 import { getLeagueStandings, getTeamPoints } from "../game/league";
-import { possessionPercent } from "../game/matchStats";
 
 const PLAYER_ID = "player_team";
 
@@ -19,8 +18,6 @@ interface Props {
   autoSimAwayName?: string;
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
-  penalties?: { player: number; ai: number };
-  stats?: MatchStats;
   showNewSeason?: boolean;
   onNextMatch: () => void;
   onHome: () => void;
@@ -47,8 +44,6 @@ export default function PostMatch({
   autoSimAwayName,
   autoSimHomeGoals,
   autoSimAwayGoals,
-  penalties,
-  stats,
   showNewSeason,
   onNextMatch,
   onHome,
@@ -67,6 +62,13 @@ export default function PostMatch({
     e.type === GameEventType.SHOT_ON_GOAL
   ).slice(0, 6);
 
+  const resultColor = won ? "#00e676" : draw ? "#ffd700" : "#ff5252";
+  const resultBg = won
+    ? "linear-gradient(135deg, rgba(0,230,118,0.15), rgba(0,178,136,0.08))"
+    : draw
+    ? "linear-gradient(135deg, rgba(255,235,59,0.15), rgba(255,152,0,0.08))"
+    : "linear-gradient(135deg, rgba(255,82,82,0.15), rgba(211,47,47,0.08))";
+
   const pointsGained = won ? 3 : draw ? 1 : 0;
 
   const isPlayoffMatch = !!playoffStage;
@@ -84,26 +86,8 @@ export default function PostMatch({
   })();
   const playerEliminated = isPlayoffMatch && !playerAdvanced;
   const nextStageLabel = playoffStage === "sf1" || playoffStage === "sf2" ? "Final" : null;
-  const wonOnPenalties = !!penalties && playerAdvanced;
-  const lostOnPenalties = !!penalties && playerEliminated;
-  const displayWon = won || wonOnPenalties;
-  const displayLost = (!draw && !won) || lostOnPenalties;
-  const resultColor = displayWon ? "#00e676" : displayLost ? "#ff5252" : "#ffd700";
-  const resultBg = displayWon
-    ? "linear-gradient(135deg, rgba(0,230,118,0.15), rgba(0,178,136,0.08))"
-    : displayLost
-      ? "linear-gradient(135deg, rgba(255,82,82,0.15), rgba(211,47,47,0.08))"
-      : "linear-gradient(135deg, rgba(255,235,59,0.15), rgba(255,152,0,0.08))";
-
-  const statRows = stats ? [
-    ["Possession", `${possessionPercent(stats, "player")}%`, `${possessionPercent(stats, "ai")}%`],
-    ["Shots", stats.player.shots, stats.ai.shots],
-    ["Shots on target", stats.player.shotsOnTarget, stats.ai.shotsOnTarget],
-    ["Passes", `${stats.player.passesCompleted}/${stats.player.passesAttempted}`, `${stats.ai.passesCompleted}/${stats.ai.passesAttempted}`],
-    ["Forward passes", stats.player.forwardPasses, stats.ai.forwardPasses],
-    ["Interceptions", stats.player.interceptions, stats.ai.interceptions],
-    ["Offsides", stats.player.offsides, stats.ai.offsides],
-  ] as const : [];
+  const wonOnPenalties = draw && playerAdvanced;
+  const lostOnPenalties = draw && playerEliminated;
 
   // Auto-sim display
   if (isAutoSim && autoSimHomeName && autoSimAwayName) {
@@ -190,16 +174,11 @@ export default function PostMatch({
             🏆 {STAGE_LABEL[playoffStage!]}
           </div>
         )}
-        <div className="text-4xl mb-1.5">{displayWon ? "🏆" : displayLost ? "💀" : "🤝"}</div>
+        <div className="text-4xl mb-1.5">{won ? "🏆" : draw ? "🤝" : "💀"}</div>
         <div className="text-3xl font-black mb-0.5" style={{ color: resultColor }}>
-          {displayWon ? "Victory!" : displayLost ? "Defeat" : "Draw"}
+          {won ? "Victory!" : draw ? "Draw" : "Defeat"}
         </div>
         <div className="text-gray-300 text-2xl font-bold">{playerScore} — {aiScore}</div>
-        {penalties && (
-          <div className="mt-1 text-xs font-black uppercase tracking-wider text-cyan-300">
-            Penalties {penalties.player} — {penalties.ai}
-          </div>
-        )}
         <div className="text-gray-500 text-xs mt-1">{team.name} vs {opponentName}</div>
 
         {isPlayoffMatch ? (
@@ -222,34 +201,6 @@ export default function PostMatch({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {stats && (
-          <section
-            className="overflow-hidden rounded-2xl"
-            style={{ background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.08)" }}
-          >
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center border-b border-white/10 px-3 py-3">
-              <div className="truncate text-left text-xs font-black text-white">{team.name}</div>
-              <div className="px-3 text-[10px] font-black uppercase tracking-widest text-gray-500">Match stats</div>
-              <div className="truncate text-right text-xs font-black text-white">{opponentName}</div>
-            </div>
-            <div className="divide-y divide-white/5">
-              {statRows.map(([label, playerValue, aiValue]) => {
-                const playerNumber = typeof playerValue === "number" ? playerValue : Number.parseFloat(String(playerValue));
-                const aiNumber = typeof aiValue === "number" ? aiValue : Number.parseFloat(String(aiValue));
-                const playerLeads = Number.isFinite(playerNumber) && Number.isFinite(aiNumber) && playerNumber > aiNumber;
-                const aiLeads = Number.isFinite(playerNumber) && Number.isFinite(aiNumber) && aiNumber > playerNumber;
-                return (
-                  <div key={label} className="grid grid-cols-[1fr_1.35fr_1fr] items-center px-3 py-2.5">
-                    <div className={`text-left text-sm font-black ${playerLeads ? "text-emerald-300" : "text-gray-200"}`}>{playerValue}</div>
-                    <div className="text-center text-[10px] font-bold uppercase tracking-wide text-gray-500">{label}</div>
-                    <div className={`text-right text-sm font-black ${aiLeads ? "text-rose-300" : "text-gray-200"}`}>{aiValue}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
         {/* Playoff champion banner */}
         {isPlayoffComplete && champion && (
           <div
@@ -339,6 +290,35 @@ export default function PostMatch({
           </div>
         )}
 
+        {/* Match stats */}
+        <div className="grid grid-cols-3 gap-2">
+          {[
+            {
+              label: "Goals",
+              player: events.filter(e => e.type === GameEventType.GOAL && e.teamId === "player").length,
+              ai: events.filter(e => e.type === GameEventType.GOAL && e.teamId === "ai").length,
+            },
+            {
+              label: "Shots",
+              player: events.filter(e => e.type === GameEventType.SHOT_ON_GOAL && e.teamId === "player").length,
+              ai: events.filter(e => e.type === GameEventType.SHOT_ON_GOAL && e.teamId === "ai").length,
+            },
+            {
+              label: "Saves",
+              player: events.filter(e => e.type === GameEventType.SAVE && e.teamId === "player").length,
+              ai: events.filter(e => e.type === GameEventType.SAVE && e.teamId === "ai").length,
+            },
+          ].map(stat => (
+            <div key={stat.label} className="rounded-xl p-3 text-center" style={{ background: "rgba(255,255,255,0.04)" }}>
+              <div className="text-gray-400 text-[10px] mb-1.5">{stat.label}</div>
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-white font-bold text-sm">{stat.player}</span>
+                <span className="text-gray-600 text-[10px]">vs</span>
+                <span className="text-gray-400 font-bold text-sm">{stat.ai}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Action buttons */}
@@ -395,17 +375,7 @@ function PlayoffProgressCard({
   const playerIsInFinal = po.final && (po.final.homeId === PLAYER_ID || po.final.awayId === PLAYER_ID);
 
   const matchRow = (
-    match: {
-      homeId: string;
-      homeName: string;
-      awayId: string;
-      awayName: string;
-      homeGoals?: number;
-      awayGoals?: number;
-      penaltyHomeGoals?: number;
-      penaltyAwayGoals?: number;
-      winnerId?: string;
-    } | undefined,
+    match: { homeId: string; homeName: string; awayId: string; awayName: string; homeGoals?: number; awayGoals?: number; winnerId?: string } | undefined,
     label: string,
     isCurrentStage: boolean
   ) => {
@@ -434,11 +404,7 @@ function PlayoffProgressCard({
           {homeName}
         </span>
         <span className="text-gray-600 text-xs shrink-0 font-mono">
-          {isDone
-            ? match.penaltyHomeGoals !== undefined && match.penaltyAwayGoals !== undefined
-              ? `${match.homeGoals}–${match.awayGoals} (${match.penaltyHomeGoals}–${match.penaltyAwayGoals}p)`
-              : `${match.homeGoals}–${match.awayGoals}`
-            : "vs"}
+          {isDone ? `${match.homeGoals}–${match.awayGoals}` : "vs"}
         </span>
         <span className="flex-1 text-xs truncate text-right" style={{ color: awayWon ? "#fff" : isDone ? "#4b5563" : (playerIsAway ? team.jerseyColor : "#9ca3af"), fontWeight: awayWon ? 700 : 400 }}>
           {awayName}

@@ -3,10 +3,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
 import { CommandType, GameEventType } from "../engine/types";
 import type { PlayerCard } from "../engine/types";
-import { runSimulation , speedToTiles } from "../engine/simulation";
+import { runSimulation } from "../engine/simulation";
 import { getFormationById, getAIFormationById } from "../game/formations";
 import {
-  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, PLAYERS_PER_TEAM,
+  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, speedToTiles, PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
 import EventLog from "../components/EventLog";

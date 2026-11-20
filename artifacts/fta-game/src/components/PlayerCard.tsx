@@ -29,11 +29,11 @@ const STAT_ABBREV: Record<string, string> = {
   defense: "DEF",
   passing: "PAS",
   speed: "SPD",
-  movement: "MOV",
+  luck: "LCK",
 };
 
 export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryColor = "#fff", selected, onClick, compact }: Props) {
-  const ability = ABILITIES[card.ability] ?? ABILITIES.none;
+  const ability = ABILITIES[card.ability];
 
   if (compact) {
     return (
@@ -52,7 +52,6 @@ export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryCol
           <div className="flex-1 min-w-0">
             <div className="text-white text-xs font-semibold truncate">{card.name}</div>
             <div className="text-xs" style={{ color: ROLE_COLORS[card.role] ?? "#888" }}>{card.role}</div>
-            <div className="truncate text-[9px] font-bold text-amber-300">{ability.name}</div>
           </div>
           <div className="text-xs text-right space-y-0.5">
             <div style={{ color: STAT_COLOR(card.stats.attack) }}>ATK {card.stats.attack}</div>
@@ -64,7 +63,7 @@ export default function PlayerCard({ card, jerseyColor = "#00b4d8", secondaryCol
     );
   }
 
-  const statOrder: (keyof typeof card.stats)[] = ["attack", "defense", "passing", "speed", "movement"];
+  const statOrder: (keyof typeof card.stats)[] = ["attack", "defense", "passing", "speed", "luck"];
 
   return (
     <div

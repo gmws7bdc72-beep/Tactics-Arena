@@ -12,7 +12,6 @@ interface Props {
   onResetSeason: () => void;
   onTwoPlayer: () => void;
   onOnline: () => void;
-  onTutorial: () => void;
 }
 
 const TIER_LABEL: Record<number, string> = { 1: "Elite", 2: "Mid", 3: "Easy" };
@@ -75,11 +74,7 @@ function PlayoffMatchRow({
           {homeName}
         </span>
         <span className="text-gray-500 text-xs font-mono shrink-0">
-          {isDone
-            ? match.penaltyHomeGoals !== undefined && match.penaltyAwayGoals !== undefined
-              ? `${match.homeGoals} – ${match.awayGoals} (${match.penaltyHomeGoals}–${match.penaltyAwayGoals}p)`
-              : `${match.homeGoals} – ${match.awayGoals}`
-            : "vs"}
+          {isDone ? `${match.homeGoals} – ${match.awayGoals}` : "vs"}
         </span>
         <span
           className="flex-1 text-xs font-semibold truncate text-right"
@@ -103,7 +98,6 @@ export default function Home({
   onResetSeason,
   onTwoPlayer,
   onOnline,
-  onTutorial,
 }: Props) {
   const standings = getLeagueStandings(league.teams);
   const playerEntry = league.teams.find(t => t.id === PLAYER_ID)!;
@@ -142,14 +136,6 @@ export default function Home({
             <p className="text-gray-400 text-xs">Football Tactics Arena · League Season</p>
           </div>
           <button
-            onClick={onTutorial}
-            aria-label="Open tutorial"
-            className="flex h-8 w-8 items-center justify-center rounded-xl text-sm font-black transition-all active:scale-95 hover:brightness-110"
-            style={{ background: "linear-gradient(135deg,#14b8a6,#0e7490)", color: "#fff", border: "1px solid rgba(45,212,191,.45)" }}
-          >
-            ?
-          </button>
-          <button
             onClick={onOnline}
             className="px-2 py-1.5 rounded-xl text-xs font-black tracking-wide transition-all active:scale-95 hover:brightness-110"
             style={{ background: "linear-gradient(135deg, #0ea5e9, #0284c7)", color: "#fff", border: "1px solid rgba(14,165,233,0.5)" }}
@@ -170,7 +156,7 @@ export default function Home({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-28 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-4">
         {/* Progress bar */}
         <div>
           <div className="flex justify-between text-xs text-gray-500 mb-1">
@@ -448,6 +434,32 @@ export default function Home({
             </div>
           </div>
         )}
+
+        {/* Navigation */}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={onGoToTeamSetup}
+            className="py-3 rounded-xl text-white text-sm font-semibold transition-all hover:bg-white/10 active:scale-95"
+            style={{ background: "rgba(255,255,255,0.06)" }}
+          >
+            Team Setup
+          </button>
+          <button
+            onClick={onGoToCustomize}
+            className="py-3 rounded-xl text-white text-sm font-semibold transition-all hover:bg-white/10 active:scale-95"
+            style={{ background: "rgba(255,255,255,0.06)" }}
+          >
+            Customize
+          </button>
+        </div>
+
+        <button
+          onClick={() => onGoToProfiles()}
+          className="w-full py-3 rounded-xl text-white text-sm font-bold transition-all hover:bg-white/10 active:scale-95"
+          style={{ background: "rgba(0,180,216,0.10)", border: "1px solid rgba(0,180,216,0.25)", color: "#67e8f9" }}
+        >
+          Team Profiles · Stats + Tactics
+        </button>
 
         {/* Restart season */}
         <button
