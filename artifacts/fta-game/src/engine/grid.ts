@@ -1,4 +1,4 @@
-import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, GOALKEEPER_REACH_TILES, goalkeeperColumnBounds } from "./constants";
+import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, PITCH_WIDTH, PITCH_HEIGHT, PENALTY_AREA_WIDTH, PENALTY_AREA_HEIGHT, GOALKEEPER_REACH_TILES, goalkeeperColumnBounds } from "./constants";
 import type { Vec2 } from "./types";
 
 export function tileToPos(col: number, row: number): Vec2 {
@@ -13,6 +13,12 @@ export function posToTile(pos: Vec2): { col: number; row: number } {
     col: Math.max(0, Math.min(GRID_COLS - 1, Math.floor(pos.x / TILE_W))),
     row: Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(pos.y / TILE_H))),
   };
+}
+
+/** Whether the keeper is inside their own painted penalty area. */
+export function isInsideOwnPenaltyArea(position: Vec2, teamId: "player" | "ai"): boolean {
+  const inDepth = teamId === "player" ? position.x <= PENALTY_AREA_WIDTH : position.x >= PITCH_WIDTH - PENALTY_AREA_WIDTH;
+  return inDepth && Math.abs(position.y - PITCH_HEIGHT / 2) <= PENALTY_AREA_HEIGHT / 2;
 }
 
 export function getAdjacentTiles(col: number, row: number): { col: number; row: number }[] {

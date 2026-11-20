@@ -27,7 +27,7 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
-import { posToTile } from "../engine/grid";
+import { posToTile, isInsideOwnPenaltyArea } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad, { isOutOfPossession } from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -925,11 +925,12 @@ export default function OnlineMatch({
   const beginGoalkeeperDive = useCallback(() => {
     setDefenseMode(null);
     if (!selectedPlayerId || !goalkeeperCanDive) return;
+    curve.reset();
     setShotTargetMode(false);
     setPassTargetMode(false);
     setLongPassTargetMode(false);
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive]);
+  }, [selectedPlayerId, goalkeeperCanDive, curve]);
 
   return (
     <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
@@ -1056,6 +1057,7 @@ export default function OnlineMatch({
             onPassMove={() => { curve.reset(); startCombo(false); }}
             onShoot={setShoot}
               goalkeeperCanDive={goalkeeperCanDive}
+              goalkeeperInBox={!!selectedSimPlayer && isInsideOwnPenaltyArea(selectedSimPlayer.position, selectedSimPlayer.teamId)}
               onDive={beginGoalkeeperDive}
             onCurve={toggleCurve}
             curveActive={curve.active}

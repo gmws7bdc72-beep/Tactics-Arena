@@ -11,6 +11,7 @@ interface Props {
   onShoot: () => void;
   onDive?: () => void;
   goalkeeperCanDive?: boolean;
+  goalkeeperInBox?: boolean;
   onCurve: () => void;
   curveActive: boolean;
   curveCanFinish: boolean;
@@ -138,6 +139,7 @@ export default function MechanicPad({
   actionsDisabled = false,
   active,
   goalkeeperCanDive = false,
+  goalkeeperInBox = false,
   tutorialFocus = "none",
   outOfPossession = false,
   standTackleBlocked = false,
@@ -213,12 +215,14 @@ export default function MechanicPad({
     return (
       <div className="flex h-14 items-center gap-1.5 px-2 py-1">
         <button onClick={() => active && onCancel()} className={`h-12 w-9 min-w-9 rounded-xl border border-white/10 text-lg font-bold text-gray-400 ${active ? "" : "invisible pointer-events-none"}`} aria-label="Cancel selected action">×</button>
-        <div className="grid min-w-0 flex-1 grid-cols-4 gap-1.5">
+        <div className={`grid min-w-0 flex-1 ${goalkeeperCanDive && goalkeeperInBox ? "grid-cols-5" : "grid-cols-4"} gap-1.5`}>
           <button onClick={() => onDefense?.("slide")} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#fb4b4b,#991b1b)", boxShadow: defenseMode === "slide" ? "0 0 0 2px #fff, 0 0 14px #ef4444" : undefined }} aria-label="Slide tackle" aria-pressed={defenseMode === "slide"}><SlideIcon /></button>
           <button onClick={() => onDefense?.("press")} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#38bdf8,#1d4ed8)", boxShadow: defenseMode === "press" ? "0 0 0 2px #fff, 0 0 14px #38bdf8" : undefined }} aria-label="Press" aria-pressed={defenseMode === "press"}><PressIcon /></button>
           <button onClick={() => onDefense?.("stand")} disabled={!active || actionsDisabled || standTackleBlocked} title={standTackleBlocked ? "Available again next turn" : undefined} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#4ade80,#15803d)", boxShadow: defenseMode === "stand" ? "0 0 0 2px #fff, 0 0 14px #4ade80" : undefined }} aria-label="Standing tackle" aria-pressed={defenseMode === "stand"}><StandTackleIcon /></button>
           <button onClick={() => active && !actionsDisabled && onMovePass()} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#c026d3,#6b21a8)" }} aria-label="Move then pass"><ComboIcon reversed={false} /></button>
+          {goalkeeperCanDive && goalkeeperInBox && <button onClick={() => onDive?.()} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#22d3ee,#0369a1)" }} aria-label="Dive"><DiveIcon /></button>}
         </div>
+        <button onClick={() => active && onCurve()} disabled={!active} className="relative h-12 w-14 min-w-14 rounded-xl border border-white/10 p-1 text-white shadow-sm disabled:opacity-45 [&>svg]:h-full [&>svg]:w-full" style={{ background: curveActive ? (curveCanFinish ? "linear-gradient(145deg,#22d3ee,#2563eb)" : "linear-gradient(145deg,#0e7490,#1e3a8a)") : "linear-gradient(145deg,#0891b2,#4338ca)", boxShadow: curveActive ? "0 0 14px rgba(34,211,238,.28)" : "none" }} aria-label={curveActive && curveCanFinish ? "Finish curve" : curveActive ? "Curve active" : "Add curve"} aria-pressed={curveActive}><CurveIcon active={curveActive} />{curveActive && <span className="absolute bottom-0.5 right-1 rounded bg-black/45 px-1 text-[8px] font-bold leading-3">{curvePointCount}/{curvePointLimit}</span>}</button>
       </div>
     );
   }

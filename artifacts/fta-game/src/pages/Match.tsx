@@ -35,7 +35,7 @@ import {
   GOAL_WIDTH,
   BALL_RADIUS,
 } from "../engine/constants";
-import { posToTile } from "../engine/grid";
+import { posToTile, isInsideOwnPenaltyArea } from "../engine/grid";
 import PitchCanvas from "../components/PitchCanvas";
 import MechanicPad, { isOutOfPossession } from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
@@ -1267,8 +1267,9 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
   const beginGoalkeeperDive = useCallback(() => {
     setDefenseMode(null);
     if (!selectedPlayerId || !goalkeeperCanDive) return;
+    curve.reset();
     setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive]);
+  }, [selectedPlayerId, goalkeeperCanDive, curve]);
 
   const [tutorialStep, setTutorialStep] = useState(0);
   const [tutorialStepStartTurn, setTutorialStepStartTurn] = useState(turnRef.current);
@@ -1533,6 +1534,7 @@ export default function Match({ team, opponentTeamDef, isHome = true, twoPlayer 
             onPassMove={() => { curve.reset(); startCombo(false); }}
             onShoot={setShoot}
               goalkeeperCanDive={goalkeeperCanDive}
+              goalkeeperInBox={!!selectedSimPlayer && isInsideOwnPenaltyArea(selectedSimPlayer.position, selectedSimPlayer.teamId)}
               onDive={beginGoalkeeperDive}
             onCurve={toggleCurve}
             curveActive={curve.active}

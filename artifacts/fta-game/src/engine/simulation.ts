@@ -590,6 +590,7 @@ export function runSimulation(
     }
     constrainToField(simPlayers, simBall);
     separateOverlapping(simPlayers, simBall, rng, tickEvents, tick);
+    keepPressersOutsideMarkedTile(simPlayers);
 
     for (const event of tickEvents) {
       if (!event.visualEffect || !event.effectPosition || !event.effectDirection) continue;
@@ -860,6 +861,28 @@ export function runSimulation(
   return { frames, events: allEvents };
 }
 
+// The marked player can move into a waiting presser's square. Keep the
+// presser outside that square after both players and collision resolution move.
+function keepPressersOutsideMarkedTile(players: SimPlayer[]): void {
+  for (const presser of players) {
+    if (presser.command?.type !== CommandType.PRESS || presser.commandExecuted) continue;
+    const marked = players.find(p => p.id === presser.command?.targetPlayerId && p.teamId !== presser.teamId);
+    if (!marked) continue;
+    const pt = posToTile(presser.position), mt = posToTile(marked.position);
+    if (pt.col !== mt.col || pt.row !== mt.row) continue;
+    const occupied = new Set(players.filter(p => p.id !== presser.id).map(p => { const t = posToTile(p.position); return `${t.col},${t.row}`; }));
+    const candidates: Vec2[] = [];
+    for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) {
+      if (!dc && !dr) continue;
+      const col = mt.col + dc, row = mt.row + dr;
+      if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS || occupied.has(`${col},${row}`)) continue;
+      candidates.push(tileToPos(col, row));
+    }
+    candidates.sort((a, b) => vec2Dist(a, presser.position) - vec2Dist(b, presser.position));
+    if (candidates[0]) { presser.position = candidates[0]; presser.velocity = { x: 0, y: 0 }; presser.state = PlayerState.IDLE; }
+  }
+}
+
 // Push overlapping players apart at the pixel level every tick.
 // Ball owner is never displaced; the other player takes the full push.
 // For cross-team non-ball collisions a probabilistic contest determines who yields.
@@ -1119,7 +1142,9 @@ function updatePlayerMovement(
   rng: () => number,
   defense: DefenseRuntime,
 ): void {
-  for (const player of players) {
+  // Update marked players first so a press follows their current movement.
+  const movementOrder = [...players.filter(p => p.command?.type !== CommandType.PRESS), ...players.filter(p => p.command?.type === CommandType.PRESS)];
+  for (const player of movementOrder) {
     if (player.state === PlayerState.DIVING && player.diveMotion) {
       const motion = player.diveMotion;
       motion.elapsed = Math.min(motion.duration, motion.elapsed + dt);
@@ -1286,7 +1311,7 @@ function updatePlayerMovement(
       const moved = target && start && Math.max(Math.abs(target.position.x - start.x) / TILE_W, Math.abs(target.position.y - start.y) / TILE_H) >= 1;
       if (moved) data.triggered = true;
       const budget = movementToTiles(player.stats.movement, player.ability) + 1;
-      if (!target || !data.triggered || data.travelled >= budget) {
+      if (!target || !data.triggered || data.travelled >= budget || vec2Len(target.velocity) < 1) {
         player.velocity = { x: 0, y: 0 };
         player.state = PlayerState.IDLE;
       } else {
@@ -1297,8 +1322,20 @@ function updatePlayerMovement(
         const length = Math.hypot(dx, dy);
         const units = length ? Math.max(Math.abs(dx / TILE_W), Math.abs(dy / TILE_H)) : 0;
         const maxPixels = units ? (budget - data.travelled) * length / units : 0;
-        const step = Math.min(getLinearPixelSpeed(player.stats.speed) * dt, maxPixels, length);
-        if (length > 0.01 && step > 0) {
+        let step = Math.min(getLinearPixelSpeed(player.stats.speed) * dt, maxPixels, length);
+        // Stop at the edge of the marked player's square, not at their body.
+        const targetTile = posToTile(target.position);
+        const candidateTile = posToTile({ x: before.x + dx / length * step, y: before.y + dy / length * step });
+        if (length > 0.01 && candidateTile.col === targetTile.col && candidateTile.row === targetTile.row) {
+          let lo = 0, hi = step;
+          for (let i = 0; i < 20; i++) {
+            const mid = (lo + hi) / 2;
+            const tile = posToTile({ x: before.x + dx / length * mid, y: before.y + dy / length * mid });
+            if (tile.col === targetTile.col && tile.row === targetTile.row) hi = mid; else lo = mid;
+          }
+          step = Math.max(0, lo - 0.01);
+        }
+        if (length > 0.01 && step > 0.01) {
           player.position = { x: before.x + dx / length * step, y: before.y + dy / length * step };
           player.velocity = { x: dx / length * step / dt, y: dy / length * step / dt };
           data.travelled += Math.max(Math.abs((player.position.x - before.x) / TILE_W), Math.abs((player.position.y - before.y) / TILE_H));
@@ -2110,6 +2147,7 @@ function detectAndResolveEvents(
 
     for (const other of players) {
       if (other.id === owner.id || other.teamId === owner.teamId) continue;
+      if (other.command?.type === CommandType.PRESS && other.command.targetPlayerId === owner.id) continue;
       if (
         other.state === PlayerState.RECOVERING ||
         other.state === PlayerState.CONTESTING
