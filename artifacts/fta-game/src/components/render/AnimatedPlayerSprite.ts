@@ -40,6 +40,7 @@ export interface AnimatedPlayerSpriteArgs {
   selected: boolean;
   ownsBall: boolean;
   offside?: boolean;
+  bodyOnly?: boolean;
 }
 
 export interface PossessionBallOffsetArgs {
@@ -432,24 +433,27 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   const armSwing = moving ? -gait * r * 0.32 : 0;
   const keeper = role === "goalkeeper";
 
-  ctx.save();
-  ctx.globalAlpha = 0.32;
-  ctx.fillStyle = "#000000";
-  ctx.beginPath();
-  ctx.ellipse(x + r * 0.14, y + r * 0.86, r * 1.15, r * 0.38, -0.12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  if (!args.bodyOnly) {
+    ctx.save();
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.ellipse(x + r * 0.14, y + r * 0.86, r * 1.15, r * 0.38, -0.12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
-  const ringColor = selected ? "#00e5ff" : ownsBall ? "#ffd700" : rgba(primaryColor, 0.9);
-  ctx.save();
-  ctx.strokeStyle = ringColor;
-  ctx.lineWidth = selected ? 4 : 2.4;
-  ctx.shadowColor = ringColor;
-  ctx.shadowBlur = selected || ownsBall ? 15 : 4;
-  ctx.beginPath();
-  ctx.ellipse(x, y + r * 0.7, r * 1.18, r * 0.45, -0.08, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
+    const ringColor = selected ? "#00e5ff" : ownsBall ? "#ffd700" : rgba(primaryColor, 0.9);
+    ctx.save();
+    ctx.strokeStyle = ringColor;
+    ctx.lineWidth = selected ? 4 : 2.4;
+    ctx.shadowColor = ringColor;
+    ctx.shadowBlur = selected || ownsBall ? 15 : 4;
+    ctx.beginPath();
+    ctx.ellipse(x, y + r * 0.7, r * 1.18, r * 0.45, -0.08, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+  }
 
   const legBaseX = torsoCenterX;
   const leftHipX = legBaseX - bodyWidth * 0.22;
@@ -565,6 +569,8 @@ export function drawAnimatedPlayerSprite(args: AnimatedPlayerSpriteArgs): void {
   ctx.textBaseline = "middle";
   ctx.fillText(String(jerseyNumber), torsoCenterX, torsoCenterY + torsoH * 0.5);
   ctx.restore();
+
+  if (args.bodyOnly) return;
 
   const nameWidth = clamp(r * 3.55, 32, 64);
   const nameHeight = clamp(r * 0.68, 9, 15);

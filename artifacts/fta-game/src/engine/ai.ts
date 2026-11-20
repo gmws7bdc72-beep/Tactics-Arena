@@ -1,8 +1,13 @@
 import type { SimPlayer, SimBall, Command, Vec2, TeamTactic } from "./types";
 import { CommandType } from "./types";
-import { posToTile, getReachableTiles, tileToPos, tileKey } from "./grid";
+import { posToTile, getReachableTiles, getDiveReachableTiles, tileToPos, tileKey } from "./grid";
 import type { TilePos } from "./types";
-import { GRID_COLS, GRID_ROWS, speedToTiles, getLinearPixelSpeed, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT } from "./constants";
+import { GRID_COLS, GRID_ROWS, movementToTiles, getLinearPixelSpeed, goalkeeperColumnBounds, isSweeperKeeperAbility, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX, PASS_SPEED, PITCH_WIDTH, PITCH_HEIGHT, TILE_W, TILE_H, GOALKEEPER_REACH_TILES, GOAL_LEFT_X, GOAL_DEPTH, GOAL_TOP_Y, GOAL_BOTTOM_Y, BALL_RADIUS } from "./constants";
+import {
+  curvePointLimitForCommand,
+  curveRouteFitsMoveBudget,
+  planTacticalCurve,
+} from "./curve";
 
 export type AiTier = 1 | 2 | 3;
 
@@ -144,8 +149,10 @@ function moveStep(
 
   const isGK = player.role === "goalkeeper";
   // GK gets 2 tiles so they can quickly return to goal after chasing loose balls
-  const range = isGK ? 2 : speedToTiles(player.stats.speed);
-  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
+  const range = isGK
+    ? movementToTiles(player.stats.movement, player.ability)
+    : movementToTiles(player.stats.movement, player.ability);
+  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId, player.ability);
 
   let best: TilePos = from;
   let bestDist = tileDist(from, to);
@@ -178,12 +185,13 @@ function chaseLooseBall(
   _friendly: Set<string>
 ): Command {
   const isGK = player.role === "goalkeeper";
-  const range = speedToTiles(player.stats.speed); // full speed — not the GK-limited 1
-  const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId);
+  const range = movementToTiles(player.stats.movement, player.ability); // full Movement range — not the GK-limited range
+  const reachable = getReachableTiles(pt.col, pt.row, range, isGK, player.teamId, player.ability);
 
   // GK targets ball clamped to their zone; outfield targets ball directly
-  const gkMin = player.teamId === "ai" ? GK_COLS_AI_MIN : GK_COLS_PLAYER_MIN;
-  const gkMax = player.teamId === "ai" ? GK_COLS_AI_MAX : GK_COLS_PLAYER_MAX;
+  const gkBounds = goalkeeperColumnBounds(player.teamId, player.ability);
+  const gkMin = gkBounds.min;
+  const gkMax = gkBounds.max;
   const target: TilePos = isGK
     ? { col: Math.max(gkMin, Math.min(gkMax, ballTile.col)), row: Math.max(0, Math.min(GRID_ROWS - 1, ballTile.row)) }
     : ballTile;
@@ -377,29 +385,29 @@ function isLaneBlocked(fromTile: TilePos, toTile: TilePos, opponents: SimPlayer[
 function aiOffsideLineX(playerPlayers: SimPlayer[]): number {
   if (playerPlayers.length === 0) return 0;
   const sorted = [...playerPlayers].sort((a, b) => a.position.x - b.position.x);
-  return sorted.length >= 2 ? sorted[1].position.x : sorted[0].position.x;
+  const defender = sorted.length >= 2 ? sorted[1] : sorted[0];
+  return posToTile(defender.position).col * TILE_W;
 }
 
 function isAIPlayerOffside(p: SimPlayer, playerPlayers: SimPlayer[]): boolean {
   if (p.role === "goalkeeper") return false;
   const lineX = aiOffsideLineX(playerPlayers);
-  // Offside only in the attacking third (x < 1/3 pitch) — middle third is a free zone.
-  return p.position.x < PITCH_WIDTH / 3 && p.position.x < lineX;
+  return p.position.x < PITCH_WIDTH / 3 && p.position.x < lineX - 0.001;
 }
 
-// Returns the x-coordinate of the offside line as seen by the player team's attackers.
-// Player attacks rightward, so their offside line = 2nd-to-last AI player sorted by x DESC.
+// Player attacks rightward, so the goal-side edge is the RIGHT edge of the
+// second-last AI defender's tile.
 function playerOffsideLineX(aiPlayers: SimPlayer[]): number {
   if (aiPlayers.length === 0) return PITCH_WIDTH;
   const sorted = [...aiPlayers].sort((a, b) => b.position.x - a.position.x);
-  return sorted.length >= 2 ? sorted[1].position.x : sorted[0].position.x;
+  const defender = sorted.length >= 2 ? sorted[1] : sorted[0];
+  return (posToTile(defender.position).col + 1) * TILE_W;
 }
 
 function isPlayerTeamPlayerOffside(p: SimPlayer, aiPlayers: SimPlayer[]): boolean {
   if (p.role === "goalkeeper") return false;
   const lineX = playerOffsideLineX(aiPlayers);
-  // Offside only in the attacking third (x > 2/3 pitch) — middle third is a free zone.
-  return p.position.x > (PITCH_WIDTH * 2) / 3 && p.position.x > lineX;
+  return p.position.x > (PITCH_WIDTH * 2) / 3 && p.position.x > lineX + 0.001;
 }
 
 /**
@@ -686,8 +694,10 @@ function pressCarrier(
   };
 
   const isGK = player.role === "goalkeeper";
-  const range = isGK ? 2 : speedToTiles(player.stats.speed);
-  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId);
+  const range = isGK
+    ? movementToTiles(player.stats.movement, player.ability)
+    : movementToTiles(player.stats.movement, player.ability);
+  const reachable = getReachableTiles(from.col, from.row, range, isGK, player.teamId, player.ability);
 
   let best: TilePos = from;
   let bestDist = tileDist(from, interceptTile);
@@ -740,7 +750,8 @@ function tier1Possession(
         }
       }
       // Absolutely no teammate reachable — GK dribbles forward to create a passing angle
-      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
+      const dribCol = Math.max(bounds.min, pt.col - movementToTiles(player.stats.movement, player.ability));
       return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     // Off-ball: track ball row, stay in central 3 rows so corners remain scorable
@@ -786,7 +797,7 @@ function tier1Possession(
       //     Creates better angles and draws defenders before the pass.
       if (isDeepBuilder && !fwdThreat) {
         if (Math.random() < 0.65) {
-          const dribRange = Math.min(2, speedToTiles(player.stats.speed));
+          const dribRange = Math.min(2, movementToTiles(player.stats.movement, player.ability));
           const destCol = Math.max(0, pt.col - dribRange);
           // Coordinate receiver to stay at their current tile
           const fwdMoveTile = posToTile(fwdTarget.position);
@@ -817,14 +828,14 @@ function tier1Possession(
       // 4d. Dribbler style with space → Move+Pass at higher pace
       if (style === "dribbler") {
         if (Math.random() < 0.55) {
-          const dribRange = speedToTiles(player.stats.speed);
+          const dribRange = movementToTiles(player.stats.movement, player.ability);
           const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
           const dribblerFwdTile = posToTile(fwdTarget.position);
           if (planRef) planRef.current = { runnerId: fwdTarget.id, runTile: dribblerFwdTile };
           return moveAndPass(destTile, fwdTarget);
         }
         // Otherwise just carry with a slight row juke
-        const dribRange = speedToTiles(player.stats.speed);
+        const dribRange = movementToTiles(player.stats.movement, player.ability);
         const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
         return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
       }
@@ -868,7 +879,7 @@ function tier1Possession(
     // 6. No pass: dribble forward with a row juke
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
-      const dribRange = speedToTiles(player.stats.speed);
+      const dribRange = movementToTiles(player.stats.movement, player.ability);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
@@ -1069,7 +1080,8 @@ function tier2Possession(
         }
       }
       // Absolutely no teammate reachable — dribble forward to create passing angle
-      const dribCol = Math.max(GK_COLS_AI_MIN, pt.col - 2);
+      const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
+      const dribCol = Math.max(bounds.min, pt.col - movementToTiles(player.stats.movement, player.ability));
       return { type: CommandType.MOVE, targetPosition: tileToPos(dribCol, pt.row) };
     }
     return stayPut({ col: GRID_COLS - 1, row: Math.floor(GRID_ROWS / 2) });
@@ -1088,7 +1100,7 @@ function tier2Possession(
       const advTarget = bestForwardPass(player, aiPlayers, playerPlayers, 6)
         ?? bestLateralPass(player, aiPlayers, playerPlayers, 4);
       if (advTarget && Math.random() < 0.45) {
-        const dribRange = speedToTiles(player.stats.speed);
+        const dribRange = movementToTiles(player.stats.movement, player.ability);
         const destTile: TilePos = { col: Math.max(0, pt.col - dribRange), row: pt.row };
         return moveAndPass(destTile, advTarget);
       }
@@ -1140,7 +1152,7 @@ function tier2Possession(
     // Dribble forward with a row juke to sidestep defenders.
     if (!fwdBlocked) {
       const dribRow = pt.row < Math.floor(GRID_ROWS / 2) ? pt.row + 1 : pt.row - 1;
-      const dribRange = speedToTiles(player.stats.speed);
+      const dribRange = movementToTiles(player.stats.movement, player.ability);
       return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: Math.max(0, Math.min(GRID_ROWS - 1, dribRow)) }, claimed, friendly);
     }
 
@@ -1258,8 +1270,8 @@ function tier3Possession(
       return passTo(fwdTarget, player.position);
     }
 
-    // Just dribble forward — very predictable; still uses player's speed range
-    const dribRange = speedToTiles(player.stats.speed);
+    // Just dribble forward — very predictable; still uses the player's Movement range
+    const dribRange = movementToTiles(player.stats.movement, player.ability);
     return moveStep(player, pt, { col: Math.max(0, pt.col - dribRange), row: pt.row }, claimed, friendly);
   }
 
@@ -1305,6 +1317,209 @@ function tier3Defense(
 }
 
 // ─── Main export ─────────────────────────────────────────────────────────────
+
+function usefulMovementCurve(
+  player: SimPlayer,
+  target: Vec2,
+  opponents: SimPlayer[],
+): Vec2[] | undefined {
+  const dx = target.x - player.position.x;
+  const dy = target.y - player.position.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 45 || player.stats.movement < 4) return undefined;
+
+  const nx = -dy / length;
+  const ny = dx / length;
+  const nearby = opponents
+    .map((opponent) => {
+      const relX = opponent.position.x - player.position.x;
+      const relY = opponent.position.y - player.position.y;
+      const progress = (relX * dx + relY * dy) / (length * length);
+      const side = relX * nx + relY * ny;
+      return { opponent, progress, side, distance: Math.abs(side) };
+    })
+    .filter((item) => item.progress > 0.12 && item.progress < 0.9 && item.distance < 58)
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  // Curves are especially useful when carrying around a defender, making an
+  // off-ball run around traffic, or bending a defensive recovery/marking run.
+  if (!nearby) return undefined;
+  const sideSign = nearby.side >= 0 ? -1 : 1;
+  const movement = Math.max(1, Math.min(10, player.stats.movement));
+  const offset = 28 + movement * 3.2;
+  const firstProgress = player.teamId === "ai" ? 0.34 : 0.38;
+  const secondProgress = 0.68;
+  return [
+    {
+      x: player.position.x + dx * firstProgress + nx * offset * sideSign,
+      y: player.position.y + dy * firstProgress + ny * offset * sideSign,
+    },
+    {
+      x: player.position.x + dx * secondProgress + nx * offset * 0.72 * sideSign,
+      y: player.position.y + dy * secondProgress + ny * offset * 0.72 * sideSign,
+    },
+  ];
+}
+
+function addTacticalCurve(
+  player: SimPlayer,
+  command: Command,
+  opponents: SimPlayer[],
+): Command {
+  const target =
+    command.type === CommandType.SHOOT
+      ? { x: 0, y: PITCH_HEIGHT / 2 }
+      : command.targetPosition;
+  let primary = command;
+
+  if (target) {
+    const mechanic =
+      command.type === CommandType.MOVE
+        ? "move"
+        : command.type === CommandType.SHOOT
+          ? "shot"
+          : command.passStyle === "long"
+            ? "longPass"
+            : "groundPass";
+    const curvePoints =
+      planTacticalCurve(
+        player.position,
+        target,
+        opponents.map((opponent) => opponent.position),
+        {
+          mechanic,
+          maxPoints: curvePointLimitForCommand(player.stats, command),
+        },
+      ) ??
+      (command.type === CommandType.MOVE
+        ? usefulMovementCurve(player, target, opponents)
+        : undefined);
+    const routeAllowed =
+      command.type !== CommandType.MOVE ||
+      !curvePoints ||
+      curveRouteFitsMoveBudget(
+        player.position,
+        curvePoints,
+        target,
+        player.stats.movement,
+        player.ability,
+      );
+    if (curvePoints && routeAllowed) primary = { ...command, curvePoints };
+  }
+
+  if (
+    primary.type === CommandType.MOVE &&
+    primary.targetPosition &&
+    primary.followUp?.type === CommandType.PASS &&
+    primary.followUp.targetPosition
+  ) {
+    const followUp = addTacticalCurve(
+      { ...player, position: primary.targetPosition },
+      primary.followUp,
+      opponents,
+    );
+    primary = { ...primary, followUp };
+  }
+
+  return primary;
+}
+
+function goalThreatTarget(command: Command | null | undefined): Vec2 | null {
+  let current = command ?? null;
+  for (let depth = 0; current && depth < 3; depth += 1) {
+    if (
+      (current.type === CommandType.SHOOT || current.type === CommandType.PASS) &&
+      current.targetPosition &&
+      current.targetPosition.x >= PITCH_WIDTH - BALL_RADIUS &&
+      current.targetPosition.y >= GOAL_TOP_Y + BALL_RADIUS &&
+      current.targetPosition.y <= GOAL_BOTTOM_Y - BALL_RADIUS
+    ) {
+      return current.targetPosition;
+    }
+    current = current.followUp ?? null;
+  }
+  return null;
+}
+
+function plannedAIGoalkeeperDive(
+  goalkeeper: SimPlayer,
+  attackingOwner: SimPlayer | null,
+): Command | null {
+  if (!attackingOwner || attackingOwner.teamId !== "player") return null;
+  const threat = goalThreatTarget(attackingOwner.command);
+  if (!threat) return null;
+
+  const from = posToTile(goalkeeper.position);
+  const targetRow = Math.max(0, Math.min(GRID_ROWS - 1, Math.floor(threat.y / TILE_H)));
+  const rowDirection = Math.sign(targetRow - from.row);
+  if (!rowDirection) return null;
+  const direction = getDiveReachableTiles(from.col, from.row, GOALKEEPER_REACH_TILES, goalkeeper.teamId, goalkeeper.ability)
+    .find(tile => tile.col === from.col && tile.row === from.row + rowDirection);
+  return direction ? { type: CommandType.DIVE, targetPosition: tileToPos(direction.col, direction.row) } : null;
+}
+
+
+function sweeperKeeperTacticalCommand(
+  goalkeeper: SimPlayer,
+  current: Command,
+  hasBall: boolean,
+  aiHasBall: boolean,
+  playerHasBall: boolean,
+  ballOwner: SimPlayer | null,
+  ballTile: TilePos,
+  tactic: TeamTactic,
+): Command {
+  if (
+    goalkeeper.role !== "goalkeeper" ||
+    !isSweeperKeeperAbility(goalkeeper.ability)
+  ) {
+    return current;
+  }
+
+  const from = posToTile(goalkeeper.position);
+  const bounds = goalkeeperColumnBounds(goalkeeper.teamId, goalkeeper.ability);
+  const range = movementToTiles(goalkeeper.stats.movement, goalkeeper.ability);
+  const clampTarget = (col: number, row: number): Command => ({
+    type: CommandType.MOVE,
+    targetPosition: tileToPos(
+      Math.max(bounds.min, Math.min(bounds.max, col)),
+      Math.max(0, Math.min(GRID_ROWS - 1, row)),
+    ),
+  });
+
+  if (hasBall) {
+    // Keep a sensible pass/long ball. Only replace passive keeper movement.
+    if (current.type !== CommandType.MOVE) return current;
+    const possessionSupport =
+      tactic.id === "slow_possession" ||
+      tactic.id === "balanced_build_up" ||
+      tactic.id === "counter_press";
+    if (possessionSupport) {
+      return clampTarget(from.col - Math.min(range, 2), ballTile.row);
+    }
+    return current;
+  }
+
+  if (playerHasBall && ballOwner) {
+    const ownerTile = posToTile(ballOwner.position);
+    const dangerStart = GRID_COLS - 7;
+    const closeEnough = tileDist(from, ownerTile) <= range + 2.25;
+    if (ownerTile.col >= dangerStart && closeEnough) {
+      // Meet the attacker one tile goal-side instead of recklessly charging past.
+      return clampTarget(ownerTile.col + 1, ownerTile.row);
+    }
+  }
+
+  if (aiHasBall) {
+    const highLine = tactic.defensiveLine >= 6 || tactic.id === "counter_press";
+    if (highLine) {
+      const supportCol = Math.max(bounds.min, GK_COLS_AI_MIN - 1);
+      return clampTarget(supportCol, Math.max(2, Math.min(6, ballTile.row)));
+    }
+  }
+
+  return current;
+}
 
 export function generateAICommands(
   aiPlayers: SimPlayer[],
@@ -1436,6 +1651,15 @@ export function generateAICommands(
         targetPosition: tileToPos(onsideCol, pt.row),
       });
       continue;
+    }
+
+    if (player.role === "goalkeeper" && playerHasBall) {
+      const dive = plannedAIGoalkeeperDive(player, ballOwner);
+      if (dive) {
+        logCommand(player.id, dive);
+        commands.set(player.id, dive);
+        continue;
+      }
     }
 
     if (!hasBall && planRef.current?.runnerId === player.id) {
@@ -1673,7 +1897,7 @@ export function generateAICommands(
         const isGK = player.role === "goalkeeper";
 
         if (!isGK) {
-          const fwd = Math.max(0, pt.col - speedToTiles(player.stats.speed));
+          const fwd = Math.max(0, pt.col - movementToTiles(player.stats.movement, player.ability));
 
           cmd = {
             type: CommandType.MOVE,
@@ -1709,8 +1933,72 @@ export function generateAICommands(
       );
     }
 
+    if (aiHasBall && hasBall) {
+      cmd = goalActionBuffCommand(
+        player,
+        cmd,
+        pt,
+        hasBall,
+        aiHasBall,
+        playerPlayers,
+        tactic,
+      );
+    }
+
+    cmd = sweeperKeeperTacticalCommand(
+      player,
+      cmd,
+      hasBall,
+      aiHasBall,
+      playerHasBall,
+      ballOwner,
+      ballTile,
+      tactic,
+    );
+
     logCommand(player.id, cmd);
     commands.set(player.id, cmd);
+  }
+
+  // Commit at most one outfield player to a direct defensive action. Everyone
+  // else keeps the marking or block assigned by the team's tactical shape.
+  if (playerHasBall && ballOwner) {
+    const defending = activeAI
+      .filter(p => p.role !== "goalkeeper")
+      .map(p => ({ player: p, distance: tileDist(posToTile(p.position), ballTile) }))
+      .filter(({ player, distance }) => distance > 0 && distance <= movementToTiles(player.stats.movement, player.ability) + 1)
+      .sort((a, b) => a.distance - b.distance || (b.player.stats.tackling ?? b.player.stats.defense) - (a.player.stats.tackling ?? a.player.stats.defense));
+    const candidate = defending[0];
+    if (candidate) {
+      const { player: defender, distance } = candidate;
+      const threatened = ballTile.col >= Math.floor(GRID_COLS * 0.62);
+      const hasCover = activeAI.some(p => p.id !== defender.id && p.role === "defender" && posToTile(p.position).col > posToTile(defender.position).col);
+      const aggressive = tactic.pressIntensity >= 7 || tactic.pressTrigger === "always" || tactic.defensiveShape === "aggressive";
+      const trigger = shouldPressBall(defender, ballTile, tactic);
+      const lowBlock = tactic.blockHeight === "low" || tactic.defensiveShape === "protect_box";
+      const lastAction = cmdHistory.get(defender.id)?.at(-2)?.type;
+      let action: Command | undefined;
+
+      if (distance === 1 && !defender.standTackleBlocked) {
+        // A close challenge doesn't vacate a line of defence to chase a player.
+        action = { type: CommandType.STAND_TACKLE, targetPosition: tileToPos(ballTile.col, ballTile.row) };
+      } else if (distance > 1 && (threatened || aggressive) && (hasCover || threatened) && (!lowBlock || threatened) && lastAction !== CommandType.SLIDE) {
+        // A slide commits the player, so use it to stop danger or when a
+        // higher-pressure team has cover, rather than on every approach.
+        action = { type: CommandType.SLIDE, targetPosition: tileToPos(ballTile.col, ballTile.row) };
+      } else if (!lowBlock && (trigger || tactic.pressIntensity >= 6) && lastAction !== CommandType.PRESS) {
+        // Press follows the carrier only after they move. It preserves cover
+        // better than a speculative slide when the ball isn't yet threatened.
+        action = { type: CommandType.PRESS, targetPlayerId: ballOwner.id };
+      }
+
+      if (action) {
+        commands.set(defender.id, action);
+        // Earlier logging recorded the provisional positional command.
+        const history = cmdHistory.get(defender.id);
+        if (history?.length) history[history.length - 1] = { type: action.type, targetId: action.targetPlayerId ?? null };
+      }
+    }
   }
 
   for (const [id, cmd] of commands) {
@@ -1789,6 +2077,46 @@ export function generateAICommands(
     );
   }
 
+  // Curves are a tactical response to a blocked lane, never a random flourish.
+  // Applying this after receiver synchronization keeps the curve endpoint and
+  // the receiver's final destination identical.
+  if (ballOwner?.teamId === "ai") {
+    const carrierCommand = commands.get(ballOwner.id);
+    if (carrierCommand) {
+      commands.set(
+        ballOwner.id,
+        addTacticalCurve(ballOwner, carrierCommand, playerPlayers),
+      );
+    }
+  }
+
+  // FTA_FORWARD_SPACE_PROGRESS_V4
+  // Patient teams still advance when uncontested space exists. This prevents
+  // adjacent-tile stagnation without turning possession teams reckless.
+  if (aiHasBall && ballOwner?.teamId === "ai") {
+    const turnsUrgency = tier >= 4 ? 0.45 : tier >= 3 ? 0.30 : 0.15;
+    const patienceBias = tactic.progression === "slow" ? 0.72 : 1;
+    for (const p of aiPlayers) {
+      if (p.role === "goalkeeper") continue;
+      const cmd = commands.get(p.id);
+      if (!cmd || cmd.type !== CommandType.MOVE || !cmd.targetPosition || cmd.followUp) continue;
+      const from = posToTile(p.position);
+      const to = posToTile(cmd.targetPosition);
+      const openAhead = playerPlayers.every((opp) => {
+        const ot = posToTile(opp.position);
+        return !(ot.col >= from.col - 3 && ot.col <= from.col && Math.abs(ot.row - from.row) <= 1);
+      });
+      const stalled = Math.abs(to.col - from.col) <= 1 && Math.abs(to.row - from.row) <= 1;
+      if (openAhead && stalled && Math.random() < patienceBias + turnsUrgency * 0.25) {
+        const advance = aiClamp(from.col - (turnsUrgency >= 0.40 ? 2 : 1), 1, GRID_COLS - 2);
+        commands.set(p.id, {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(advance, aiClamp(from.row + Math.sign(ballTile.row - from.row), 0, GRID_ROWS - 1)),
+        });
+      }
+    }
+  }
+
   return commands;
 }
 // ─── TACTIC BUFFS + LONG BALLS ──────────────────────────────────────────────
@@ -1847,10 +2175,10 @@ function bestLongBallTarget(
   const pick = candidates[0];
   if (!pick) return null;
 
-  const runnerSpeed = statOr(pick.p.stats.speed, 6);
+  const runnerMovement = statOr(pick.p.stats.movement, 6);
   const lead = tactic.progression === "counter" || tactic.id === "quick_counterattack" ? 2 : 1;
   const landingTile: TilePos = {
-    col: Math.max(1, pick.t.col - Math.min(lead, Math.max(1, speedToTiles(runnerSpeed) - 1))),
+    col: Math.max(1, pick.t.col - Math.min(lead, Math.max(1, movementToTiles(runnerMovement, pick.p.ability) - 1))),
     row: Math.max(0, Math.min(GRID_ROWS - 1, pick.t.row)),
   };
 
@@ -1905,6 +2233,124 @@ function shouldLetItRip(player: SimPlayer, pt: TilePos, playerPlayers: SimPlayer
   }
 
   return false;
+}
+
+function pointToSegmentDistance(point: Vec2, start: Vec2, end: Vec2): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq <= 0.0001) return eucDist(point, start);
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq),
+  );
+  return eucDist(point, { x: start.x + dx * t, y: start.y + dy * t });
+}
+
+function bestGoalPassTarget(carrier: SimPlayer, opponents: SimPlayer[]): Vec2 | null {
+  const center = (GOAL_TOP_Y + GOAL_BOTTOM_Y) / 2;
+  const low = GOAL_TOP_Y + BALL_RADIUS * 2.2;
+  const high = GOAL_BOTTOM_Y - BALL_RADIUS * 2.2;
+  const biased = Math.max(low, Math.min(high, carrier.position.y));
+  const rows = [biased, center, low, high, (biased + center) / 2];
+  const targetX = GOAL_LEFT_X - GOAL_DEPTH * 0.72;
+  const clearance = TILE_W * 0.42;
+
+  for (const y of rows) {
+    const target = { x: targetX, y };
+    const laneBlocked = opponents.some((opponent) => {
+      // Players behind the carrier cannot block a leftward finish.
+      if (opponent.position.x > carrier.position.x + TILE_W * 0.35) return false;
+      return pointToSegmentDistance(opponent.position, carrier.position, target) < clearance;
+    });
+    if (!laneBlocked) return target;
+  }
+  return null;
+}
+
+function goalPassCommand(target: Vec2, style: "ground" | "long" = "ground"): Command {
+  return {
+    type: CommandType.PASS,
+    targetPosition: target,
+    passStyle: style,
+    coordinated: true,
+  };
+}
+
+function goalActionBuffCommand(
+  player: SimPlayer,
+  currentCmd: Command,
+  pt: TilePos,
+  hasBall: boolean,
+  aiHasBall: boolean,
+  opponents: SimPlayer[],
+  tactic: TeamTactic,
+): Command {
+  if (!aiHasBall || !hasBall || player.role === "goalkeeper") return currentCmd;
+  if (pt.col > 6) return currentCmd;
+
+  const passing = statOr(player.stats.passing, 5);
+  const vision = statOr(player.stats.vision, passing);
+  const longPassing = statOr(player.stats.longPassing, passing);
+  const shooting = statOr(player.stats.shooting, statOr(player.stats.attack, 5));
+  const passFinish = (passing + vision) / 2;
+  const goalTarget = bestGoalPassTarget(player, opponents);
+  const closeBonus = Math.max(0, 4 - pt.col) * 0.1;
+  const alternativeFinishChance = Math.max(
+    0.2,
+    Math.min(0.82, 0.3 + (passFinish - shooting) * 0.055 + closeBonus),
+  );
+
+  if (goalTarget && Math.random() < alternativeFinishChance) {
+    const runTile: TilePos = {
+      col: Math.max(0, pt.col - 1),
+      row: Math.max(0, Math.min(GRID_ROWS - 1, pt.row + (pt.row < GRID_ROWS / 2 ? 1 : -1))),
+    };
+
+    // Direct teams favour pass-then-run; patient teams favour move-then-pass;
+    // balanced teams choose either with equal probability.
+    const directWeight = tactic.progression === "direct" || tactic.progression === "counter" ? 0.7 :
+      tactic.progression === "slow" ? 0.3 : 0.5;
+
+    if (Math.random() < directWeight) {
+      return {
+        ...goalPassCommand(goalTarget, "ground"),
+        followUp: {
+          type: CommandType.MOVE,
+          targetPosition: tileToPos(runTile.col, runTile.row),
+        },
+      };
+    }
+
+    const currentMoveTarget =
+      currentCmd.type === CommandType.MOVE && currentCmd.targetPosition
+        ? currentCmd.targetPosition
+        : tileToPos(Math.max(0, pt.col - 1), pt.row);
+    const approachPlayer = { ...player, position: currentMoveTarget };
+    const approachTarget = bestGoalPassTarget(approachPlayer, opponents) ?? goalTarget;
+    return {
+      type: CommandType.MOVE,
+      targetPosition: currentMoveTarget,
+      followUp: goalPassCommand(approachTarget, "ground"),
+    };
+  }
+
+  // A high-vision long passer may chip directly into the net when the ground
+  // lane is closed. This preserves the long-ball vision behaviour while making
+  // the AI understand that a non-shot can still score.
+  if (!goalTarget && pt.col <= 5 && longPassing >= 7 && vision >= 6) {
+    const centerTarget = {
+      x: GOAL_LEFT_X - GOAL_DEPTH * 0.72,
+      y: Math.max(
+        GOAL_TOP_Y + BALL_RADIUS * 2,
+        Math.min(GOAL_BOTTOM_Y - BALL_RADIUS * 2, player.position.y),
+      ),
+    };
+    const chance = Math.min(0.46, 0.12 + (longPassing + vision - 13) * 0.045);
+    if (Math.random() < chance) return goalPassCommand(centerTarget, "long");
+  }
+
+  return currentCmd;
 }
 
 function shootingBuffCommand(
@@ -2321,7 +2767,7 @@ function interceptFutureBallTile(
 
 function receiverReachableTile(receiver: SimPlayer, wantedTile: TilePos): TilePos {
   const from = posToTile(receiver.position);
-  const maxStep = speedToTiles(receiver.stats.speed);
+  const maxStep = movementToTiles(receiver.stats.movement, receiver.ability);
 
   const dc = Math.sign(wantedTile.col - from.col);
   const dr = Math.sign(wantedTile.row - from.row);
@@ -2351,8 +2797,8 @@ function predictPlayerReachTiles(playerPlayers: SimPlayer[]): Set<string> {
 
   for (const p of playerPlayers) {
     const t = posToTile(p.position);
-    const range = speedToTiles(p.stats.speed);
-    const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId);
+    const range = movementToTiles(p.stats.movement, p.ability);
+    const reachable = getReachableTiles(t.col, t.row, range, p.role === "goalkeeper", p.teamId, p.ability);
 
     for (const r of reachable) {
       danger.add(tileKey(r.col, r.row));
@@ -2498,7 +2944,7 @@ function possessionRiskBuffCommand(
   return {
     type: CommandType.MOVE,
     targetPosition: tileToPos(
-      Math.max(0, pt.col - speedToTiles(player.stats.speed)),
+      Math.max(0, pt.col - movementToTiles(player.stats.movement, player.ability)),
       pt.row,
     ),
   };
@@ -2900,7 +3346,7 @@ function creativeCarryBuffCommand(
 
   const hardPressed = isHardPressed(pt, playerPlayers);
 
-  const range = speedToTiles(player.stats.speed);
+  const range = movementToTiles(player.stats.movement, player.ability);
 
   const reachable = getReachableTiles(
     pt.col,
@@ -3216,59 +3662,65 @@ function manMarkTile(
   return clampAITile({ col, row });
 }
 
+function aiClamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+
 function zonalBlockTile(
   player: SimPlayer,
   playerIndex: number,
   ballTile: TilePos,
   tactic: TeamTactic,
 ): TilePos {
-  const baseCol = blockColForRole(player, tactic);
   const centerRow = Math.floor(GRID_ROWS / 2);
+  const baseCol = blockColForRole(player, tactic);
 
-  let row = centerRow;
+  // The block breathes with the ball instead of sitting on fixed coordinates.
+  const ballProgress = aiClamp((GRID_COLS - 1 - ballTile.col) / Math.max(1, GRID_COLS - 1), 0, 1);
+  const danger = aiClamp((ballTile.col - Math.floor(GRID_COLS * 0.45)) / Math.max(1, GRID_COLS * 0.5), 0, 1);
+  const lateralShift = Math.round((ballTile.row - centerRow) * (
+    tactic.defensiveShape === "wide" || tactic.pressTrigger === "wide_trap" ? 0.72 : 0.48
+  ));
 
-  if (player.role === "defender") {
-    const defenderRows = [centerRow - 2, centerRow, centerRow + 2];
-    row = defenderRows[playerIndex % defenderRows.length];
-  } else if (player.role === "midfielder") {
-    const midRows = [centerRow - 1, centerRow + 1, centerRow];
-    row = midRows[playerIndex % midRows.length];
-  } else {
-    row = ballTile.row;
+  let lineStep = 0;
+  if (tactic.blockHeight === "high") lineStep = Math.round(3 * ballProgress - 1 * danger);
+  else if (tactic.blockHeight === "mid") lineStep = Math.round(2 * ballProgress - 1.5 * danger);
+  else lineStep = Math.round(1.25 * ballProgress - 2 * danger);
+
+  let col = aiClamp(baseCol - lineStep, 1, GRID_COLS - 2);
+  const compactness =
+    tactic.defensiveShape === "protect_box" ? 0.60 :
+    tactic.defensiveShape === "compact" ? 0.76 :
+    tactic.defensiveShape === "wide" ? 1.22 : 1.0;
+
+  const roleIndex = player.role === "defender"
+    ? aiPlayersRoleIndexFallback(playerIndex, 4)
+    : player.role === "midfielder"
+      ? aiPlayersRoleIndexFallback(playerIndex, 3)
+      : aiPlayersRoleIndexFallback(playerIndex, 2);
+
+  const roleSpread = player.role === "defender"
+    ? [-2.5, -0.8, 0.8, 2.5]
+    : player.role === "midfielder"
+      ? [-2, 0, 2]
+      : [-1.2, 1.2];
+
+  const spread = roleSpread[roleIndex % roleSpread.length] ?? 0;
+  let row = Math.round(centerRow + spread * compactness + lateralShift);
+
+  // Expand away from the ball in harmless zones, compress sharply near goal.
+  if (danger > 0.55) {
+    row = Math.round((row * (1 - danger * 0.35)) + (ballTile.row * danger * 0.35));
+  } else if (ballTile.col < Math.floor(GRID_COLS * 0.45)) {
+    row = Math.round(centerRow + spread * Math.min(1.45, compactness + 0.2) + lateralShift);
   }
 
-  // Compact teams squeeze toward the ball side but stay central.
-  if (tactic.defensiveShape === "compact") {
-    row = Math.round((row * 2 + ballTile.row) / 3);
-  }
+  return clampAITile({ col, row: aiClamp(row, 0, GRID_ROWS - 1) });
+}
 
-  // Wide-trap teams slide harder to the wing.
-  if (
-    tactic.defensiveShape === "wide" ||
-    tactic.pressTrigger === "wide_trap"
-  ) {
-    if (ballTile.row <= 2) row = Math.max(0, row - 1);
-    if (ballTile.row >= GRID_ROWS - 3) row = Math.min(GRID_ROWS - 1, row + 1);
-  }
-
-  // Protect-box teams stay very central and deep.
-  if (tactic.defensiveShape === "protect_box") {
-    row = Math.round((row + centerRow) / 2);
-  }
-
-  let col = baseCol;
-
-  // High block steps toward the ball.
-  if (tactic.blockHeight === "high") {
-    col = Math.max(1, Math.min(baseCol, ballTile.col + 2));
-  }
-
-  // Low block refuses to get dragged too high.
-  if (tactic.blockHeight === "low") {
-    col = Math.max(baseCol, GRID_COLS - 7);
-  }
-
-  return clampAITile({ col, row });
+function aiPlayersRoleIndexFallback(index: number, size: number): number {
+  return ((index % size) + size) % size;
 }
 
 function shouldPressBall(

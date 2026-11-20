@@ -1,9 +1,11 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type {
   TeamConfig,
   GameEvent,
   LeagueState,
   PlayoffBracket,
+  MatchStats,
 } from "./engine/types";
 import { useGameState } from "./hooks/useGameState";
 import Home from "./pages/Home";
@@ -15,35 +17,51 @@ import OnlineLobby from "./pages/OnlineLobby";
 import OnlineMatch from "./pages/OnlineMatch";
 import TeamProfiles from "./pages/TeamProfiles";
 import Pitch3DPreview from "./pages/Pitch3DPreview";
+import TransferMarket from "./pages/TransferMarket";
+import TransferTutorial from "./pages/TransferTutorial";
+import TutorialWelcome from "./components/TutorialWelcome";
+import TeamNameSetup from "./pages/TeamNameSetup";
+import { processTransferWeek } from "./game/transferMarket";
+import { formatMoney } from "./game/transferDatabase";
+import BottomMenuNav, { type MenuTab } from "./components/BottomMenuNav";
 import type { TeamSummary } from "./pages/OnlineMatch";
 import {
-  getAITeamDef,
+  getAITeamDefForLeague,
+  advanceAITrainingWeek,
   applyMatchResult,
   initPlayoff,
   applyPlayoffResult,
   autoSimPlayoffStage,
   getPlayerPlayoffMatch,
+  AI_TEAMS,
 } from "./game/league";
 import { TWO_PLAYER_TEAM_A, TWO_PLAYER_TEAM_B } from "./game/twoPlayer";
 import { PLAYER_TEAM_ID_CONST } from "./game/persistence";
+import { advanceTeamTraining } from "./game/training";
+import { completeMarketTutorial, completeMatchTutorial, completeTeamNaming, dismissTutorialWelcome, loadTutorialProgress, shouldShowTutorialWelcome } from "./game/tutorial";
 
 type Screen =
   | "home"
   | "team-setup"
   | "customize"
   | "team-profiles"
+  | "transfer-market"
   | "match"
   | "post-match"
   | "two-player-match"
   | "online-lobby"
   | "online-match"
-  | "pitch3d-preview";
+  | "pitch3d-preview"
+  | "tutorial-match"
+  | "transfer-tutorial"
+  | "team-name";
 
 interface OnlineGameConfig {
   myRole: "p1" | "p2";
   p1Team: TeamSummary;
   p2Team: TeamSummary;
   roomCode: string;
+  turnDeadlineAt?: number;
 }
 
 interface MatchResult {
@@ -57,6 +75,8 @@ interface MatchResult {
   autoSimAwayName?: string;
   autoSimHomeGoals?: number;
   autoSimAwayGoals?: number;
+  penalties?: { player: number; ai: number };
+  stats?: MatchStats;
 }
 
 interface PlayoffContext {
@@ -67,7 +87,7 @@ interface PlayoffContext {
 
 function hashToScreen(hash: string): {
   screen: Screen;
-  tab?: "lineup" | "formation";
+  tab?: "lineup" | "formation" | "training";
 } {
   const h = hash.replace(/^#\/?/, "");
 
@@ -77,6 +97,10 @@ function hashToScreen(hash: string): {
 
   if (h === "team-setup/formation") {
     return { screen: "team-setup", tab: "formation" };
+  }
+
+  if (h === "team-setup/training") {
+    return { screen: "team-setup", tab: "training" };
   }
 
   if (h === "team-setup") {
@@ -91,6 +115,10 @@ function hashToScreen(hash: string): {
     return { screen: "customize" };
   }
 
+  if (h === "transfer-market") {
+    return { screen: "transfer-market" };
+  }
+
   return { screen: "home" };
 }
 
@@ -100,24 +128,45 @@ export default function App() {
     updateTeam,
     league,
     updateLeague,
+    updateTeamAndLeague,
     startNewSeason,
     refreshState,
+    market,
+    updateMarket,
   } = useGameState();
 
   const initialHash = hashToScreen(window.location.hash);
 
-  const [screen, setScreen] = useState<Screen>(initialHash.screen);
-  const [setupTab, setSetupTab] = useState<"lineup" | "formation">(
+  const [screen, setScreen] = useState<Screen>(() => {
+    const tutorialProgress = loadTutorialProgress();
+    const namingPending =
+      tutorialProgress.matchComplete &&
+      tutorialProgress.marketComplete &&
+      !tutorialProgress.teamNameChosen;
+    return namingPending ? "team-name" : initialHash.screen;
+  });
+  const [setupTab, setSetupTab] = useState<"lineup" | "formation" | "training">(
     initialHash.tab ?? "lineup",
   );
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [playoffContext, setPlayoffContext] =
-    useState<PlayoffContext | null>(null);
+  const [playoffContext, setPlayoffContext] = useState<PlayoffContext | null>(
+    null,
+  );
   const [onlineConfig, setOnlineConfig] = useState<OnlineGameConfig | null>(
     null,
   );
-  const [profileTeamId, setProfileTeamId] = useState<string>(
-    PLAYER_TEAM_ID_CONST,
+  const [profileTeamId, setProfileTeamId] =
+    useState<string>(PLAYER_TEAM_ID_CONST);
+  const [showTutorialWelcome, setShowTutorialWelcome] = useState(() =>
+    shouldShowTutorialWelcome(),
+  );
+  const knownOfferStates = useRef(
+    new Map(
+      market.offers.map((offer) => [
+        offer.id,
+        `${offer.status}:${offer.counterAmount ?? ""}:${offer.counteredByClubId ?? ""}`,
+      ]),
+    ),
   );
 
   useEffect(() => {
@@ -136,20 +185,79 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  useEffect(() => {
+    const notices: Array<{
+      kind: "offer" | "counter";
+      offer: (typeof market.offers)[number];
+    }> = [];
+
+    market.offers.forEach((offer) => {
+      const signature = `${offer.status}:${offer.counterAmount ?? ""}:${offer.counteredByClubId ?? ""}`;
+      const previous = knownOfferStates.current.get(offer.id);
+
+      const isNewIncomingOffer =
+        previous === undefined &&
+        offer.toClubId === PLAYER_TEAM_ID_CONST &&
+        offer.status === "pending";
+
+      const isCounterofferForPlayer =
+        offer.fromClubId === PLAYER_TEAM_ID_CONST &&
+        offer.status === "countered" &&
+        offer.counteredByClubId !== PLAYER_TEAM_ID_CONST &&
+        previous !== signature;
+
+      if (isNewIncomingOffer) notices.push({ kind: "offer", offer });
+      if (isCounterofferForPlayer) notices.push({ kind: "counter", offer });
+
+      knownOfferStates.current.set(offer.id, signature);
+    });
+
+    if (notices.length === 0) return;
+
+    const latest = notices[notices.length - 1];
+    const counterCount = notices.filter((notice) => notice.kind === "counter").length;
+    const offerCount = notices.length - counterCount;
+
+    const title =
+      notices.length === 1
+        ? latest.kind === "counter"
+          ? "🔁 New counteroffer"
+          : "📩 New transfer offer"
+        : counterCount > 0 && offerCount > 0
+          ? `📩 ${notices.length} transfer updates`
+          : counterCount > 0
+            ? `🔁 ${counterCount} new counteroffers`
+            : `📩 ${offerCount} new transfer offers`;
+
+    const amount = latest.offer.counterAmount ?? latest.offer.amount;
+    const description =
+      latest.kind === "counter"
+        ? `${latest.offer.toClubName} countered at ${formatMoney(amount)} for ${latest.offer.playerName}. Check Market → Offers.`
+        : `${latest.offer.fromClubName} offered ${formatMoney(amount)} for ${latest.offer.playerName}. Check Market → Offers.`;
+
+    toast(title, { description, duration: 2600 });
+  }, [market.offers]);
+
   const isLeagueComplete = league.currentMatchIndex >= league.schedule.length;
   const currentMatchIndex = league.currentMatchIndex;
   const currentScheduledMatch = league.schedule[currentMatchIndex] ?? null;
   const currentOpponentDef = currentScheduledMatch
-    ? getAITeamDef(currentScheduledMatch.opponentId)
+    ? getAITeamDefForLeague(league, currentScheduledMatch.opponentId)
     : null;
 
   const handleMatchEnd = useCallback(
-    (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => {
+    (result: {
+      playerScore: number;
+      aiScore: number;
+      events: GameEvent[];
+      penalties?: { player: number; ai: number };
+      stats?: MatchStats;
+    }) => {
       if (!currentScheduledMatch || !currentOpponentDef) return;
 
       const seed = Date.now() % 99999;
 
-      const newLeague = applyMatchResult(
+      const resultLeague = applyMatchResult(
         league,
         PLAYER_TEAM_ID_CONST,
         currentScheduledMatch.opponentId,
@@ -157,8 +265,30 @@ export default function App() {
         result.aiScore,
         seed,
       );
+      const newLeague = advanceAITrainingWeek(resultLeague, {
+        playerOpponentId: currentScheduledMatch.opponentId,
+        playerGoals: result.playerScore,
+        opponentGoals: result.aiScore,
+        includeLastMatchdayResults: true,
+      });
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result:
+          result.playerScore > result.aiScore
+            ? "win"
+            : result.playerScore < result.aiScore
+              ? "loss"
+              : "draw",
+      });
 
-      updateLeague(newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       setMatchResult({
         playerScore: result.playerScore,
@@ -166,15 +296,31 @@ export default function App() {
         events: result.events,
         opponentName: currentOpponentDef.name,
         playoffStage: null,
+        penalties: result.penalties,
+        stats: result.stats,
       });
 
       setScreen("post-match");
     },
-    [league, currentScheduledMatch, currentOpponentDef, updateLeague],
+    [
+      league,
+      team,
+      currentScheduledMatch,
+      currentOpponentDef,
+      updateTeamAndLeague,
+      market,
+      updateMarket,
+    ],
   );
 
   const handlePlayoffMatchEnd = useCallback(
-    (result: { playerScore: number; aiScore: number; events: GameEvent[] }) => {
+    (result: {
+      playerScore: number;
+      aiScore: number;
+      events: GameEvent[];
+      penalties?: { player: number; ai: number };
+      stats?: MatchStats;
+    }) => {
       if (!playoffContext) return;
 
       const seed = Date.now() % 99999;
@@ -182,19 +328,63 @@ export default function App() {
 
       const homeGoals = isHome ? result.playerScore : result.aiScore;
       const awayGoals = isHome ? result.aiScore : result.playerScore;
+      const penaltyHome = result.penalties
+        ? isHome
+          ? result.penalties.player
+          : result.penalties.ai
+        : undefined;
+      const penaltyAway = result.penalties
+        ? isHome
+          ? result.penalties.ai
+          : result.penalties.player
+        : undefined;
+      const playerWon =
+        result.playerScore > result.aiScore ||
+        (result.playerScore === result.aiScore &&
+          (result.penalties?.player ?? 0) > (result.penalties?.ai ?? 0));
+      const opponentWon =
+        result.aiScore > result.playerScore ||
+        (result.playerScore === result.aiScore &&
+          (result.penalties?.ai ?? 0) > (result.penalties?.player ?? 0));
+      const forcedWinnerId = playerWon
+        ? PLAYER_TEAM_ID_CONST
+        : opponentWon
+          ? playoffContext.opponentId
+          : undefined;
 
-      const newLeague = applyPlayoffResult(
+      const resultLeague = applyPlayoffResult(
         league,
         stage,
         homeGoals,
         awayGoals,
         seed,
+        forcedWinnerId,
+        penaltyHome !== undefined && penaltyAway !== undefined
+          ? { home: penaltyHome, away: penaltyAway }
+          : undefined,
       );
+      const newLeague = advanceAITrainingWeek(resultLeague, {
+        playerOpponentId: playoffContext.opponentId,
+        playerGoals: result.playerScore,
+        opponentGoals: result.aiScore,
+      });
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result: playerWon ? "win" : opponentWon ? "loss" : "draw",
+      });
 
-      updateLeague(newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       const oppName =
-        getAITeamDef(playoffContext.opponentId)?.name ?? "Opponent";
+        getAITeamDefForLeague(newLeague, playoffContext.opponentId)?.name ??
+        "Opponent";
 
       setPlayoffContext(null);
 
@@ -204,11 +394,13 @@ export default function App() {
         events: result.events,
         opponentName: oppName,
         playoffStage: stage,
+        penalties: result.penalties,
+        stats: result.stats,
       });
 
       setScreen("post-match");
     },
-    [league, playoffContext, updateLeague],
+    [league, team, playoffContext, updateTeamAndLeague, market, updateMarket],
   );
 
   const handleStartMatch = useCallback(() => {
@@ -251,11 +443,23 @@ export default function App() {
           ? po.sf1
           : po.stage === "sf2"
             ? po.sf2
-            : po.final ?? po.sf2;
+            : (po.final ?? po.sf2);
 
-      const newLeague = autoSimPlayoffStage(current, seed);
+      const resultLeague = autoSimPlayoffStage(current, seed);
+      const newLeague = advanceAITrainingWeek(resultLeague);
+      const trainedTeam = advanceTeamTraining(team, {
+        season: newLeague.season ?? 1,
+        week: newLeague.trainingWeek ?? 1,
+        result: "idle",
+      });
 
-      updateLeague(newLeague);
+      const transferResult = processTransferWeek(
+        market,
+        trainedTeam,
+        newLeague,
+      );
+      updateTeamAndLeague(transferResult.team, transferResult.league);
+      updateMarket(transferResult.state);
 
       setMatchResult({
         playerScore: 0,
@@ -286,7 +490,16 @@ export default function App() {
 
       setScreen("post-match");
     }
-  }, [isLeagueComplete, league, currentOpponentDef, updateLeague]);
+  }, [
+    isLeagueComplete,
+    league,
+    team,
+    currentOpponentDef,
+    updateLeague,
+    updateTeamAndLeague,
+    market,
+    updateMarket,
+  ]);
 
   const handleForfeit = useCallback(() => {
     if (!currentScheduledMatch || !currentOpponentDef) {
@@ -342,30 +555,159 @@ export default function App() {
     return <Pitch3DPreview />;
   }
 
-  if (screen === "home") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
+  const menuScreens: MenuTab[] = [
+    "team-profiles",
+    "team-setup",
+    "home",
+    "transfer-market",
+    "customize",
+  ];
+  const isMenuScreen = menuScreens.includes(screen as MenuTab);
+
+  const goToMenuTab = (tab: MenuTab) => {
+    setScreen(tab);
+    if (tab !== "team-setup") setSetupTab("lineup");
+    window.location.hash = tab === "home" ? "#/" : `#/${tab}`;
+  };
+
+  if (isMenuScreen) {
+    let content;
+
+    if (screen === "team-profiles") {
+      content = (
+        <TeamProfiles
+          playerTeam={team}
+          league={league}
+          market={market}
+          initialTeamId={profileTeamId}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
+    } else if (screen === "team-setup") {
+      content = (
+        <TeamSetup
+          team={team}
+          onSave={(t: TeamConfig) => {
+            updateTeam(t);
+          }}
+          initialTab={setupTab}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
+    } else if (screen === "customize") {
+      content = (
+        <Customize
+          team={team}
+          onSave={(t: TeamConfig) => {
+            updateTeam(t);
+            goToMenuTab("home");
+          }}
+          onPersist={updateTeam}
+          onBack={() => goToMenuTab("home")}
+        />
+      );
+    } else if (screen === "transfer-market") {
+      content = (
+        <TransferMarket
+          team={team}
+          league={league}
+          market={market}
+          onChange={(nextMarket, nextTeam, nextLeague) => {
+            updateMarket(nextMarket);
+            if (nextTeam && nextLeague)
+              updateTeamAndLeague(nextTeam, nextLeague);
+          }}
+          onTutorial={() => setScreen("transfer-tutorial")}
+        />
+      );
+    } else {
+      content = (
         <Home
           team={team}
           league={league}
           isLeagueComplete={isLeagueComplete}
           onStartMatch={handleStartMatch}
-          onGoToTeamSetup={() => setScreen("team-setup")}
-          onGoToCustomize={() => setScreen("customize")}
+          onGoToTeamSetup={() => goToMenuTab("team-setup")}
+          onGoToCustomize={() => goToMenuTab("customize")}
           onGoToProfiles={handleOpenProfiles}
           onResetSeason={handleNewSeason}
           onTwoPlayer={() => setScreen("two-player-match")}
           onOnline={() => setScreen("online-lobby")}
+          onTutorial={() => setScreen("tutorial-match")}
+        />
+      );
+    }
+
+    return (
+      <div
+        className="mx-auto min-h-screen max-w-md pb-20"
+        style={{ background: "#0a0e1a" }}
+      >
+        {content}
+        <BottomMenuNav active={screen as MenuTab} onChange={goToMenuTab} />
+        {showTutorialWelcome && (
+          <TutorialWelcome
+            onStart={() => {
+              setShowTutorialWelcome(false);
+              setScreen("tutorial-match");
+            }}
+            onSkip={() => {
+              dismissTutorialWelcome();
+              setShowTutorialWelcome(false);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (screen === "tutorial-match") {
+    const tutorialOpponent = AI_TEAMS.find((entry) => entry.tier === 3) ?? AI_TEAMS[0];
+    return (
+      <div className="mx-auto min-h-screen max-w-2xl" style={{ maxWidth: "min(100vw, 760px)" }}>
+        <Match
+          team={team}
+          opponentTeamDef={tutorialOpponent}
+          isHome={true}
+          tutorialMode={true}
+          onMatchEnd={() => {
+            completeMatchTutorial();
+            setScreen("transfer-tutorial");
+          }}
+          onTutorialComplete={() => {
+            completeMatchTutorial();
+            setScreen("transfer-tutorial");
+          }}
+          onForfeit={() => setScreen("home")}
         />
       </div>
     );
   }
 
-  if (screen === "team-profiles") {
+  if (screen === "transfer-tutorial") {
     return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <TeamProfiles playerTeam={team} onBack={() => setScreen("home")} />
-      </div>
+      <TransferTutorial
+        team={team}
+        onBack={() => setScreen("home")}
+        onComplete={() => {
+          const progress = completeMarketTutorial();
+          setScreen(progress.teamNameChosen ? "transfer-market" : "team-name");
+        }}
+      />
+    );
+  }
+
+  if (screen === "team-name") {
+    return (
+      <TeamNameSetup
+        team={team}
+        onComplete={(name) => {
+          updateTeam({ ...team, name });
+          completeTeamNaming();
+          toast.success(`Welcome, ${name}`);
+          setScreen("transfer-market");
+        }}
+      />
     );
   }
 
@@ -393,7 +735,7 @@ export default function App() {
       <div className="max-w-md mx-auto min-h-screen">
         <OnlineLobby
           team={team}
-          onGameReady={(config) => {
+          onGameReady={(config: OnlineGameConfig) => {
             setOnlineConfig(config);
             setScreen("online-match");
           }}
@@ -414,6 +756,7 @@ export default function App() {
           p1Team={onlineConfig.p1Team}
           p2Team={onlineConfig.p2Team}
           roomCode={onlineConfig.roomCode}
+          turnDeadlineAt={onlineConfig.turnDeadlineAt}
           onLeave={() => {
             setOnlineConfig(null);
             setScreen("home");
@@ -423,42 +766,11 @@ export default function App() {
     );
   }
 
-  if (screen === "team-setup") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <TeamSetup
-          team={team}
-          onSave={handleTeamSave}
-          initialTab={setupTab}
-          onBack={() => {
-            setSetupTab("lineup");
-            setScreen("home");
-          }}
-        />
-      </div>
-    );
-  }
-
-  if (screen === "customize") {
-    return (
-      <div className="max-w-md mx-auto min-h-screen">
-        <Customize
-          team={team}
-          onSave={(t) => {
-            updateTeam(t);
-            setScreen("home");
-          }}
-          onBack={() => setScreen("home")}
-        />
-      </div>
-    );
-  }
-
   if (screen === "match") {
     const isPlayoff = !!playoffContext;
 
     const opponentDef = isPlayoff
-      ? getAITeamDef(playoffContext!.opponentId)
+      ? getAITeamDefForLeague(league, playoffContext!.opponentId)
       : currentOpponentDef;
 
     const isHomeForMatch = isPlayoff
@@ -477,6 +789,7 @@ export default function App() {
             isHome={isHomeForMatch}
             onMatchEnd={isPlayoff ? handlePlayoffMatchEnd : handleMatchEnd}
             onForfeit={isPlayoff ? handlePlayoffForfeit : handleForfeit}
+            requiresWinner={isPlayoff}
           />
         </div>
       );
@@ -504,6 +817,8 @@ export default function App() {
           autoSimAwayName={matchResult.autoSimAwayName}
           autoSimHomeGoals={matchResult.autoSimHomeGoals}
           autoSimAwayGoals={matchResult.autoSimAwayGoals}
+          penalties={matchResult.penalties}
+          stats={matchResult.stats}
           showNewSeason={showNewSeason}
           onNextMatch={() => {
             setMatchResult(null);
@@ -532,6 +847,7 @@ export default function App() {
         onResetSeason={handleNewSeason}
         onTwoPlayer={() => setScreen("two-player-match")}
         onOnline={() => setScreen("online-lobby")}
+        onTutorial={() => setScreen("tutorial-match")}
       />
     </div>
   );

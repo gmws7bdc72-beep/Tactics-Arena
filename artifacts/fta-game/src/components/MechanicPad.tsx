@@ -19,10 +19,19 @@ interface Props {
   actionsDisabled?: boolean;
   active: boolean;
   tutorialFocus?: TutorialFocus;
+  outOfPossession?: boolean;
+  standTackleBlocked?: boolean;
+  defenseMode?: "slide" | "stand" | "press" | null;
+  onDefense?: (mode: "slide" | "stand" | "press") => void;
 }
 
 type ChordKey = "pass" | "movePass";
 const HOLD_MS = 460;
+
+export function isOutOfPossession(ownerId: string | null, players: readonly { id: string; teamId: "player" | "ai" }[], planningTeam: "player" | "ai"): boolean {
+  if (!ownerId) return true;
+  return players.find(player => player.id === ownerId)?.teamId !== planningTeam;
+}
 
 const iconProps: SVGProps<SVGSVGElement> = {
   viewBox: "0 0 64 64",
@@ -111,6 +120,18 @@ function CurveIcon({ active }: { active: boolean }) {
   );
 }
 
+function SlideIcon() {
+  return <svg {...iconProps}><path d="M6 48h18M10 54h26" opacity=".45"/><circle cx="20" cy="20" r="5" fill="currentColor" stroke="none"/><path d="M18 27l9 9 12 2M26 35l-6 10-9 2M28 37l12 7 11-4M31 31l-5 5-11-3"/><Ball x={52} y={39} r={6}/></svg>;
+}
+
+function StandTackleIcon() {
+  return <svg {...iconProps}><path d="M9 17l8-5M8 23h7M12 48l10-10 4-12M22 38l5 11M26 26l10 5 7-3M25 26l-8 5"/><circle cx="27" cy="18" r="5" fill="currentColor" stroke="none"/><path d="M37 42l8-8M39 48l7-1" opacity=".55"/><Ball x={51} y={37} r={7}/></svg>;
+}
+
+function PressIcon() {
+  return <svg {...iconProps}><circle cx="17" cy="17" r="5" fill="currentColor" stroke="none"/><path d="M16 25l9 7 7-1M24 32l-2 9-10 7M23 40l9 8M14 28l-6 6M34 17h12M38 12l6 5-6 5"/><circle cx="48" cy="38" r="10" strokeDasharray="3 4" opacity=".6"/><Ball x={48} y={38} r={5}/></svg>;
+}
+
 export default function MechanicPad({
   onCancel, onPass, onLongPass, onMovePass, onPassMove, onShoot, onDive, onCurve,
   curveActive, curveCanFinish, curvePointCount, curvePointLimit,
@@ -118,6 +139,10 @@ export default function MechanicPad({
   active,
   goalkeeperCanDive = false,
   tutorialFocus = "none",
+  outOfPossession = false,
+  standTackleBlocked = false,
+  defenseMode = null,
+  onDefense,
 }: Props) {
   const pressed = useRef(new Map<number, ChordKey>());
   const holdTimer = useRef<number | null>(null);
@@ -182,6 +207,21 @@ export default function MechanicPad({
   const focusClass = (name: TutorialFocus) => tutorialFocus === name ? " ring-2 ring-cyan-300 ring-offset-2 ring-offset-[#07101c] animate-pulse" : "";
   const actionClass = `h-12 min-w-0 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] disabled:opacity-30 disabled:active:scale-100 [&>svg]:h-full [&>svg]:w-full ${active ? "" : "invisible pointer-events-none"}`;
   const chordStyle = { touchAction: "none", userSelect: "none" as const, WebkitUserSelect: "none" as const, WebkitTouchCallout: "none" as const };
+
+  if (outOfPossession) {
+    const defenseActionClass = "h-12 min-w-0 rounded-xl border border-white/10 p-1 text-white shadow-sm transition-transform active:scale-[0.96] disabled:opacity-45 [&>svg]:h-full [&>svg]:w-full";
+    return (
+      <div className="flex h-14 items-center gap-1.5 px-2 py-1">
+        <button onClick={() => active && onCancel()} className={`h-12 w-9 min-w-9 rounded-xl border border-white/10 text-lg font-bold text-gray-400 ${active ? "" : "invisible pointer-events-none"}`} aria-label="Cancel selected action">×</button>
+        <div className="grid min-w-0 flex-1 grid-cols-4 gap-1.5">
+          <button onClick={() => onDefense?.("slide")} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#fb4b4b,#991b1b)", boxShadow: defenseMode === "slide" ? "0 0 0 2px #fff, 0 0 14px #ef4444" : undefined }} aria-label="Slide tackle" aria-pressed={defenseMode === "slide"}><SlideIcon /></button>
+          <button onClick={() => onDefense?.("press")} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#38bdf8,#1d4ed8)", boxShadow: defenseMode === "press" ? "0 0 0 2px #fff, 0 0 14px #38bdf8" : undefined }} aria-label="Press" aria-pressed={defenseMode === "press"}><PressIcon /></button>
+          <button onClick={() => onDefense?.("stand")} disabled={!active || actionsDisabled || standTackleBlocked} title={standTackleBlocked ? "Available again next turn" : undefined} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#4ade80,#15803d)", boxShadow: defenseMode === "stand" ? "0 0 0 2px #fff, 0 0 14px #4ade80" : undefined }} aria-label="Standing tackle" aria-pressed={defenseMode === "stand"}><StandTackleIcon /></button>
+          <button onClick={() => active && !actionsDisabled && onMovePass()} disabled={!active || actionsDisabled} className={defenseActionClass} style={{ background: "linear-gradient(145deg,#c026d3,#6b21a8)" }} aria-label="Move then pass"><ComboIcon reversed={false} /></button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-14 items-center gap-1.5 px-2 py-1">

@@ -1,4 +1,4 @@
-import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX, GK_COLS_AI_MIN, GK_COLS_AI_MAX } from "./constants";
+import { GRID_COLS, GRID_ROWS, TILE_W, TILE_H, GOALKEEPER_REACH_TILES, goalkeeperColumnBounds } from "./constants";
 import type { Vec2 } from "./types";
 
 export function tileToPos(col: number, row: number): Vec2 {
@@ -31,13 +31,13 @@ export function getAdjacentTiles(col: number, row: number): { col: number; row: 
 }
 
 // Get all tiles reachable from (col, row) within Chebyshev distance `range`.
-// Optionally constrained to GK zone for goalkeeper roles.
 export function getReachableTiles(
   col: number,
   row: number,
   range: number,
   isGK: boolean,
-  teamId: "player" | "ai"
+  teamId: "player" | "ai",
+  ability?: string,
 ): { col: number; row: number }[] {
   const tiles: { col: number; row: number }[] = [];
   for (let dc = -range; dc <= range; dc++) {
@@ -49,8 +49,8 @@ export function getReachableTiles(
       const nr = row + dr;
       if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
       if (isGK) {
-        if (teamId === "player" && (nc < GK_COLS_PLAYER_MIN || nc > GK_COLS_PLAYER_MAX)) continue;
-        if (teamId === "ai" && (nc < GK_COLS_AI_MIN || nc > GK_COLS_AI_MAX)) continue;
+        const bounds = goalkeeperColumnBounds(teamId, ability);
+        if (nc < bounds.min || nc > bounds.max) continue;
       }
       tiles.push({ col: nc, row: nr });
     }
@@ -69,10 +69,57 @@ export function tileKey(col: number, row: number): string {
   return `${col},${row}`;
 }
 
-// Clamp a tile to the GK zone
-export function clampToGKZone(col: number, row: number, teamId: "player" | "ai"): { col: number; row: number } {
-  if (teamId === "player") {
-    return { col: Math.max(GK_COLS_PLAYER_MIN, Math.min(GK_COLS_PLAYER_MAX, col)), row };
+// Legacy helper retained for callers that still normalize goalkeeper targets.
+export function clampToGKZone(
+  col: number,
+  row: number,
+  teamId: "player" | "ai",
+  ability?: string,
+): { col: number; row: number } {
+  const bounds = goalkeeperColumnBounds(teamId, ability);
+  return { col: Math.max(bounds.min, Math.min(bounds.max, col)), row };
+}
+
+
+export function getGoalkeeperDiveRange(_defense: number, _speed: number): number {
+  return GOALKEEPER_REACH_TILES;
+}
+
+/** Own tile plus one quarter of the tile forward or to either side. */
+export function isWithinGoalkeeperReach(keeperPosition: Vec2, ballPosition: Vec2, teamId: "player" | "ai"): boolean {
+  const tile = posToTile(keeperPosition);
+  const center = tileToPos(tile.col, tile.row);
+  const forward = (ballPosition.x - center.x) / TILE_W * (teamId === "player" ? 1 : -1);
+  const sideways = Math.abs(ballPosition.y - center.y) / TILE_H;
+  const half = 0.5;
+  const extent = half + (GOALKEEPER_REACH_TILES - 1);
+  const epsilon = 1e-9;
+  return forward >= -half - epsilon && (
+    (forward <= extent + epsilon && sideways <= half + epsilon) ||
+    (forward <= half + epsilon && sideways <= extent + epsilon)
+  );
+}
+
+// These tiles choose a direction; they do not extend the catch area to their centres.
+export function getDiveReachableTiles(
+  col: number,
+  row: number,
+  range: number,
+  teamId: "player" | "ai",
+  ability?: string,
+): { col: number; row: number }[] {
+  const tiles: { col: number; row: number }[] = [];
+  for (let dc = -1; dc <= 1; dc += 1) {
+    for (let dr = -1; dr <= 1; dr += 1) {
+      if (Math.abs(dc) + Math.abs(dr) !== 1 || range <= 1) continue;
+      if (dc !== 0 && dc !== (teamId === "player" ? 1 : -1)) continue;
+      const nc = col + dc;
+      const nr = row + dr;
+      if (nc < 0 || nc >= GRID_COLS || nr < 0 || nr >= GRID_ROWS) continue;
+      const bounds = goalkeeperColumnBounds(teamId, ability);
+      if (nc < bounds.min || nc > bounds.max) continue;
+      tiles.push({ col: nc, row: nr });
+    }
   }
-  return { col: Math.max(GK_COLS_AI_MIN, Math.min(GK_COLS_AI_MAX, col)), row };
+  return tiles;
 }

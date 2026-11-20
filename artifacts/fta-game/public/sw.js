@@ -1,5 +1,5 @@
-const CACHE_NAME = "football-tactics-arena-offline-v2";
-const RUNTIME_CACHE = "football-tactics-arena-runtime-v2";
+const CACHE_NAME = "football-tactics-arena-offline-v4-curve";
+const RUNTIME_CACHE = "football-tactics-arena-runtime-v4-curve";
 
 const CORE_ASSETS = [
   "/",
