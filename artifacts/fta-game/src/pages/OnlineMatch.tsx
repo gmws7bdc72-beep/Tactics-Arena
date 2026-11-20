@@ -1,47 +1,22 @@
+import { posToTile, getReachableTiles } from "../engine/grid";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { SimPlayer, SimBall, Command, FrameSnapshot, GameEvent, Vec2 } from "../engine/types";
+import { CommandType, GameEventType } from "../engine/types";
+import type { PlayerCard } from "../engine/types";
+import { runSimulation , speedToTiles } from "../engine/simulation";
+import { getFormationById, getAIFormationById } from "../game/formations";
 import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo } from "react";
-import type { SimPlayer,
-  SimBall,
-  Command,
-  FrameSnapshot,
-  GameEvent,
-  Vec2 } from "../engine/types";
-import { CommandType,
-  GameEventType } from "../engine/types";
-import type { KitStyle, PlayerCard, SleeveStyle } from "../engine/types";
-import { runSimulation } from "../engine/simulation";
-import { getFormationById,
-  getAIFormationById } from "../game/formations";
-import {
-  PITCH_WIDTH,
-  PITCH_HEIGHT,
-  MAX_MATCH_TURNS,
-  movementToTiles,
-  PLAYERS_PER_TEAM,
-  GOAL_DEPTH,
-  GOAL_TOP_Y,
-  GOAL_WIDTH,
-  BALL_RADIUS,
+  PITCH_WIDTH, PITCH_HEIGHT, MAX_MATCH_TURNS, PLAYERS_PER_TEAM,
 } from "../engine/constants";
 import PitchCanvas from "../components/PitchCanvas";
-import MechanicPad from "../components/MechanicPad";
 import EventLog from "../components/EventLog";
 import { useIsMobile } from "../hooks/use-mobile";
-import { useCurvePlanner } from "../hooks/useCurvePlanner";
 import { getSocket, disconnectSocket } from "../lib/socket";
-import { deriveKitStyle, deriveSleeveStyle } from "../game/visuals";
 
 export interface TeamSummary {
-  rulesVersion: number;
   name: string;
   jerseyColor: string;
   secondaryColor?: string;
-  kitStyle?: KitStyle;
-  sleeveStyle?: SleeveStyle;
   crestIcon?: string;
   formationId: string;
   players: PlayerCard[];
@@ -53,58 +28,11 @@ interface Props {
   p1Team: TeamSummary;
   p2Team: TeamSummary;
   roomCode: string;
-  turnDeadlineAt?: number;
   onLeave: () => void;
 }
 
-const PLAYBACK_FPS = 48;
+const PLAYBACK_FPS = 60;
 const ONLINE_TURN_TIME = 25;
-
-// FTA_PVP4_GOAL_KICKOFF_MAXED_LONGGOAL
-// Online matches are an even tactics sandbox: every on-pitch player is maxed,
-// while special abilities remain sensible for the player's football role.
-const ONLINE_MAX_STATS: PlayerCard["stats"] = {
-  attack: 10,
-  defense: 10,
-  passing: 10,
-  speed: 10,
-  movement: 10,
-  shooting: 10,
-  dribbling: 10,
-  tackling: 10,
-  marking: 10,
-  stamina: 10,
-  strength: 10,
-  vision: 10,
-  longPassing: 10,
-  aerial: 10,
-};
-
-function onlineAbilityFor(card: PlayerCard): PlayerCard["ability"] {
-  const seed = Math.abs(card.jerseyNumber ?? 0);
-  switch (card.role) {
-    case "goalkeeper":
-      return "goalkeeper";
-    case "defender": {
-      const pool: PlayerCard["ability"][] = ["iron_tackle", "shadow_mark", "powerhouse"];
-      return pool[seed % pool.length];
-    }
-    case "midfielder": {
-      const pool: PlayerCard["ability"][] = ["bullet_pass", "shadow_mark", "ghost_run"];
-      return pool[seed % pool.length];
-    }
-    case "forward": {
-      const pool: PlayerCard["ability"][] = ["ghost_run", "eagle_eye", "powerhouse"];
-      return pool[seed % pool.length];
-    }
-    case "striker": {
-      const pool: PlayerCard["ability"][] = ["eagle_eye", "ghost_run", "powerhouse"];
-      return pool[seed % pool.length];
-    }
-  }
-  return "none";
-}
-
 
 function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): SimPlayer {
   return {
@@ -115,9 +43,8 @@ function makeSimPlayer(card: PlayerCard, teamId: "player" | "ai", pos: Vec2): Si
     velocity: { x: 0, y: 0 },
     startPosition: { ...pos },
     state: "IDLE" as SimPlayer["state"],
-    stats: { ...ONLINE_MAX_STATS },
-
-    ability: onlineAbilityFor(card),
+    stats: { ...card.stats },
+    ability: card.ability,
     command: null,
     commandExecuted: false,
     stateTimer: 0,
@@ -138,97 +65,18 @@ function makeInitPlayers(p1Team: TeamSummary, p2Team: TeamSummary): { players: S
   const p2Players = p2Team.players.slice(0, PLAYERS_PER_TEAM).map((card, i) =>
     makeSimPlayer(card, "ai", p2Formation.positions[i] ?? { x: PITCH_WIDTH * 0.8, y: PITCH_HEIGHT / 2 })
   );
-  // FTA_PVP4_INITIAL_KICKOFF
-  const kickoffOwner =
-    p1Players.find(p => p.role === "striker") ??
-    p1Players.find(p => p.role === "forward") ??
-    p1Players.find(p => p.role === "midfielder") ??
-    p1Players[0];
-  if (kickoffOwner) {
-    kickoffOwner.position = { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
-  }
+
+  const kickoffOwner = p1Players.find(p => p.role === "goalkeeper") ?? p1Players[0];
   const ball: SimBall = {
-    position: kickoffOwner
-      ? { ...kickoffOwner.position }
-      : { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 },
+    position: { ...kickoffOwner.position },
     velocity: { x: 0, y: 0 },
-    ownerId: kickoffOwner?.id ?? null,
+    ownerId: kickoffOwner.id,
     height: 0,
   };
   return { players: [...p1Players, ...p2Players], ball };
 }
 
-function resetOnlineKickoff(
-  players: SimPlayer[],
-  concedingTeam: "player" | "ai",
-): { players: SimPlayer[]; ball: SimBall } {
-  const resetPlayers = players.map((player) => ({
-    ...player,
-    position: { ...player.startPosition },
-    velocity: { x: 0, y: 0 },
-    state: "IDLE" as SimPlayer["state"],
-    command: null,
-    commandExecuted: false,
-    stateTimer: 0,
-    recoveryTimer: 0,
-  }));
-
-  const rolePriority: Record<SimPlayer["role"], number> = {
-    striker: 0,
-    forward: 1,
-    midfielder: 2,
-    defender: 3,
-    goalkeeper: 4,
-  };
-
-  const candidates = resetPlayers
-    .filter((player) => player.teamId === concedingTeam)
-    .sort((a, b) => rolePriority[a.role] - rolePriority[b.role] || a.jerseyNumber - b.jerseyNumber);
-  const kicker = candidates[0];
-
-  if (!kicker) {
-    return {
-      players: resetPlayers,
-      ball: {
-        position: { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 },
-        velocity: { x: 0, y: 0 },
-        ownerId: null,
-        height: 0,
-        passTarget: undefined,
-        passStyle: undefined,
-        passStart: undefined,
-        curveMotion: undefined,
-      },
-    };
-  }
-
-  // The conceding team starts the next turn with an actual center-spot kickoff.
-  kicker.position = { x: PITCH_WIDTH / 2, y: PITCH_HEIGHT / 2 };
-  kicker.velocity = { x: 0, y: 0 };
-
-  return {
-    players: resetPlayers,
-    ball: {
-      position: { ...kicker.position },
-      velocity: { x: 0, y: 0 },
-      ownerId: kicker.id,
-      height: 0,
-      passTarget: undefined,
-      passStyle: undefined,
-      passStart: undefined,
-      curveMotion: undefined,
-    },
-  };
-}
-
-export default function OnlineMatch({
-  myRole,
-  p1Team,
-  p2Team,
-  roomCode,
-  turnDeadlineAt,
-  onLeave,
-}: Props) {
+export default function OnlineMatch({ myRole, p1Team, p2Team, roomCode, onLeave }: Props) {
   const myTeamId: "player" | "ai" = myRole === "p1" ? "player" : "ai";
   const myTeam = myRole === "p1" ? p1Team : p2Team;
   const oppTeam = myRole === "p1" ? p2Team : p1Team;
@@ -244,25 +92,21 @@ export default function OnlineMatch({
 
   const [score, setScore] = useState({ p1: 0, p2: 0 });
   const [turn, setTurn] = useState(1);
-  const turnRef = useRef(1);
-  const [maxTurns, setMaxTurns] = useState(MAX_MATCH_TURNS);
+  const [maxTurns] = useState(MAX_MATCH_TURNS);
   const [phase, setPhase] = useState<"planning" | "waiting" | "simulating" | "finished">("planning");
   const phaseRef = useRef<typeof phase>("planning");
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
   const [opponentSubmitted, setOpponentSubmitted] = useState(false);
   const [pendingCommands, setPendingCommands] = useState<Map<string, Command>>(new Map());
-  const [diveTargetMode, setDiveTargetMode] = useState(false);
   const pendingCommandsRef = useRef<Map<string, Command>>(new Map());
   useEffect(() => { pendingCommandsRef.current = pendingCommands; }, [pendingCommands]);
 
   const [currentFrame, setCurrentFrame] = useState<FrameSnapshot | null>(null);
   const [allEvents, setAllEvents] = useState<GameEvent[]>([]);
+  const [defenseMode, setDefenseMode] = useState<"slide" | "stand" | "press" | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [passTargetMode, setPassTargetMode] = useState(false);
-  const [longPassTargetMode, setLongPassTargetMode] = useState(false);
-  // FTA_SHOT_TARGET_MODE
-  const [shotTargetMode, setShotTargetMode] = useState(false);
   const [comboActive, setComboActive] = useState(false);
   const [comboMoveFirst, setComboMoveFirst] = useState(true);
   const [comboStep, setComboStep] = useState<1 | 2>(1);
@@ -274,73 +118,16 @@ export default function OnlineMatch({
   const [opponentLeft, setOpponentLeft] = useState(false);
 
   const animRef = useRef<number | null>(null);
-  const confirmTurnRef = useRef<() => void>(() => {});
-
-  const startTimer = useCallback((deadlineAt?: number) => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    const deadline =
-      typeof deadlineAt === "number" && Number.isFinite(deadlineAt)
-        ? deadlineAt
-        : Date.now() + ONLINE_TURN_TIME * 1000;
-
-    const updateRemaining = () => {
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      if (remaining === 0) {
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = null;
-        if (phaseRef.current === "planning") confirmTurnRef.current();
-      }
-    };
-
-    timerRef.current = setInterval(updateRemaining, 250);
-    updateRemaining();
-  }, []);
-
-  // FTA_PVP4_GOAL_KICKOFF_MAXED_LONGGOAL
-  // A goal is consumed once, then the NEXT server turn starts from a clean kickoff.
-  const pendingKickoffTeamRef = useRef<"player" | "ai" | null>(null);
 
   const clearSelection = useCallback(() => {
+    setDefenseMode(null);
     setSelectedPlayerId(null);
     setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setShotTargetMode(false);
-    setDiveTargetMode(false);
     setComboActive(false);
     setComboStep(1);
     setComboStoredMove(null);
     setComboStoredPass(null);
   }, []);
-
-  const startCombo = useCallback((moveFirst: boolean) => {
-    if (!selectedPlayerId) return;
-    setComboMoveFirst(moveFirst);
-    setComboActive(true);
-    setComboStep(1);
-    setComboStoredMove(null);
-    setComboStoredPass(null);
-    setLongPassTargetMode(false);
-    setPassTargetMode(!moveFirst);
-  }, [selectedPlayerId]);
-
-  const curvePlayer = useMemo(
-    () => players.find((player) => player.id === selectedPlayerId) ?? null,
-    [players, selectedPlayerId],
-  );
-  const commitCurveCommand = useCallback((command: Command) => {
-    if (!selectedPlayerId) return;
-    setPendingCommands((previous) => {
-      const next = new Map(previous);
-      next.set(selectedPlayerId, command);
-      return next;
-    });
-  }, [selectedPlayerId]);
-  const curve = useCurvePlanner({
-    selectedPlayer: curvePlayer,
-    onCommit: commitCurveCommand,
-    onCommitted: clearSelection,
-  });
 
   const stopAnim = useCallback(() => {
     if (animRef.current !== null) {
@@ -350,46 +137,19 @@ export default function OnlineMatch({
   }, []);
 
   // ── Simulation playback ──────────────────────────────────────────────────
-  const finishSimulation = useCallback((
-    lastFrame: FrameSnapshot,
-    goalsDelta: { p1: number; p2: number },
-    completedTurn: number,
-  ) => {
+  const finishSimulation = useCallback((lastFrame: FrameSnapshot, goalsDelta: { p1: number; p2: number }) => {
     const newPlayers = playersRef.current.map(p => {
       const fp = lastFrame.players.find(f => f.id === p.id);
       if (!fp) return p;
       return { ...p, position: { ...fp.position }, velocity: { ...fp.velocity }, state: fp.state, command: null, commandExecuted: false };
     });
-
-    const liveBall: SimBall = {
-      position: { ...lastFrame.ball.position },
-      velocity: { ...lastFrame.ball.velocity },
-      ownerId: lastFrame.ball.ownerId,
-      height: 0,
-      passTarget: undefined,
-      passStyle: undefined,
-      passStart: undefined,
-      curveMotion: undefined,
-    };
-
-    const concedingTeam: "player" | "ai" | null =
-      goalsDelta.p1 > 0
-        ? "ai"
-        : goalsDelta.p2 > 0
-          ? "player"
-          : null;
-
-    // Critical fix: a goal marks a pending restart. The net ball is NEVER
-    // allowed to become the starting ball for the next planning turn.
-    pendingKickoffTeamRef.current = concedingTeam;
-
+    const newBall = { position: { ...lastFrame.ball.position }, velocity: { ...lastFrame.ball.velocity }, ownerId: lastFrame.ball.ownerId, height: 0, passStyle: undefined, passStart: undefined };
     setPlayers(newPlayers);
     playersRef.current = newPlayers;
-    setBall(liveBall);
-    ballRef.current = liveBall;
-    setCurrentFrame(null);
+    setBall(newBall);
+    ballRef.current = newBall;
 
-    getSocket().emit("turn:ready", { goalsDelta, turn: completedTurn });
+    getSocket().emit("turn:ready", { goalsDelta });
     setPendingCommands(new Map());
     setOpponentSubmitted(false);
   }, []);
@@ -397,36 +157,27 @@ export default function OnlineMatch({
   const playbackFrames = useCallback((
     frames: FrameSnapshot[],
     goalsDelta: { p1: number; p2: number },
-    simulationTurn: number,
   ) => {
     let idx = 0;
-    let startedAt: number | null = null;
+    let last = 0;
     const frameMs = 1000 / PLAYBACK_FPS;
     stopAnim();
 
     const animate = (time: number) => {
-      if (startedAt === null) startedAt = time;
-      const targetIndex = Math.min(
-        frames.length,
-        Math.floor((time - startedAt) / frameMs) + 1,
-      );
-      let latestFrame: FrameSnapshot | null = null;
-      const elapsedEvents: GameEvent[] = [];
-
-      while (idx < targetIndex) {
-        latestFrame = frames[idx];
-        if (latestFrame.events.length > 0) elapsedEvents.push(...latestFrame.events);
-        idx += 1;
-      }
-
-      if (latestFrame) setCurrentFrame(latestFrame);
-      if (elapsedEvents.length > 0) {
-        setAllEvents((previous) => [...previous, ...elapsedEvents]);
-      }
-
-      if (idx >= frames.length) {
-        finishSimulation(frames[frames.length - 1], goalsDelta, simulationTurn);
-        return;
+      if (last === 0) last = time;
+      if (time - last >= frameMs) {
+        if (idx < frames.length) {
+          const frame = frames[idx];
+          setCurrentFrame(frame);
+          if (frame.events.length > 0) {
+            setAllEvents(prev => [...prev, ...frame.events]);
+          }
+          idx++;
+          last = time;
+        } else {
+          finishSimulation(frames[frames.length - 1], goalsDelta);
+          return;
+        }
       }
       animRef.current = requestAnimationFrame(animate);
     };
@@ -445,12 +196,10 @@ export default function OnlineMatch({
       p1Commands,
       p2Commands,
       seed,
-      turn: simulationTurn,
     }: {
       p1Commands: [string, Command][];
       p2Commands: [string, Command][];
       seed: number;
-      turn: number;
     }) => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setPhase("simulating");
@@ -470,146 +219,77 @@ export default function OnlineMatch({
       const p2Goals = events.filter(e => e.type === GameEventType.GOAL && e.teamId === "ai").length;
 
       const goalsDelta = { p1: p1Goals, p2: p2Goals };
-      playbackFrames(frames, goalsDelta, simulationTurn);
+      playbackFrames(frames, goalsDelta);
     });
 
-    socket.on("room:resumed", ({
-      turn: resumedTurn,
-      maxTurns: resumedMaxTurns,
-      score: resumedScore,
-      phase: resumedPhase,
-      turnDeadlineAt: resumedDeadline,
-      youSubmitted,
-      opponentSubmitted: resumedOpponentSubmitted,
-      endReason,
-    }: {
-      turn: number;
-      maxTurns: number;
-      score: { p1: number; p2: number };
-      phase: "waiting" | "planning" | "simulating" | "finished";
-      turnDeadlineAt?: number;
-      youSubmitted: boolean;
-      opponentSubmitted: boolean;
-      endReason?: "full_time" | "opponent_left";
-    }) => {
-      setTurn(resumedTurn);
-      turnRef.current = resumedTurn;
-      setMaxTurns(resumedMaxTurns);
-      setScore(resumedScore);
-      setOpponentSubmitted(resumedOpponentSubmitted);
-
-      if (resumedPhase === "finished") {
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = null;
-        setOpponentLeft(endReason === "opponent_left");
-        setPhase("finished");
-        phaseRef.current = "finished";
-        return;
-      }
-
-      if (resumedPhase === "simulating") {
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = null;
-        setPhase("simulating");
-        phaseRef.current = "simulating";
-        return;
-      }
-
-      if (youSubmitted) {
-        if (timerRef.current) clearInterval(timerRef.current);
-        timerRef.current = null;
-        setPhase("waiting");
-        phaseRef.current = "waiting";
-      } else {
-        setPhase("planning");
-        phaseRef.current = "planning";
-        startTimer(resumedDeadline);
-      }
-    });
-
-    socket.on("turn:done", ({ score, turn: nextTurn, maxTurns: mt, turnDeadlineAt: deadline }: {
+    socket.on("turn:done", ({ score, turn: nextTurn, maxTurns: mt }: {
       score: { p1: number; p2: number };
       turn: number;
       maxTurns: number;
-      turnDeadlineAt?: number;
     }) => {
-      const kickoffTeam = pendingKickoffTeamRef.current;
-      if (kickoffTeam) {
-        const restart = resetOnlineKickoff(playersRef.current, kickoffTeam);
-        setPlayers(restart.players);
-        playersRef.current = restart.players;
-        setBall(restart.ball);
-        ballRef.current = restart.ball;
-        setCurrentFrame(null);
-        pendingKickoffTeamRef.current = null;
-
-        // Nothing from the scoring turn survives into the kickoff.
-        const clearedCommands = new Map<string, Command>();
-        setPendingCommands(clearedCommands);
-        pendingCommandsRef.current = clearedCommands;
-        setOpponentSubmitted(false);
-        clearSelection();
-      }
-
       setScore(score);
       setTurn(nextTurn);
-      turnRef.current = nextTurn;
-      setMaxTurns(mt);
       setPhase("planning");
       phaseRef.current = "planning";
-      startTimer(deadline);
+      setTimeLeft(ONLINE_TURN_TIME);
+      startTimer();
+      void mt;
     });
 
-    socket.on("game:over", ({ score: finalScore, endReason }: {
-      score: { p1: number; p2: number };
-      winner: string;
-      endReason?: "full_time" | "opponent_left";
-    }) => {
+    socket.on("game:over", ({ score: finalScore }: { score: { p1: number; p2: number }; winner: string }) => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setScore(finalScore);
-      setOpponentLeft(endReason === "opponent_left");
       setPhase("finished");
       phaseRef.current = "finished";
     });
 
-    socket.on("room:opponent-left", ({ score: finalScore }: {
-      score?: { p1: number; p2: number };
-      winner?: string;
-      endReason?: "full_time" | "opponent_left";
-    }) => {
+    socket.on("room:opponent-left", () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setOpponentLeft(true);
-      if (finalScore) setScore(finalScore);
       setPhase("finished");
-      phaseRef.current = "finished";
     });
 
     return () => {
       socket.off("turn:opponent-submitted");
       socket.off("turn:simulate");
-      socket.off("room:resumed");
       socket.off("turn:done");
       socket.off("game:over");
       socket.off("room:opponent-left");
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playbackFrames, clearSelection, startTimer]);
+  }, [playbackFrames, clearSelection]);
+
+  // ── Turn timer ───────────────────────────────────────────────────────────
+  const confirmTurnRef = useRef<() => void>(() => {});
+
+  const startTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setTimeLeft(ONLINE_TURN_TIME);
+    timerRef.current = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current!);
+          timerRef.current = null;
+          if (phaseRef.current === "planning") confirmTurnRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
 
   // Start timer on mount
   useEffect(() => {
-    startTimer(turnDeadlineAt);
+    startTimer();
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [startTimer, turnDeadlineAt]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const confirmTurn = useCallback(() => {
     if (phaseRef.current !== "planning") return;
     const cmds = [...pendingCommandsRef.current.entries()];
     // Only include my team's commands
     const myCmds = cmds.filter(([id]) => id.startsWith(myTeamId + "_") || playersRef.current.find(p => p.id === id)?.teamId === myTeamId);
-    getSocket().emit("turn:commands", {
-      commands: myCmds,
-      turn: turnRef.current,
-    });
+    getSocket().emit("turn:commands", { commands: myCmds });
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     setPhase("waiting");
     phaseRef.current = "waiting";
@@ -622,26 +302,21 @@ export default function OnlineMatch({
   const handlePlayerClick = useCallback((playerId: string, pos: Vec2) => {
     if (phaseRef.current !== "planning") return;
 
+    if (defenseMode === "press" && selectedPlayerId) {
+      const defender = playersRef.current.find(p => p.id === selectedPlayerId);
+      const opponent = playersRef.current.find(p => p.id === playerId);
+      if (!defender || !opponent || defender.teamId === opponent.teamId) return;
+      const a = posToTile(defender.position), b = posToTile(opponent.position);
+      const reachable = getReachableTiles(a.col, a.row, speedToTiles(defender.stats.speed) + 1, defender.role === "goalkeeper", defender.teamId);
+      if (!reachable.some(t => t.col === b.col && t.row === b.row)) return;
+      setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, { type: CommandType.PRESS, targetPlayerId: playerId }); return n; });
+      clearSelection();
+      return;
+    }
+
     // Only allow clicking own team
     const player = playersRef.current.find(p => p.id === playerId);
     if (player?.teamId !== myTeamId) return;
-
-    if (
-      curve.active &&
-      !curve.baseCommand &&
-      selectedPlayerId &&
-      (passTargetMode || longPassTargetMode)
-    ) {
-      curve.setTargetCommand({
-        type: CommandType.PASS,
-        targetPlayerId: playerId,
-        targetPosition: { ...pos },
-        passStyle: longPassTargetMode ? "long" : "ground",
-      });
-      setPassTargetMode(false);
-      setLongPassTargetMode(false);
-      return;
-    }
 
     if (comboActive && selectedPlayerId) {
       if (comboMoveFirst && comboStep === 2) {
@@ -662,13 +337,8 @@ export default function OnlineMatch({
       }
     }
 
-    if ((passTargetMode || longPassTargetMode) && selectedPlayerId) {
-      const cmd: Command = {
-        type: CommandType.PASS,
-        targetPlayerId: playerId,
-        targetPosition: { ...pos },
-        passStyle: longPassTargetMode ? "long" : "ground",
-      };
+    if (passTargetMode && selectedPlayerId) {
+      const cmd: Command = { type: CommandType.PASS, targetPlayerId: playerId, targetPosition: { ...pos } };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
       clearSelection();
       return;
@@ -679,92 +349,19 @@ export default function OnlineMatch({
     } else {
       setSelectedPlayerId(playerId);
       setPassTargetMode(false);
-      setLongPassTargetMode(false);
-      setShotTargetMode(false);
-      setDiveTargetMode(false);
       setComboActive(false);
       setComboStep(1);
       setComboStoredMove(null);
       setComboStoredPass(null);
     }
-  }, [passTargetMode, longPassTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, myTeamId, curve]);
+  }, [defenseMode, passTargetMode, selectedPlayerId, clearSelection, comboActive, comboMoveFirst, comboStep, comboStoredMove, myTeamId]);
 
   const handleTileClick = useCallback((pos: Vec2, _isEnemy: boolean) => {
     if (phaseRef.current !== "planning" || !selectedPlayerId) return;
 
-    // FTA_GK_DIVE_TARGET_V4
-    if (diveTargetMode) {
-      const cmd: Command = { type: CommandType.DIVE, targetPosition: pos };
-      setPendingCommands(prev => {
-        const next = new Map(prev);
-        next.set(selectedPlayerId, cmd);
-        return next;
-      });
-      setDiveTargetMode(false);
+    if (defenseMode === "slide" || defenseMode === "stand") {
+      setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, { type: defenseMode === "slide" ? CommandType.SLIDE : CommandType.STAND_TACKLE, targetPosition: pos }); return n; });
       clearSelection();
-      return;
-    }
-
-    if (shotTargetMode) {
-      const selected =
-        currentFrame?.players.find((player) => player.id === selectedPlayerId) ??
-        playersRef.current.find((player) => player.id === selectedPlayerId);
-      if (!selected) return;
-
-      const attackingRight = selected.teamId === "player";
-      const fallbackX = attackingRight
-        ? PITCH_WIDTH + GOAL_DEPTH * 0.65
-        : -GOAL_DEPTH * 0.65;
-      const target = {
-        x: attackingRight
-          ? Math.max(
-              PITCH_WIDTH + BALL_RADIUS,
-              Math.min(PITCH_WIDTH + GOAL_DEPTH - BALL_RADIUS, pos.x > PITCH_WIDTH ? pos.x : fallbackX),
-            )
-          : Math.min(
-              -BALL_RADIUS,
-              Math.max(-GOAL_DEPTH + BALL_RADIUS, pos.x < 0 ? pos.x : fallbackX),
-            ),
-        y: Math.max(
-          GOAL_TOP_Y + BALL_RADIUS,
-          Math.min(GOAL_TOP_Y + GOAL_WIDTH - BALL_RADIUS, pos.y),
-        ),
-      };
-
-      if (curve.active) {
-        curve.setTargetCommand({
-          type: CommandType.SHOOT,
-          targetPosition: target,
-        });
-        setShotTargetMode(false);
-        return;
-      }
-
-      setPendingCommands((previous) => {
-        const next = new Map(previous);
-        next.set(selectedPlayerId, {
-          type: CommandType.SHOOT,
-          targetPosition: target,
-        });
-        return next;
-      });
-      setShotTargetMode(false);
-      clearSelection();
-      return;
-    }
-
-    if (curve.active && !curve.baseCommand) {
-      curve.setTargetCommand(
-        passTargetMode || longPassTargetMode
-          ? {
-              type: CommandType.PASS,
-              targetPosition: pos,
-              passStyle: longPassTargetMode ? "long" : "ground",
-            }
-          : { type: CommandType.MOVE, targetPosition: pos },
-      );
-      setPassTargetMode(false);
-      setLongPassTargetMode(false);
       return;
     }
 
@@ -786,7 +383,7 @@ export default function OnlineMatch({
       } else if (comboStep === 1) {
         setComboStoredPass({ targetPosition: pos });
         setComboStep(2);
-        setPassTargetMode(false);
+        setPassTargetMode(true);
       } else {
         const cmd: Command = {
           type: CommandType.PASS,
@@ -799,54 +396,24 @@ export default function OnlineMatch({
       return;
     }
 
-    if (passTargetMode || longPassTargetMode) {
-      const cmd: Command = {
-        type: CommandType.PASS,
-        targetPosition: pos,
-        passStyle: longPassTargetMode ? "long" : "ground",
-      };
+    if (passTargetMode) {
+      const cmd: Command = { type: CommandType.PASS, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     } else {
       const cmd: Command = { type: CommandType.MOVE, targetPosition: pos };
       setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, cmd); return n; });
     }
     clearSelection();
-  }, [selectedPlayerId, passTargetMode, longPassTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection, curve]);
+  }, [defenseMode, selectedPlayerId, passTargetMode, comboActive, comboMoveFirst, comboStep, comboStoredMove, comboStoredPass, clearSelection]);
 
   const setShoot = useCallback(() => {
     if (!selectedPlayerId) return;
-    setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setDiveTargetMode(false);
-    setShotTargetMode(true);
-  }, [selectedPlayerId]);
-  const setPass = useCallback(() => {
-    if (!selectedPlayerId) return;
-    if (curve.active) curve.beginAction("groundPass");
-    setLongPassTargetMode(false);
-    setPassTargetMode(true);
-  }, [selectedPlayerId, curve]);
-  const setLongPass = useCallback(() => {
-    if (!selectedPlayerId) return;
-    if (curve.active) curve.beginAction("longPass");
-    setPassTargetMode(false);
-    setLongPassTargetMode(true);
-  }, [selectedPlayerId, curve]);
-  const cancelAction = useCallback(() => {
-    curve.reset();
+    setPendingCommands(prev => { const n = new Map(prev); n.set(selectedPlayerId, { type: CommandType.SHOOT }); return n; });
     clearSelection();
-  }, [clearSelection, curve]);
-  const toggleCurve = useCallback(() => {
-    if (!selectedPlayerId) return;
-    if (!curve.active) {
-      setPassTargetMode(false);
-      setLongPassTargetMode(false);
-      setComboActive(false);
-      curve.arm();
-      return;
-    }
-    curve.handleCurveButton();
-  }, [selectedPlayerId, curve]);
+  }, [selectedPlayerId, clearSelection]);
+
+  const setPass = useCallback(() => { if (selectedPlayerId) setPassTargetMode(true); }, [selectedPlayerId]);
+  const cancelAction = useCallback(() => clearSelection(), [clearSelection]);
 
   // ── Derived values ────────────────────────────────────────────────────────
   const displayFrame = currentFrame ?? {
@@ -860,14 +427,14 @@ export default function OnlineMatch({
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      ability: p.ability,
-      tileRange: movementToTiles(p.stats.movement, p.ability),
+      tileRange: speedToTiles(p.stats.speed),
     })),
     ball: { position: { ...ball.position }, velocity: { ...ball.velocity }, ownerId: ball.ownerId, height: ball.height ?? 0, passStyle: ball.passStyle },
     events: [],
   };
 
   const selectedPlayer = selectedPlayerId ? players.find(p => p.id === selectedPlayerId) : null;
+  const defending = !!selectedPlayer && !!ball.ownerId && players.find(p => p.id === ball.ownerId)?.teamId !== selectedPlayer.teamId;
   const myScore = myRole === "p1" ? score.p1 : score.p2;
   const oppScore = myRole === "p1" ? score.p2 : score.p1;
 
@@ -876,29 +443,10 @@ export default function OnlineMatch({
 
   const tileSize = isMobile ? 32 : 40;
 
-  const selectedSimPlayer = selectedPlayerId
-    ? currentFrame?.players.find((player) => player.id === selectedPlayerId) ??
-      players.find((player) => player.id === selectedPlayerId) ??
-      null
-    : null;
-
-  const goalkeeperCanDive =
-    !!selectedSimPlayer &&
-    selectedSimPlayer.role === "goalkeeper" &&
-    (currentFrame?.ball.ownerId ?? ball.ownerId) !== selectedSimPlayer.id;
-
-  const beginGoalkeeperDive = useCallback(() => {
-    if (!selectedPlayerId || !goalkeeperCanDive) return;
-    setShotTargetMode(false);
-    setPassTargetMode(false);
-    setLongPassTargetMode(false);
-    setDiveTargetMode(true);
-  }, [selectedPlayerId, goalkeeperCanDive]);
-
   return (
-    <div className="relative h-[100dvh] min-h-0 flex flex-col overflow-hidden" style={{ background: "#070b14" }}>
+    <div className="relative min-h-screen flex flex-col" style={{ background: "#070b14" }}>
       {/* Top bar */}
-      <div className="flex items-center justify-between px-2 sm:px-3 py-1.5 sm:py-2 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
+      <div className="flex items-center justify-between px-3 py-2 flex-shrink-0" style={{ background: "rgba(255,255,255,0.04)" }}>
         <div className="flex flex-col items-center min-w-[80px]">
           <span className="text-xs font-semibold" style={{ color: p1Team.jerseyColor }}>
             {p1Team.crestIcon ?? "⚽"} {p1Team.name}
@@ -934,27 +482,18 @@ export default function OnlineMatch({
       </div>
 
       {/* Pitch */}
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center overflow-hidden">
+      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden">
         <PitchCanvas
           frame={displayFrame}
-          playerTeam={{
-            jerseyColor: myTeam.jerseyColor,
-            secondaryColor: myTeam.secondaryColor ?? "#ffffff",
-            kitStyle: myTeam.kitStyle ?? deriveKitStyle(myTeam.name),
-            sleeveStyle: myTeam.sleeveStyle ?? deriveSleeveStyle(myTeam.name),
-          } as any}
+          playerTeam={{ jerseyColor: myTeam.jerseyColor, secondaryColor: myTeam.secondaryColor } as any}
           aiTeamColor={oppTeam.jerseyColor}
           aiTeamSecondaryColor={oppTeam.secondaryColor}
-          aiTeamKitStyle={oppTeam.kitStyle ?? deriveKitStyle(oppTeam.name)}
-          aiTeamSleeveStyle={oppTeam.sleeveStyle ?? deriveSleeveStyle(oppTeam.name)}
           pendingCommands={pendingCommands}
           selectedPlayerId={selectedPlayerId}
+          defenseMode={defenseMode}
           onPlayerClick={handlePlayerClick}
           onTileClick={handleTileClick}
-          onCurvePointClick={curve.addControl}
-          passTargetMode={passTargetMode || longPassTargetMode || shotTargetMode || diveTargetMode}
-          curveDraft={curve.preview}
-          curveControlMode={curve.placingControls}
+          passTargetMode={passTargetMode}
           phase={phase === "waiting" ? "planning" : phase === "finished" ? "finished" : phase as "planning" | "simulating"}
           activePlanningTeam={myTeamId}
           isVertical={isMobile}
@@ -974,56 +513,56 @@ export default function OnlineMatch({
           {oppTeam.name} is ready — finish your plan!
         </div>
       )}
-      {phase === "planning" && (shotTargetMode || diveTargetMode) && (
-        <div
-          role="status"
-          className="flex items-center justify-center px-3 py-1.5 text-center text-xs font-semibold"
-          style={{
-            background: diveTargetMode ? "rgba(34,211,238,0.12)" : "rgba(239,68,68,0.12)",
-            color: diveTargetMode ? "#a5f3fc" : "#fecaca",
-          }}
-        >
-          {diveTargetMode
-            ? "Tap a tile to choose where your goalkeeper dives."
-            : selectedPlayer?.cardId === "lebron_james" &&
-                (selectedPlayer.teamId === "player"
-                  ? selectedPlayer.position.x < PITCH_WIDTH / 2
-                  : selectedPlayer.position.x > PITCH_WIDTH / 2)
-              ? "Tap the goal to launch LeBron’s wildly inaccurate logo shot."
-              : "Tap the goal to aim your shot."}
-        </div>
-      )}
 
       {/* Action bar */}
-      <div
-        className="flex-shrink-0 px-1.5 sm:px-2 pt-1 sm:pt-2 text-[11px] sm:text-sm"
-        style={{
-          background: "rgba(255,255,255,0.03)",
-          paddingBottom: "max(8px, env(safe-area-inset-bottom))",
-        }}
-      >
-        {phase === "planning" && !comboActive && (
-          <MechanicPad
-            onCancel={cancelAction}
-            onPass={setPass}
-            onLongPass={setLongPass}
-            onMovePass={() => { curve.reset(); startCombo(true); }}
-            onPassMove={() => { curve.reset(); startCombo(false); }}
-            onShoot={setShoot}
-              goalkeeperCanDive={goalkeeperCanDive}
-              onDive={beginGoalkeeperDive}
-            onCurve={toggleCurve}
-            curveActive={curve.active}
-            curveCanFinish={curve.canFinish}
-            curvePointCount={curve.controls.length}
-            curvePointLimit={curve.limit}
-            actionsDisabled={curve.placingControls}
-            active={!!selectedPlayerId}
-          />
+      <div className="flex-shrink-0 px-3 py-2" style={{ background: "rgba(255,255,255,0.03)" }}>
+        {/* Combo banner */}
+        {comboActive && (
+          <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#a78bfa" }}>
+            Combo Step {comboStep}/2 · {comboMoveFirst ? "Move → Pass" : "Pass → Move"}
+          </div>
+        )}
+        {!comboActive && passTargetMode && (
+          <div className="text-center text-xs mb-2 font-semibold" style={{ color: "#38bdf8" }}>
+            Tap a tile or player to pass
+          </div>
         )}
 
-        {comboActive && phase === "planning" && (
-          <div className="h-[56px] flex items-center justify-center">
+        {/* Hint text */}
+        <p className="text-center text-xs mb-2" style={{ color: "rgba(255,255,255,0.3)" }}>
+          {phase === "planning" && selectedPlayerId && !passTargetMode && !comboActive && "Tap green tile to move · ⚔ orange = tackle"}
+          {phase === "planning" && !comboActive && passTargetMode && "Tap a tile or player to pass"}
+          {phase === "planning" && comboActive && comboMoveFirst && comboStep === 1 && "Tap destination tile to move to"}
+          {phase === "planning" && comboActive && comboMoveFirst && comboStep === 2 && "Now tap pass target (tile or player)"}
+          {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 1 && "Tap pass target (tile or player)"}
+          {phase === "planning" && comboActive && !comboMoveFirst && comboStep === 2 && "Now tap move destination tile"}
+          {phase === "waiting" && `Submitted! Waiting for ${oppTeam.name}…`}
+          {phase === "simulating" && "Simulating…"}
+        </p>
+
+        {selectedPlayerId && phase === "planning" && defending && (
+          <div className="px-3 pt-2 text-center">
+            <div className="flex justify-center gap-2">
+              <button onClick={() => setDefenseMode("slide")} className="flex-1 rounded-xl bg-orange-600 px-2 py-2 text-xs font-bold text-white" aria-pressed={defenseMode === "slide"}>🦵 Slide</button>
+              <button onClick={() => setDefenseMode("stand")} className="flex-1 rounded-xl bg-red-700 px-2 py-2 text-xs font-bold text-white" aria-pressed={defenseMode === "stand"}>🛡️ Stand</button>
+              <button onClick={() => setDefenseMode("press")} className="flex-1 rounded-xl bg-blue-700 px-2 py-2 text-xs font-bold text-white" aria-pressed={defenseMode === "press"}>🎯 Press</button>
+              <button onClick={cancelAction} className="rounded-xl bg-gray-700 px-3 text-white">✕</button>
+            </div>
+            {defenseMode && <div className="py-1 text-xs text-white">{defenseMode === "press" ? "Tap an opponent within range" : defenseMode === "stand" ? "Tap an adjacent tile" : "Tap a tile at least two tiles away"}</div>}
+          </div>
+        )}
+        {/* Player action buttons */}
+        {selectedPlayerId && phase === "planning" && !defending && !passTargetMode && !comboActive && (
+          <div className="flex gap-2 mb-2 justify-center">
+            <button onClick={setPass} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#1d4ed8", color: "#fff" }}>Pass</button>
+            <button onClick={setShoot} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#b45309", color: "#fff" }}>Shoot</button>
+            <button onClick={() => { setComboMoveFirst(true); setComboActive(true); setComboStep(1); }} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#7c3aed", color: "#fff" }}>Move+Pass</button>
+            <button onClick={() => { setComboMoveFirst(false); setComboActive(true); setComboStep(1); setPassTargetMode(true); }} className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: "#0f766e", color: "#fff" }}>Pass+Move</button>
+          </div>
+        )}
+
+        {(selectedPlayerId || comboActive || passTargetMode) && phase === "planning" && (
+          <div className="flex justify-center mb-2">
             <button onClick={cancelAction} className="px-3 py-1 rounded-lg text-xs" style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}>Cancel</button>
           </div>
         )}

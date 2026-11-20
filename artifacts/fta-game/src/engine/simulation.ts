@@ -5,8 +5,6 @@ import type {
   FrameSnapshot,
   GameEvent,
   Vec2,
-  PlayerStats,
-  DuelEffectSnapshot,
 } from "./types";
 import { PlayerState, CommandType, GameEventType } from "./types";
 import {
@@ -18,7 +16,6 @@ import {
   PASS_SPEED,
   SHOT_SPEED,
   PASS_WIND_UP,
-  LONG_PASS_WIND_UP,
   PASS_RECOVERY,
   SHOT_WIND_UP,
   SHOT_RECOVERY,
@@ -30,7 +27,6 @@ import {
   GOAL_RIGHT_X,
   GOAL_DEPTH,
   PLAYER_RADIUS,
-  GOALKEEPER_REACH_TILES,
   TILE_W,
   TILE_H,
   GK_COLS_PLAYER_MIN,
@@ -40,19 +36,8 @@ import {
   GRID_COLS,
   GRID_ROWS,
   getLinearPixelSpeed,
-  movementToTiles,
-  goalkeeperColumnBounds,
-  isGoalkeeperAbility,
-  BALL_RADIUS,
 } from "./constants";
 import { posToTile, tileToPos } from "./grid";
-import {
-  advanceCurveMotion,
-  createCurveMotion,
-  curveMotionProgress,
-  curvePointLimitForCommand,
-  sanitizeCurvePoints,
-} from "./curve";
 
 function vec2Add(a: Vec2, b: Vec2): Vec2 {
   return { x: a.x + b.x, y: a.y + b.y };
@@ -78,116 +63,6 @@ function vec2Dot(a: Vec2, b: Vec2): number {
   return a.x * b.x + a.y * b.y;
 }
 
-type BallCurveKind = "ground" | "long" | "shot";
-
-function sanitizeBallCurve(
-  start: Vec2,
-  rawPoints: Vec2[] | undefined,
-  finalTarget: Vec2,
-  curveStat: number,
-  kind: BallCurveKind,
-): Vec2[] | undefined {
-  if (!rawPoints || rawPoints.length < 2) return undefined;
-
-  const direct = vec2Sub(finalTarget, start);
-  const directLength = vec2Len(direct);
-  if (directLength < 8) return undefined;
-
-  const forward = vec2Normalize(direct);
-  const normal = { x: -forward.y, y: forward.x };
-  const quality = clamp((curveStat - 1) / 9, 0, 1);
-  const tile = Math.max(TILE_W, TILE_H);
-
-  // Ball actions stay football-realistic. Movement and dribbling never call
-  // this function, so their drawn routes remain unrestricted.
-  const maxLateralTiles =
-    kind === "ground"
-      ? 0.35 + quality * 0.75
-      : kind === "long"
-        ? 0.45 + quality * 0.95
-        : 0.25 + quality * 0.65;
-  const maxRelativeBend = kind === "shot" ? 0.22 : kind === "ground" ? 0.28 : 0.32;
-  const maxLateral = Math.min(
-    maxLateralTiles * tile,
-    directLength * maxRelativeBend,
-  );
-
-  const points = rawPoints.map((point) => ({ ...point }));
-
-  const legal: Vec2[] = [];
-  let bendSide = 0;
-  let lastProgress = 0;
-
-  for (let index = 0; index < points.length; index += 1) {
-    const point = points[index];
-    const relative = vec2Sub(point, start);
-    const expected = (index + 1) / (points.length + 1);
-    const projected = vec2Dot(relative, forward);
-    const minProgress = Math.min(
-      directLength * 0.9,
-      Math.max(lastProgress + 3, directLength * Math.max(0.06, expected - 0.13)),
-    );
-    const maxProgress = Math.max(
-      minProgress,
-      directLength * Math.min(0.94, expected + 0.13),
-    );
-    const progress = clamp(projected, minProgress, maxProgress);
-
-    let lateral = clamp(vec2Dot(relative, normal), -maxLateral, maxLateral);
-    const pointSide = Math.sign(lateral);
-    if (bendSide === 0 && pointSide !== 0) bendSide = pointSide;
-    if (bendSide !== 0 && pointSide !== 0 && pointSide !== bendSide) lateral = 0;
-
-    legal.push({
-      x: clamp(
-        start.x + forward.x * progress + normal.x * lateral,
-        -GOAL_DEPTH,
-        PITCH_WIDTH + GOAL_DEPTH,
-      ),
-      y: clamp(
-        start.y + forward.y * progress + normal.y * lateral,
-        0,
-        PITCH_HEIGHT,
-      ),
-    });
-    lastProgress = progress;
-  }
-
-  if (legal.length < 2) return undefined;
-
-  // A final route-length guard prevents giant hooks even when every individual
-  // handle is technically forward-facing.
-  let routeLength = 0;
-  let previous = start;
-  for (const point of legal) {
-    routeLength += vec2Dist(previous, point);
-    previous = point;
-  }
-  routeLength += vec2Dist(previous, finalTarget);
-  const maxRatio = kind === "shot" ? 1.16 : kind === "ground" ? 1.22 : 1.28;
-  if (routeLength > directLength * maxRatio) {
-    const shrink = clamp((directLength * maxRatio) / routeLength, 0.35, 1);
-    for (let index = 0; index < legal.length; index += 1) {
-      const relative = vec2Sub(legal[index], start);
-      const progress = vec2Dot(relative, forward);
-      const lateral = vec2Dot(relative, normal) * shrink;
-      legal[index] = {
-        x: clamp(
-          start.x + forward.x * progress + normal.x * lateral,
-          -GOAL_DEPTH,
-          PITCH_WIDTH + GOAL_DEPTH,
-        ),
-        y: clamp(
-          start.y + forward.y * progress + normal.y * lateral,
-          0,
-          PITCH_HEIGHT,
-        ),
-      };
-    }
-  }
-
-  return legal;
-}
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
@@ -197,40 +72,43 @@ export function getOffsidePlayers(players: SimPlayer[]): Set<string> {
   const aiTeam = players.filter((p) => p.teamId === "ai");
   const offside = new Set<string>();
 
-  // Baller-League attacking-third rule still applies. The defender now sets
-  // the line at the GOAL-SIDE EDGE of their tile, not at their centre. An
-  // attacker sharing that tile remains onside until their body crosses the
-  // leading edge nearest the goal.
+  // Offside only applies inside the attacking third (Baller League rules):
+  //   player team attacks rightward → offside zone: x > 2/3 of pitch
+  //   AI team attacks leftward      → offside zone: x < 1/3 of pitch
+  // The middle third is a free zone — no offside there.
   const ATTACK_LINE = (PITCH_WIDTH * 2) / 3;
   const DEFEND_LINE = PITCH_WIDTH / 3;
-  const EPSILON = 0.001;
 
+  // Player team: offside only when past the 2/3 line AND ahead of 2nd-to-last AI defender.
   if (aiTeam.length > 0) {
     const sortedAI = [...aiTeam].sort((a, b) => b.position.x - a.position.x);
-    const defender = sortedAI.length >= 2 ? sortedAI[1] : sortedAI[0];
-    const defenderTile = posToTile(defender.position);
-    const lineX = (defenderTile.col + 1) * TILE_W;
+    const lineX =
+      sortedAI.length >= 2 ? sortedAI[1].position.x : sortedAI[0].position.x;
     for (const p of playerTeam) {
       if (
         p.role !== "goalkeeper" &&
         p.position.x > ATTACK_LINE &&
-        p.position.x > lineX + EPSILON
+        p.position.x > lineX
       ) {
         offside.add(p.id);
       }
     }
   }
 
+  // AI team: offside only when past the 1/3 line AND ahead of 2nd-to-last player defender.
   if (playerTeam.length > 0) {
-    const sortedPlayer = [...playerTeam].sort((a, b) => a.position.x - b.position.x);
-    const defender = sortedPlayer.length >= 2 ? sortedPlayer[1] : sortedPlayer[0];
-    const defenderTile = posToTile(defender.position);
-    const lineX = defenderTile.col * TILE_W;
+    const sortedPlayer = [...playerTeam].sort(
+      (a, b) => a.position.x - b.position.x,
+    );
+    const lineX =
+      sortedPlayer.length >= 2
+        ? sortedPlayer[1].position.x
+        : sortedPlayer[0].position.x;
     for (const p of aiTeam) {
       if (
         p.role !== "goalkeeper" &&
         p.position.x < DEFEND_LINE &&
-        p.position.x < lineX - EPSILON
+        p.position.x < lineX
       ) {
         offside.add(p.id);
       }
@@ -260,8 +138,11 @@ function retreatFrom(loser: SimPlayer, winner: SimPlayer): void {
 
   // GK must stay in their zone even when retreating
   if (loser.role === "goalkeeper") {
-    const bounds = goalkeeperColumnBounds(loser.teamId, loser.ability);
-    retreatCol = clamp(retreatCol, bounds.min, bounds.max);
+    if (loser.teamId === "player") {
+      retreatCol = clamp(retreatCol, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+    } else {
+      retreatCol = clamp(retreatCol, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+    }
   }
 
   loser.position = tileToPos(retreatCol, retreatRow);
@@ -317,29 +198,22 @@ function carrierKeepChance(carrier: SimPlayer, defender: SimPlayer): number {
 }
 
 function noBallTileWinChance(a: SimPlayer, b: SimPlayer): number {
-  const difference = physiqueStat(a) - physiqueStat(b);
-  let chance = 0.5 + difference * 0.075;
-  if (a.ability === "powerhouse") chance += 0.07;
-  if (b.ability === "powerhouse") chance -= 0.07;
-  return clamp(chance, 0.05, 0.95);
+  const aPhys = physiqueStat(a);
+  const bPhys = physiqueStat(b);
+  if (aPhys === bPhys) return 0.5;
+  return aPhys > bPhys ? 0.85 : 0.15;
 }
 
-function endPlannedContribution(player: SimPlayer): void {
-  player.command = null;
-  player.commandExecuted = true;
-  player.curveMotion = undefined;
-  player.velocity = { x: 0, y: 0 };
-  player.state = PlayerState.RECOVERING;
-  player.recoveryTimer = Math.max(player.recoveryTimer, 0.45);
-}
-function clampGKTarget(
-  target: Vec2,
-  teamId: "player" | "ai",
-  ability?: string,
-): Vec2 {
+// Clamp target tile for GK role
+function clampGKTarget(target: Vec2, teamId: "player" | "ai"): Vec2 {
   const t = posToTile(target);
-  const bounds = goalkeeperColumnBounds(teamId, ability);
-  return tileToPos(clamp(t.col, bounds.min, bounds.max), t.row);
+  let col = t.col;
+  if (teamId === "player") {
+    col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+  } else {
+    col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+  }
+  return tileToPos(col, t.row);
 }
 
 interface BallTracker {
@@ -351,79 +225,8 @@ interface BallTracker {
   offsideIds: Set<string>;
 }
 
-interface ActiveDuelEffect extends Omit<DuelEffectSnapshot, "progress"> {
-  startTick: number;
-  durationTicks: number;
-}
-
-function duelDirection(from: Vec2, to: Vec2): Vec2 {
-  const direction = vec2Normalize(vec2Sub(to, from));
-  return vec2Len(direction) > 0 ? direction : { x: 1, y: 0 };
-}
-
-function normalizeSimulationCommand(
-  player: SimPlayer,
-  command: Command | null,
-): Command | null {
-  if (!command) return null;
-  const targetPosition = command.targetPosition
-    ? { ...command.targetPosition }
-    : undefined;
-
-  // Do not tame MOVE curves here. This preserves intentionally wild dribbles
-  // and off-ball movement. Passes, long balls and shots are constrained only
-  // when the ball is actually kicked.
-  const curvePoints = sanitizeCurvePoints(
-    command.curvePoints,
-    curvePointLimitForCommand(player.stats, command),
-  );
-
-  return {
-    ...command,
-    targetPosition,
-    curvePoints: curvePoints.length >= 2 ? curvePoints : undefined,
-    followUp: command.followUp
-      ? (normalizeSimulationCommand(player, command.followUp) ?? undefined)
-      : undefined,
-  };
-}
-function distancePointToSegment(point: Vec2, start: Vec2, end: Vec2): number {
-  const segment = vec2Sub(end, start);
-  const lengthSq = vec2Dot(segment, segment);
-  if (lengthSq <= 0.0001) return vec2Dist(point, start);
-  const t = clamp(vec2Dot(vec2Sub(point, start), segment) / lengthSq, 0, 1);
-  return vec2Dist(point, vec2Add(start, vec2Scale(segment, t)));
-}
-
-function resolveGoalPostCollision(ball: SimBall, previousPosition: Vec2): boolean {
-  if (ball.ownerId !== null || vec2Len(ball.velocity) < 1) return false;
-  const postRadius = 4.5;
-  const contactRadius = BALL_RADIUS + postRadius;
-  const posts: Vec2[] = [
-    { x: GOAL_LEFT_X, y: GOAL_TOP_Y },
-    { x: GOAL_LEFT_X, y: GOAL_BOTTOM_Y },
-    { x: GOAL_RIGHT_X, y: GOAL_TOP_Y },
-    { x: GOAL_RIGHT_X, y: GOAL_BOTTOM_Y },
-  ];
-
-  for (const post of posts) {
-    if (distancePointToSegment(post, previousPosition, ball.position) > contactRadius) continue;
-    let normal = vec2Normalize(vec2Sub(ball.position, post));
-    if (vec2Len(normal) < 0.01) normal = vec2Normalize(vec2Scale(ball.velocity, -1));
-    const incoming = ball.velocity;
-    ball.velocity = vec2Scale(
-      vec2Sub(incoming, vec2Scale(normal, 2 * vec2Dot(incoming, normal))),
-      0.72,
-    );
-    ball.position = vec2Add(post, vec2Scale(normal, contactRadius + 0.75));
-    ball.passTarget = undefined;
-    ball.passStart = undefined;
-    ball.curveMotion = undefined;
-    ball.travelSpeed = undefined;
-    ball.flightPeakHeight = undefined;
-    return true;
-  }
-  return false;
+export function speedToTiles(speed: number): number {
+  return Math.ceil(Math.max(1, Math.min(10, speed)) / 2);
 }
 
 export function runSimulation(
@@ -442,23 +245,27 @@ export function runSimulation(
     offsideIds: new Set(),
   };
 
-  const simPlayers: SimPlayer[] = players.map((source) => {
-    const legacyLuck = (source.stats as PlayerStats & { luck?: number }).luck;
-    const player: SimPlayer = {
-      ...source,
-      stats: {
-        ...source.stats,
-        movement: statValue(source.stats.movement, statValue(legacyLuck, 5)),
-      },
-      position: { ...source.position },
-      velocity: { ...source.velocity },
-      command: null,
-      curveMotion: undefined,
-      diveMotion: undefined,
-    };
-    player.command = normalizeSimulationCommand(player, source.command);
-    return player;
-  });
+  const simPlayers: SimPlayer[] = players.map((p) => ({
+    ...p,
+    position: { ...p.position },
+    velocity: { ...p.velocity },
+    command: p.command
+      ? {
+          ...p.command,
+          targetPosition: p.command.targetPosition
+            ? { ...p.command.targetPosition }
+            : undefined,
+          followUp: p.command.followUp
+            ? {
+                ...p.command.followUp,
+                targetPosition: p.command.followUp.targetPosition
+                  ? { ...p.command.followUp.targetPosition }
+                  : undefined,
+              }
+            : undefined,
+        }
+      : null,
+  }));
 
   const simBall: SimBall = {
     position: { ...ball.position },
@@ -469,14 +276,6 @@ export function runSimulation(
     height: ball.height ?? 0,
     passStyle: ball.passStyle,
     passStart: ball.passStart ? { ...ball.passStart } : undefined,
-    curveMotion: ball.curveMotion
-      ? {
-          ...ball.curveMotion,
-          points: ball.curveMotion.points.map((point) => ({ ...point })),
-        }
-      : undefined,
-    travelSpeed: ball.travelSpeed,
-    flightPeakHeight: ball.flightPeakHeight,
   };
 
   // Snap all players to tile centers at start of turn
@@ -499,24 +298,21 @@ export function runSimulation(
     ) {
       p.command = {
         ...p.command,
-        targetPosition: clampGKTarget(p.command.targetPosition, p.teamId, p.ability),
+        targetPosition: clampGKTarget(p.command.targetPosition, p.teamId),
       };
     }
   }
 
+  // Per-turn defensive state is local to the simulation so replay and online
+  // clients resolve the same commands from the same seed.
+  const defense = new Map(simPlayers.map(p => [p.id, {
+    origin: { ...p.position }, travelled: 0, active: false, triggered: false, remaining: 0,
+  }]));
+
   // Run for TICKS_PER_TURN, but extend while a pass is still in flight so the
   // ball always reaches its destination within the same turn. Safety ceiling at
   // 5× the normal budget to prevent runaway loops.
-  // FTA_PHASE_RESOLUTION_V3
-  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 12;
-  let stalledTicks = 0;
-  let previousPositions = new Map(
-    simPlayers.map((player) => [player.id, { ...player.position }]),
-  );
-  const activeDuelEffects: ActiveDuelEffect[] = [];
-  const lastDuelEffectTick = new Map<string, number>();
-  let duelEffectSerial = 0;
-  let lastPostHitTick = -999;
+  const ABSOLUTE_MAX_TICKS = TICKS_PER_TURN * 5;
   for (let tick = 0; tick < ABSOLUTE_MAX_TICKS; tick++) {
     const tickEvents: GameEvent[] = [];
 
@@ -528,20 +324,22 @@ export function runSimulation(
       tick,
       passTracker,
       rng,
+      defense,
     );
-    const previousBallPosition = { ...simBall.position };
     updateBallPhysics(simBall, DELTA);
-    if (tick - lastPostHitTick > 5 && resolveGoalPostCollision(simBall, previousBallPosition)) {
-      lastPostHitTick = tick;
-      tickEvents.push({
-        type: GameEventType.POST_HIT,
-        tick,
-        teamId: passTracker.teamId ?? undefined,
-        playerId: passTracker.playerId ?? undefined,
-        message: "Off the post!",
-      });
-    }
-    const goalResult = checkGoal(simBall, previousBallPosition);
+    detectAndResolveEvents(
+      simPlayers,
+      simBall,
+      tick,
+      tickEvents,
+      rng,
+      passTracker,
+      defense,
+    );
+    constrainToField(simPlayers, simBall);
+    separateOverlapping(simPlayers, simBall, rng);
+
+    const goalResult = checkGoal(simBall);
     if (goalResult) {
       tickEvents.push({
         type: GameEventType.GOAL,
@@ -553,116 +351,18 @@ export function runSimulation(
             : "GOAL! Opponent scores!",
       });
       allEvents.push(...tickEvents);
-      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
+      frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
       break;
     }
-    detectAndResolveEvents(
-      simPlayers,
-      simBall,
-      tick,
-      tickEvents,
-      rng,
-      passTracker,
-    );
-    constrainToField(simPlayers, simBall);
-    separateOverlapping(simPlayers, simBall, rng, tickEvents, tick);
-
-    for (const event of tickEvents) {
-      if (!event.visualEffect || !event.effectPosition || !event.effectDirection) continue;
-      const pair = [event.playerId ?? "", event.targetId ?? ""].sort().join(":");
-      const cooldownKey = `${event.visualEffect}:${pair}`;
-      const durationTicks = event.visualEffect === "outmuscled" ? 9 : 11;
-      const previousTick = lastDuelEffectTick.get(cooldownKey) ?? -999;
-      if (tick - previousTick < durationTicks) continue;
-      lastDuelEffectTick.set(cooldownKey, tick);
-      activeDuelEffects.push({
-        id: `duel-${tick}-${duelEffectSerial++}`,
-        kind: event.visualEffect,
-        position: { ...event.effectPosition },
-        direction: { ...event.effectDirection },
-        intensity: clamp(event.effectIntensity ?? 0.5, 0.2, 1),
-        startTick: tick,
-        durationTicks,
-      });
-    }
-    for (let index = activeDuelEffects.length - 1; index >= 0; index -= 1) {
-      const effect = activeDuelEffects[index];
-      if (tick - effect.startTick >= effect.durationTicks) activeDuelEffects.splice(index, 1);
-    }
-
-    // FTA_STALL_RESOLUTION_V3
-    const pendingPlayers = simPlayers.filter(
-      (player) => player.command !== null && !player.commandExecuted,
-    );
-    const activeTimedAction = simPlayers.some(
-      (player) =>
-        (player.state === PlayerState.PASSING ||
-          player.state === PlayerState.SHOOTING ||
-          player.state === PlayerState.DIVING) &&
-        player.stateTimer > 0,
-    );
-    let positionalProgress = 0;
-    for (const player of simPlayers) {
-      const previous = previousPositions.get(player.id) ?? player.position;
-      positionalProgress += vec2Dist(previous, player.position);
-    }
-    const ballProgressing = vec2Len(simBall.velocity) >= 0.5;
-
-    if (
-      pendingPlayers.length > 0 &&
-      !activeTimedAction &&
-      !ballProgressing &&
-      positionalProgress < 0.2
-    ) {
-      stalledTicks += 1;
-    } else {
-      stalledTicks = 0;
-    }
-
-    // A physically blocked command is resolved instead of keeping the phase
-    // alive forever. Its contribution for this turn is simply over.
-    if (stalledTicks >= Math.max(12, Math.round(0.75 / DELTA))) {
-      for (const player of pendingPlayers) endPlannedContribution(player);
-      stalledTicks = 0;
-    }
-
-    // Absolute emergency exit: finish every unresolved contribution and any
-    // remaining ball flight before the safety ceiling can soft-lock the match.
-    if (tick === ABSOLUTE_MAX_TICKS - 1) {
-      for (const player of simPlayers) {
-        if (player.command && !player.commandExecuted) endPlannedContribution(player);
-      }
-      if (simBall.passTarget) {
-        // Never spawn a stalled ball at its destination. If the absolute safety
-        // ceiling is ever reached, settle it where it physically is.
-        simBall.velocity = { x: 0, y: 0 };
-        simBall.passTarget = undefined;
-        simBall.passStart = undefined;
-        simBall.passStyle = undefined;
-        simBall.height = 0;
-        simBall.curveMotion = undefined;
-        simBall.travelSpeed = undefined;
-        simBall.flightPeakHeight = undefined;
-      }
-    }
-
-    previousPositions = new Map(
-      simPlayers.map((player) => [player.id, { ...player.position }]),
-    );
 
     allEvents.push(...tickEvents);
-    frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents, activeDuelEffects));
+    frames.push(snapshotFrame(tick, simPlayers, simBall, tickEvents));
 
-    const actionsResolved = simPlayers.every((player) => {
-      const activeAction =
-        player.state === PlayerState.PASSING ||
-        player.state === PlayerState.SHOOTING ||
-        player.state === PlayerState.DIVING;
-      return !activeAction && (!player.command || player.commandExecuted);
-    });
-    const ballResolved =
-      simBall.passTarget === undefined && vec2Len(simBall.velocity) < 2;
-    if (tick >= TICKS_PER_TURN - 1 && actionsResolved && ballResolved) break;
+    // End the turn once the normal budget is spent AND no pass is in flight.
+    // If a pass is still travelling, keep ticking until it resolves.
+    if (tick >= TICKS_PER_TURN - 1 && !simBall.passTarget) {
+      break;
+    }
   }
 
   // Snap all players to tile centers at end of turn
@@ -703,8 +403,9 @@ export function runSimulation(
         const nr = clamp(t.row + dr, 0, GRID_ROWS - 1);
 
         if (loser.role === "goalkeeper") {
-          const bounds = goalkeeperColumnBounds(loser.teamId, loser.ability);
-          nc = clamp(nc, bounds.min, bounds.max);
+          nc = loser.teamId === "player"
+            ? clamp(nc, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX)
+            : clamp(nc, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
         }
 
         const ak = `${nc},${nr}`;
@@ -721,11 +422,6 @@ export function runSimulation(
     };
 
     const chooseWinner = (a: SimPlayer, b: SimPlayer): SimPlayer => {
-      // Preserve an in-turn physical-duel result during end-of-turn snapping.
-      // The recovering player already lost and must yield the tile.
-      if (a.state === PlayerState.RECOVERING && b.state !== PlayerState.RECOVERING) return b;
-      if (b.state === PlayerState.RECOVERING && a.state !== PlayerState.RECOVERING) return a;
-
       const aOwns = a.id === simBall.ownerId;
       const bOwns = b.id === simBall.ownerId;
 
@@ -773,15 +469,14 @@ export function runSimulation(
         simBall.height = 0;
         simBall.passStyle = undefined;
         simBall.passStart = undefined;
-        simBall.curveMotion = undefined;
         winner.state = PlayerState.DRIBBLING;
         winner.command = null;
         winner.commandExecuted = false;
         loser.state = PlayerState.RECOVERING;
         loser.recoveryTimer = Math.max(loser.recoveryTimer, 0.7);
       }
+
       pushToFreeTile(loser, winner);
-      if (loser.teamId !== winner.teamId) endPlannedContribution(loser);
     }
   }
 
@@ -790,8 +485,11 @@ export function runSimulation(
     if (p.role === "goalkeeper") {
       const t = posToTile(p.position);
       let col = t.col;
-      const bounds = goalkeeperColumnBounds(p.teamId, p.ability);
-      col = clamp(col, bounds.min, bounds.max);
+      if (p.teamId === "player") {
+        col = clamp(col, GK_COLS_PLAYER_MIN, GK_COLS_PLAYER_MAX);
+      } else {
+        col = clamp(col, GK_COLS_AI_MIN, GK_COLS_AI_MAX);
+      }
       if (col !== t.col) p.position = tileToPos(col, t.row);
     }
   }
@@ -815,11 +513,8 @@ export function runSimulation(
         velocity: { ...simBall.velocity },
         ownerId: simBall.ownerId,
         passTarget: simBall.passTarget ? { ...simBall.passTarget } : undefined,
-        passStart: simBall.passStart ? { ...simBall.passStart } : undefined,
         height: simBall.height ?? 0,
         passStyle: simBall.passStyle,
-        travelSpeed: simBall.travelSpeed,
-        flightPeakHeight: simBall.flightPeakHeight,
       },
       players: lastF.players.map((fp) => {
         const sp = simPlayers.find((p) => p.id === fp.id);
@@ -838,27 +533,25 @@ function separateOverlapping(
   players: SimPlayer[],
   ball: SimBall,
   rng: () => number,
-  events: GameEvent[],
-  tick: number,
 ): void {
   const minDist = PLAYER_RADIUS * 2.4;
-  for (let i = 0; i < players.length; i += 1) {
-    for (let j = i + 1; j < players.length; j += 1) {
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
       const a = players[i];
       const b = players[j];
       const dx = b.position.x - a.position.x;
       const dy = b.position.y - a.position.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance >= minDist) continue;
-
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist >= minDist) continue;
       const aOwns = a.id === ball.ownerId;
       const bOwns = b.id === ball.ownerId;
-      const overlap = distance > 0.01 ? minDist - distance : minDist;
-      const nx = distance > 0.01 ? dx / distance : 0;
-      const ny = distance > 0.01 ? dy / distance : 1;
+      const overlap = dist > 0.01 ? minDist - dist : minDist;
+      const nx = dist > 0.01 ? dx / dist : 0;
+      const ny = dist > 0.01 ? dy / dist : 1;
 
-      // Cross-team carrier collisions continue through the tackle system, which
-      // already compares dribbling, defending and strength.
+      // Cross-team collisions involving the carrier are handled entirely by the
+      // tackle system — skip separation physics so opponents can actually enter
+      // the carrier's tile and trigger the tackle check.
       if (
         (aOwns && b.teamId !== a.teamId) ||
         (bOwns && a.teamId !== b.teamId)
@@ -867,87 +560,55 @@ function separateOverlapping(
       }
 
       if (aOwns) {
+        // Same-team: carrier pushes friendly out of the way
         b.position.x += nx * overlap;
         b.position.y += ny * overlap;
-        continue;
-      }
-      if (bOwns) {
+      } else if (bOwns) {
         a.position.x -= nx * overlap;
         a.position.y -= ny * overlap;
-        continue;
-      }
-
-      if (a.teamId === b.teamId) {
+      } else if (a.teamId === b.teamId) {
+        // Same team, no ball: share equally
         a.position.x -= nx * overlap * 0.5;
         a.position.y -= ny * overlap * 0.5;
         b.position.x += nx * overlap * 0.5;
         b.position.y += ny * overlap * 0.5;
-        continue;
-      }
-
-      // One player wins the lane and continues their planned movement. The
-      // loser yields sideways and their contribution ends. A player already
-      // recovering from this duel can never immediately re-win it on a later
-      // tick, which previously caused both players to stop.
-      const aRecovering = a.state === PlayerState.RECOVERING;
-      const bRecovering = b.state === PlayerState.RECOVERING;
-      const aWins = aRecovering !== bRecovering
-        ? !aRecovering
-        : rng() < noBallTileWinChance(a, b);
-      const winner = aWins ? a : b;
-      const loser = aWins ? b : a;
-
-      const collisionPoint = {
-        x: (winner.position.x + loser.position.x) / 2,
-        y: (winner.position.y + loser.position.y) / 2,
-      };
-      const strengthDifference = Math.abs(physiqueStat(winner) - physiqueStat(loser));
-      const wasAlreadyRecovering = loser.state === PlayerState.RECOVERING;
-
-      const winnerTravel = vec2Len(winner.velocity) > 1
-        ? vec2Normalize(winner.velocity)
-        : duelDirection(loser.position, winner.position);
-      const side = { x: -winnerTravel.y, y: winnerTravel.x };
-      const loserRelative = vec2Sub(loser.position, winner.position);
-      const sideSign = loserRelative.x * side.x + loserRelative.y * side.y >= 0 ? 1 : -1;
-      const radial = vec2Len(loserRelative) > 0.01
-        ? vec2Normalize(loserRelative)
-        : { x: side.x * sideSign, y: side.y * sideSign };
-      const yieldDirection = vec2Normalize({
-        x: side.x * sideSign * 0.82 + radial.x * 0.18,
-        y: side.y * sideSign * 0.82 + radial.y * 0.18,
-      });
-      const yieldDistance = overlap + PLAYER_RADIUS * (0.65 + strengthDifference * 0.035);
-
-      // Winner is deliberately untouched: they keep their exact position,
-      // velocity, curve and destination. Only the loser is pushed aside.
-      loser.position.x += yieldDirection.x * yieldDistance;
-      loser.position.y += yieldDirection.y * yieldDistance;
-      endPlannedContribution(loser);
-
-      if (!wasAlreadyRecovering) {
-        events.push({
-          type: GameEventType.LOOSE_BALL,
-          tick,
-          playerId: winner.id,
-          targetId: loser.id,
-          teamId: winner.teamId,
-          message: `${winner.name} outmuscles ${loser.name}`,
-          visualEffect: "outmuscled",
-          effectPosition: collisionPoint,
-          effectDirection: duelDirection(winner.position, loser.position),
-          effectIntensity: clamp(0.28 + strengthDifference / 9, 0.28, 1),
-        });
+      } else {
+        // Cross-team physical contest — faster mover is "the pusher"
+        const aSpeed = Math.sqrt(a.velocity.x ** 2 + a.velocity.y ** 2);
+        const bSpeed = Math.sqrt(b.velocity.x ** 2 + b.velocity.y ** 2);
+        const isPusherA = aSpeed >= bSpeed;
+        const pusher = isPusherA ? a : b;
+        const blocker = isPusherA ? b : a;
+        // Attacker stat for the pusher (trying to force through), defense for blocker
+        let pusherScore = pusher.stats.attack / 10 + rng() * 0.35;
+        let blockerScore = blocker.stats.defense / 10 + rng() * 0.35;
+        if (blocker.ability === "iron_tackle") blockerScore += 0.25;
+        if (blocker.ability === "powerhouse") blockerScore += 0.15;
+        if (pusher.ability === "ghost_run") pusherScore += 0.2;
+        if (pusher.ability === "powerhouse") pusherScore += 0.15;
+        if (pusherScore > blockerScore) {
+          // Pusher wins: mostly pushes blocker aside, small self slowdown
+          a.position.x -= nx * overlap * (isPusherA ? 0.2 : 0.8);
+          a.position.y -= ny * overlap * (isPusherA ? 0.2 : 0.8);
+          b.position.x += nx * overlap * (isPusherA ? 0.8 : 0.2);
+          b.position.y += ny * overlap * (isPusherA ? 0.8 : 0.2);
+        } else {
+          // Blocker wins: pusher bounces back, blocker barely moves
+          a.position.x -= nx * overlap * (isPusherA ? 0.8 : 0.2);
+          a.position.y -= ny * overlap * (isPusherA ? 0.8 : 0.2);
+          b.position.x += nx * overlap * (isPusherA ? 0.2 : 0.8);
+          b.position.y += ny * overlap * (isPusherA ? 0.2 : 0.8);
+        }
       }
     }
   }
 }
+
 function snapshotFrame(
   tick: number,
   players: SimPlayer[],
   ball: SimBall,
   events: GameEvent[],
-  activeDuelEffects: ActiveDuelEffect[],
 ): FrameSnapshot {
   const offsidePlayers = getOffsidePlayers(players);
   return {
@@ -958,40 +619,10 @@ function snapshotFrame(
       position: { ...p.position },
       velocity: { ...p.velocity },
       state: p.state,
-      stateTimer: p.stateTimer,
-      actionPassStyle:
-        p.command?.type === CommandType.PASS ? p.command.passStyle : undefined,
-      actionTarget: p.command?.targetPosition
-        ? { ...p.command.targetPosition }
-        : undefined,
-      actionKind:
-        p.state === PlayerState.PASSING
-          ? p.command?.passStyle === "long"
-            ? "longPass"
-            : "pass"
-          : p.state === PlayerState.SHOOTING
-            ? "shot"
-            : undefined,
-      actionProgress:
-        p.state === PlayerState.PASSING
-          ? clamp(
-              1 -
-                p.stateTimer /
-                  (p.command?.passStyle === "long"
-                    ? LONG_PASS_WIND_UP
-                    : PASS_WIND_UP),
-              0,
-              1,
-            )
-          : p.state === PlayerState.SHOOTING
-            ? clamp(1 - p.stateTimer / SHOT_WIND_UP, 0, 1)
-            : undefined,
       name: p.name,
       jerseyNumber: p.jerseyNumber,
       role: p.role,
-      appearance: p.appearance,
-      ability: p.ability,
-      tileRange: movementToTiles(p.stats.movement, p.ability),
+      tileRange: speedToTiles(p.stats.speed),
       offside: offsidePlayers.has(p.id),
     })),
     ball: {
@@ -999,25 +630,10 @@ function snapshotFrame(
       velocity: { ...ball.velocity },
       ownerId: ball.ownerId,
       passTarget: ball.passTarget ? { ...ball.passTarget } : undefined,
-      passStart: ball.passStart ? { ...ball.passStart } : undefined,
       height: ball.height ?? 0,
       passStyle: ball.passStyle,
-      travelSpeed: ball.travelSpeed,
-      flightPeakHeight: ball.flightPeakHeight,
     },
     events: [...events],
-    duelEffects: activeDuelEffects.map((effect) => ({
-      id: effect.id,
-      kind: effect.kind,
-      position: { ...effect.position },
-      direction: { ...effect.direction },
-      intensity: effect.intensity,
-      progress: clamp(
-        (tick - effect.startTick) / Math.max(1, effect.durationTicks - 1),
-        0,
-        1,
-      ),
-    })),
   };
 }
 
@@ -1026,7 +642,7 @@ function moveLinear(player: SimPlayer, target: Vec2, dt: number): boolean {
   const dx = target.x - player.position.x;
   const dy = target.y - player.position.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const pixelSpeed = getLinearPixelSpeed(player.stats.speed, player.ability);
+  const pixelSpeed = getLinearPixelSpeed(player.stats.speed);
   const step = pixelSpeed * dt;
 
   if (dist <= step || dist < 0.5) {
@@ -1047,37 +663,7 @@ function moveLinear(player: SimPlayer, target: Vec2, dt: number): boolean {
   return false;
 }
 
-function moveCommand(
-  player: SimPlayer,
-  command: Command,
-  target: Vec2,
-  dt: number,
-): boolean {
-  if (!command.curvePoints || command.curvePoints.length < 2) {
-    player.curveMotion = undefined;
-    return moveLinear(player, target, dt);
-  }
-
-  if (!player.curveMotion) {
-    player.curveMotion = createCurveMotion(
-      player.position,
-      command.curvePoints,
-      target,
-    );
-  }
-  const pixelSpeed = getLinearPixelSpeed(player.stats.speed, player.ability);
-  const advanced = advanceCurveMotion(
-    player.position,
-    player.curveMotion,
-    pixelSpeed * dt,
-  );
-  player.position = advanced.position;
-  player.velocity = advanced.arrived
-    ? { x: 0, y: 0 }
-    : vec2Scale(advanced.direction, pixelSpeed);
-  if (advanced.arrived) player.curveMotion = undefined;
-  return advanced.arrived;
-}
+type DefenseRuntime = Map<string, { origin: Vec2; travelled: number; active: boolean; triggered: boolean; remaining: number }>;
 
 function updatePlayerMovement(
   players: SimPlayer[],
@@ -1087,34 +673,9 @@ function updatePlayerMovement(
   tick: number,
   passTracker: BallTracker,
   rng: () => number,
+  defense: DefenseRuntime,
 ): void {
   for (const player of players) {
-    if (player.state === PlayerState.DIVING && player.diveMotion) {
-      const motion = player.diveMotion;
-      motion.elapsed = Math.min(motion.duration, motion.elapsed + dt);
-      const t = Math.min(1, motion.elapsed / Math.max(0.001, motion.duration));
-      const eased = 1 - Math.pow(1 - t, 3);
-      const previous = { ...player.position };
-      player.position = {
-        x: motion.start.x + (motion.target.x - motion.start.x) * eased,
-        y: motion.start.y + (motion.target.y - motion.start.y) * eased,
-      };
-      player.velocity = {
-        x: (player.position.x - previous.x) / Math.max(dt, 0.001),
-        y: (player.position.y - previous.y) / Math.max(dt, 0.001),
-      };
-      player.stateTimer = Math.max(0, motion.duration - motion.elapsed);
-
-      if (t >= 1) {
-        player.position = { ...motion.target };
-        player.velocity = { x: 0, y: 0 };
-        player.diveMotion = undefined;
-        player.state = PlayerState.RECOVERING;
-        player.recoveryTimer = 0.3;
-      }
-      continue;
-    }
-
     if (player.state === PlayerState.RECOVERING) {
       player.recoveryTimer -= dt;
       if (player.recoveryTimer <= 0) {
@@ -1195,24 +756,12 @@ function updatePlayerMovement(
           player.state = PlayerState.RECOVERING;
           player.recoveryTimer = SHOT_RECOVERY;
 
-          const shotTarget = ball.passTarget;
-          const onTarget = !!shotTarget &&
-            shotTarget.y - BALL_RADIUS >= GOAL_TOP_Y &&
-            shotTarget.y + BALL_RADIUS <= GOAL_BOTTOM_Y;
-          const lebronLogoShot =
-            player.cardId === "lebron_james" &&
-            (player.teamId === "player"
-              ? player.position.x < PITCH_WIDTH / 2
-              : player.position.x > PITCH_WIDTH / 2);
           events.push({
             type: GameEventType.SHOT_ON_GOAL,
             tick,
             playerId: player.id,
             teamId: player.teamId,
-            onTarget,
-            message: lebronLogoShot
-              ? `${player.name} launches a full-court prayer!`
-              : `${player.name} shoots at goal!`,
+            message: `${player.name} shoots at goal!`,
           });
         }
       }
@@ -1247,13 +796,64 @@ function updatePlayerMovement(
       continue;
     }
 
-    if (cmd.type === CommandType.PASS) {
+    if (cmd.type === CommandType.PRESS) {
+      const data = defense.get(player.id)!;
+      const target = players.find(p => p.id === cmd.targetPlayerId && p.teamId !== player.teamId);
+      const start = target && defense.get(target.id)?.origin;
+      // Wait until the marked player has actually travelled a full tile.
+      const moved = target && start && Math.max(Math.abs(target.position.x - start.x) / TILE_W, Math.abs(target.position.y - start.y) / TILE_H) >= 1;
+      if (moved) data.triggered = true;
+      const budget = speedToTiles(player.stats.speed) + 1;
+      if (!target || !data.triggered || data.travelled >= budget) {
+        player.velocity = { x: 0, y: 0 };
+        player.state = PlayerState.IDLE;
+      } else {
+        const destination = player.role === "goalkeeper" ? clampGKTarget(target.position, player.teamId) : target.position;
+        const before = { ...player.position };
+        // Limit distance in tile units, even when the target changes direction.
+        const dx = destination.x - before.x, dy = destination.y - before.y;
+        const length = Math.hypot(dx, dy);
+        const units = length ? Math.max(Math.abs(dx / TILE_W), Math.abs(dy / TILE_H)) : 0;
+        const maxPixels = units ? (budget - data.travelled) * length / units : 0;
+        const step = Math.min(getLinearPixelSpeed(player.stats.speed) * dt, maxPixels, length);
+        if (length > 0.01 && step > 0) {
+          player.position = { x: before.x + dx / length * step, y: before.y + dy / length * step };
+          player.velocity = { x: dx / length * step / dt, y: dy / length * step / dt };
+          data.travelled += Math.max(Math.abs((player.position.x - before.x) / TILE_W), Math.abs((player.position.y - before.y) / TILE_H));
+          player.state = PlayerState.MOVING;
+        } else { player.velocity = { x: 0, y: 0 }; player.state = PlayerState.IDLE; }
+      }
+    } else if (cmd.type === CommandType.SLIDE || cmd.type === CommandType.STAND_TACKLE) {
+      const data = defense.get(player.id)!;
+      const target = cmd.targetPosition;
+      if (!target) { player.commandExecuted = true; continue; }
+      const from = posToTile(data.origin), to = posToTile(target);
+      const tiles = Math.max(Math.abs(to.col - from.col), Math.abs(to.row - from.row));
+      const legal = cmd.type === CommandType.SLIDE ? tiles >= 2 && tiles <= speedToTiles(player.stats.speed) + 1 : tiles === 1;
+      if (!legal || (player.role === "goalkeeper" && vec2Dist(target, clampGKTarget(target, player.teamId)) > 0.1)) { player.commandExecuted = true; continue; }
+      const distance = vec2Dist(data.origin, target);
+      const remainingDistance = vec2Dist(player.position, target);
+      // Start the slide at the entrance to the destination tile, accelerating
+      // during the preceding half tile. A stand lunge starts immediately.
+      const progress = distance ? 1 - remainingDistance / distance : 1;
+      const entry = Math.max(0, 1 - 0.5 / tiles);
+      const accel = Math.max(0, 1 - 1 / tiles);
+      if (cmd.type === CommandType.STAND_TACKLE || progress >= entry) {
+        if (!data.active) { data.active = true; data.remaining = cmd.type === CommandType.SLIDE ? 0.9 : 0.4; }
+        data.remaining -= dt;
+      }
+      if (data.active && data.remaining <= 0) {
+        player.commandExecuted = true; player.velocity = { x: 0, y: 0 }; player.state = PlayerState.IDLE;
+      } else {
+        const duration = cmd.type === CommandType.STAND_TACKLE ? 0.35 : 0.65;
+        const factor = cmd.type === CommandType.STAND_TACKLE ? distance / duration / getLinearPixelSpeed(player.stats.speed) : progress >= accel ? 2.2 : 1;
+        moveLinear(player, target, dt * factor);
+        player.state = data.active ? (cmd.type === CommandType.SLIDE ? PlayerState.SLIDING : PlayerState.LUNGING) : PlayerState.MOVING;
+      }
+    } else if (cmd.type === CommandType.PASS) {
       if (hasBall) {
         player.state = PlayerState.PASSING;
-        player.stateTimer =
-          player.command?.passStyle === "long"
-            ? LONG_PASS_WIND_UP
-            : PASS_WIND_UP;
+        player.stateTimer = PASS_WIND_UP;
         player.commandExecuted = true;
         player.velocity = { x: 0, y: 0 };
       } else {
@@ -1271,47 +871,11 @@ function updatePlayerMovement(
         moveLinear(player, ball.position, dt);
         player.state = PlayerState.MOVING;
       }
-} else if (cmd.type === CommandType.DIVE) {
-      if (player.role === "goalkeeper" && ball.ownerId !== player.id && cmd.targetPosition) {
-        const from = posToTile(player.position);
-        const wanted = posToTile(cmd.targetPosition);
-        const maxTiles = GOALKEEPER_REACH_TILES;
-        const rawDc = wanted.col - from.col;
-        const rawDr = wanted.row - from.row;
-        const rawLength = Math.hypot(rawDc, rawDr);
-        const scale = rawLength > maxTiles ? maxTiles / rawLength : 1;
-        let bestCol = from.col;
-        let bestRow = from.row;
-        let bestError = Number.POSITIVE_INFINITY;
-        for (let dc = -Math.ceil(maxTiles); dc <= Math.ceil(maxTiles); dc++) {
-          for (let dr = -Math.ceil(maxTiles); dr <= Math.ceil(maxTiles); dr++) {
-            if (Math.hypot(dc, dr) > maxTiles + 0.001) continue;
-            const bounds = goalkeeperColumnBounds(player.teamId, player.ability);
-            const candidateCol = clamp(from.col + dc, bounds.min, bounds.max);
-            const candidateRow = clamp(from.row + dr, 0, GRID_ROWS - 1);
-            const idealCol = from.col + rawDc * scale;
-            const idealRow = from.row + rawDr * scale;
-            const error = Math.hypot(candidateCol - idealCol, candidateRow - idealRow);
-            if (error < bestError) { bestError = error; bestCol = candidateCol; bestRow = candidateRow; }
-          }
-        }
-        const target = tileToPos(bestCol, bestRow);
-        const start = { ...player.position };
-        const distance = Math.max(1, Math.hypot(target.x - start.x, target.y - start.y));
-        const duration = Math.max(0.28, Math.min(0.46, distance / (getLinearPixelSpeed(10, "ghost_run") * 2.1)));
-        player.velocity = vec2Scale(vec2Normalize(vec2Sub(target, start)), distance / duration);
-        player.state = PlayerState.DIVING;
-        player.stateTimer = duration;
-        player.recoveryTimer = 0;
-        player.diveMotion = { start, target, duration, elapsed: 0 };
-        player.commandExecuted = true;
-      }
-    } else if (cmd.type === CommandType.MOVE) {
+} else if (cmd.type === CommandType.MOVE) {
   const target = cmd.targetPosition!;
-  const arrived = moveCommand(player, cmd, target, dt);
+  const arrived = moveLinear(player, target, dt);
 
   if (arrived) {
-    player.curveMotion = undefined;
     if (cmd.followUp) {
       const followUp = { ...cmd.followUp };
 
@@ -1407,215 +971,92 @@ function executePass(
     y: PITCH_HEIGHT / 2,
   };
 
-  // FTA_LONG_BALL_GOAL_DEPTH_PVP4
-  // A deliberate long-ball target inside goal depth stays inside the goal.
-  const requestedGoalDepth =
-    isLongBall &&
-    (targetPos.x < 0 || targetPos.x > PITCH_WIDTH) &&
-    targetPos.y >= GOAL_TOP_Y &&
-    targetPos.y <= GOAL_BOTTOM_Y;
-
-  if (isLongBall && !cmd.coordinated && !requestedGoalDepth) {
-    const longPassing =
-      typeof player.stats.longPassing === "number"
-        ? player.stats.longPassing
-        : player.stats.passing;
-    const vision =
-      typeof player.stats.vision === "number"
-        ? player.stats.vision
-        : player.stats.passing;
-    const accuracy = clamp((longPassing + vision) / 20, 0, 1);
-    const maxErrorTiles = (1 - accuracy) * 1.5;
-    targetPos = {
-      x: clamp(
-        targetPos.x + (rng() * 2 - 1) * maxErrorTiles * TILE_W,
-        BALL_RADIUS,
-        PITCH_WIDTH - BALL_RADIUS,
-      ),
-      y: clamp(
-        targetPos.y + (rng() * 2 - 1) * maxErrorTiles * TILE_H,
-        BALL_RADIUS,
-        PITCH_HEIGHT - BALL_RADIUS,
-      ),
-    };
+  if (isLongBall && !cmd.coordinated) {
+    const longPassing = typeof player.stats.longPassing === "number" ? player.stats.longPassing : player.stats.passing;
+    const vision = typeof player.stats.vision === "number" ? player.stats.vision : player.stats.passing;
+    const errorTiles = Math.max(0, 3 - Math.floor((longPassing + vision) / 5));
+    if (errorTiles > 0) {
+      const targetTile = posToTile(targetPos);
+      const dc = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
+      const dr = Math.floor(rng() * (errorTiles * 2 + 1)) - errorTiles;
+      targetPos = tileToPos(
+        clamp(targetTile.col + dc, 0, GRID_COLS - 1),
+        clamp(targetTile.row + dr, 0, GRID_ROWS - 1),
+      );
+    }
   }
 
-  const abilityMultiplier = player.ability === "bullet_pass" ? 1.5 : 1;
-  const curveStat = isLongBall
-    ? player.stats.longPassing
-    : player.stats.passing;
-  const legalCurve = sanitizeBallCurve(
-    ball.position,
-    cmd.curvePoints,
-    targetPos,
-    curveStat,
-    isLongBall ? "long" : "ground",
-  );
+  let passSpd = PASS_SPEED;
+  if (player.ability === "bullet_pass") passSpd *= 1.5;
+  if (isLongBall) passSpd *= 1.12;
 
-  ball.curveMotion = legalCurve
-    ? createCurveMotion(ball.position, legalCurve, targetPos)
-    : undefined;
-  const routeDistance = ball.curveMotion?.totalLength ?? vec2Dist(ball.position, targetPos);
-  const distanceTiles = routeDistance / Math.max(TILE_W, TILE_H);
-  const groundPassSpeed = PASS_SPEED * abilityMultiplier;
-  // Long balls scale up with distance so very long deliveries never stall, but
-  // remain slower than the same player's ground pass at every distance.
-  const longBallRatio = clamp(0.70 + distanceTiles * 0.016, 0.72, 0.94);
-  const passSpeed = isLongBall
-    ? groundPassSpeed * longBallRatio
-    : groundPassSpeed;
-  const firstTarget = ball.curveMotion?.points[0] ?? targetPos;
-  const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
-  ball.velocity = vec2Scale(direction, passSpeed);
-  ball.travelSpeed = passSpeed;
-  ball.flightPeakHeight = isLongBall
-    ? clamp(18 + distanceTiles * 1.4, 24, 44)
-    : 0;
+  const dir = vec2Normalize(vec2Sub(targetPos, ball.position));
+  ball.velocity = vec2Scale(dir, passSpd);
   ball.passTarget = { ...targetPos };
   ball.passStart = { ...ball.position };
   ball.passStyle = isLongBall ? "long" : "ground";
   ball.height = isLongBall ? 1 : 0;
   ball.ownerId = null;
 }
+
 function executeShot(
   player: SimPlayer,
   ball: SimBall,
   rng: () => number,
 ): void {
-  const cmd = player.command;
-  const attackingRight = player.teamId === "player";
-  const fallbackX = attackingRight
-    ? GOAL_RIGHT_X + GOAL_DEPTH * 0.65
-    : GOAL_LEFT_X - GOAL_DEPTH * 0.65;
-  const desired = cmd?.targetPosition ?? {
-    x: fallbackX,
-    y: PITCH_HEIGHT / 2,
-  };
+  const goalX = player.teamId === "player" ? GOAL_RIGHT_X : GOAL_LEFT_X;
 
-  const targetX = attackingRight
-    ? clamp(
-        desired.x,
-        GOAL_RIGHT_X + BALL_RADIUS,
-        GOAL_RIGHT_X + GOAL_DEPTH - BALL_RADIUS,
-      )
-    : clamp(
-        desired.x,
-        GOAL_LEFT_X - GOAL_DEPTH + BALL_RADIUS,
-        GOAL_LEFT_X - BALL_RADIUS,
-      );
-  const distanceTiles =
-    vec2Dist(player.position, desired) / Math.max(TILE_W, TILE_H);
-  const shooting = Math.max(1, Math.min(10, player.stats.shooting));
-  const rangePressure = Math.max(0, distanceTiles - 3) * 0.12;
-  const skillError = (11 - shooting) * 0.08;
-  const lebronLogoShot =
-    player.cardId === "lebron_james" &&
-    (attackingRight
-      ? player.position.x < PITCH_WIDTH / 2
-      : player.position.x > PITCH_WIDTH / 2);
-  const maxErrorTiles = lebronLogoShot
-    ? Math.min(5.5, Math.max(3.4, distanceTiles * 0.38))
-    : Math.min(1.75, rangePressure + skillError);
-  const errorY =
-    (rng() * 2 - 1) * maxErrorTiles * Math.max(TILE_W, TILE_H);
+  const goalMid = PITCH_HEIGHT / 2;
+  const halfGoal = GOAL_WIDTH / 2;
+  const targetY = goalMid + (rng() * 2 - 1) * halfGoal * 0.85;
 
-  const target = {
-    x: targetX,
-    y: clamp(desired.y + errorY, BALL_RADIUS, PITCH_HEIGHT - BALL_RADIUS),
-  };
+  let shotSpd = SHOT_SPEED;
+  if (player.ability === "eagle_eye") shotSpd *= 1.15;
 
-  let shotSpeed = SHOT_SPEED * (0.72 + shooting * 0.045);
-  if (player.ability === "eagle_eye") shotSpeed *= 1.08;
-
-  const legalCurve = sanitizeBallCurve(
-    ball.position,
-    cmd?.curvePoints,
-    target,
-    shooting,
-    "shot",
-  );
-  ball.curveMotion = legalCurve
-    ? createCurveMotion(ball.position, legalCurve, target)
-    : undefined;
-  const firstTarget = ball.curveMotion?.points[0] ?? target;
-  const direction = vec2Normalize(vec2Sub(firstTarget, ball.position));
-  ball.velocity = vec2Scale(direction, shotSpeed);
-  ball.travelSpeed = shotSpeed;
-  ball.flightPeakHeight = 0;
-  ball.passTarget = target;
-  ball.passStart = { ...ball.position };
+  const dir = vec2Normalize(vec2Sub({ x: goalX, y: targetY }, ball.position));
+  ball.velocity = vec2Scale(dir, shotSpd);
   ball.ownerId = null;
   ball.height = 0;
   ball.passStyle = undefined;
+  ball.passStart = undefined;
 }
+
 function updateBallPhysics(ball: SimBall, dt: number): void {
   if (ball.ownerId !== null) {
     ball.height = 0;
     ball.passStyle = undefined;
     ball.passStart = undefined;
-    ball.curveMotion = undefined;
-    ball.travelSpeed = undefined;
-    ball.flightPeakHeight = undefined;
     return;
   }
 
   if (ball.passTarget) {
-    // A targeted kick keeps a constant, distance-aware travel speed. Friction
-    // only applies after a kick becomes loose; it can no longer freeze a long
-    // ball mid-flight and force a destination teleport.
-    const speed = Math.max(1, ball.travelSpeed ?? vec2Len(ball.velocity));
-    let arrived = false;
+    const distBefore = vec2Dist(ball.position, ball.passTarget);
 
-    if (ball.curveMotion) {
-      const advanced = advanceCurveMotion(
-        ball.position,
-        ball.curveMotion,
-        speed * dt,
-      );
-      ball.position = advanced.position;
-      ball.velocity = advanced.arrived
-        ? { x: 0, y: 0 }
-        : vec2Scale(advanced.direction, speed);
-      arrived = advanced.arrived;
-    } else {
-      const toTarget = vec2Sub(ball.passTarget, ball.position);
-      const distance = vec2Len(toTarget);
-      const step = speed * dt;
-      if (distance <= step || distance < 0.5) {
-        ball.position = { ...ball.passTarget };
-        ball.velocity = { x: 0, y: 0 };
-        arrived = true;
-      } else {
-        const direction = vec2Normalize(toTarget);
-        ball.velocity = vec2Scale(direction, speed);
-        ball.position = vec2Add(ball.position, vec2Scale(direction, step));
-      }
-    }
+    ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
+    ball.position = vec2Add(ball.position, vec2Scale(ball.velocity, dt));
 
     if (ball.passStyle === "long" && ball.passStart) {
-      const progress = ball.curveMotion
-        ? curveMotionProgress(ball.curveMotion)
-        : clamp(
-            vec2Dist(ball.passStart, ball.position) /
-              Math.max(1, vec2Dist(ball.passStart, ball.passTarget)),
-            0,
-            1,
-          );
-      ball.height = Math.sin(progress * Math.PI) * (ball.flightPeakHeight ?? 34);
+      const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
+      const travelled = vec2Dist(ball.passStart, ball.position);
+      const progress = clamp(travelled / totalDist, 0, 1);
+      ball.height = Math.sin(progress * Math.PI) * 34;
     } else {
       ball.height = 0;
     }
 
-    if (arrived) {
+    const distAfter = vec2Dist(ball.position, ball.passTarget);
+
+    if (
+      distAfter >= distBefore ||
+      distAfter < 4 ||
+      vec2Len(ball.velocity) < 2
+    ) {
       ball.position = { ...ball.passTarget };
       ball.velocity = { x: 0, y: 0 };
       ball.passTarget = undefined;
       ball.height = 0;
       ball.passStyle = undefined;
       ball.passStart = undefined;
-      ball.curveMotion = undefined;
-      ball.travelSpeed = undefined;
-      ball.flightPeakHeight = undefined;
     }
   } else {
     ball.velocity = vec2Scale(ball.velocity, BALL_FRICTION);
@@ -1627,9 +1068,6 @@ function updateBallPhysics(ball: SimBall, dt: number): void {
       ball.passStyle = undefined;
       ball.passStart = undefined;
       ball.height = 0;
-      ball.curveMotion = undefined;
-      ball.travelSpeed = undefined;
-      ball.flightPeakHeight = undefined;
     }
   }
 }
@@ -1649,51 +1087,26 @@ function longBallDirectionalContestAllowed(player: SimPlayer, ball: SimBall, dis
   if (ball.passStyle !== "long") return true;
   if (!ball.passStart || !ball.passTarget) return true;
 
-  // A curved delivery cannot be collected from the floor while it is still
-  // high in the air. Better aerial players gain a slightly larger playable
-  // window, but nobody can touch the ball near the top of its arc.
-  const aerial = statValue(player.stats.aerial, statValue(player.stats.attack, 5));
-  const playableHeight = 10 + aerial * 0.75;
-  if ((ball.height ?? 0) > playableHeight) return false;
-
   const startTile = posToTile(ball.passStart);
   const targetTile = posToTile(ball.passTarget);
-  const launchToward = ball.curveMotion?.points[0] ?? ball.passTarget;
-  const receiverFrom =
-    ball.curveMotion?.points[Math.max(0, ball.curveMotion.points.length - 2)] ??
-    ball.passStart;
-  const launchTowardTile = posToTile(launchToward);
-  const receiverFromTile = posToTile(receiverFrom);
-  const launchDc = signTileDelta(launchTowardTile.col - startTile.col);
-  const launchDr = signTileDelta(launchTowardTile.row - startTile.row);
-  const receiverDc = signTileDelta(targetTile.col - receiverFromTile.col);
-  const receiverDr = signTileDelta(targetTile.row - receiverFromTile.row);
+  const dc = signTileDelta(targetTile.col - startTile.col);
+  const dr = signTileDelta(targetTile.row - startTile.row);
 
-  if (
-    launchDc === 0 &&
-    launchDr === 0 &&
-    receiverDc === 0 &&
-    receiverDr === 0
-  ) return true;
+  if (dc === 0 && dr === 0) return true;
 
   const playerTile = posToTile(player.position);
   const launchBlockTile = {
-    col: clamp(startTile.col + launchDc, 0, GRID_COLS - 1),
-    row: clamp(startTile.row + launchDr, 0, GRID_ROWS - 1),
+    col: clamp(startTile.col + dc, 0, GRID_COLS - 1),
+    row: clamp(startTile.row + dr, 0, GRID_ROWS - 1),
   };
   const receiverBlockTile = {
-    col: clamp(targetTile.col - receiverDc, 0, GRID_COLS - 1),
-    row: clamp(targetTile.row - receiverDr, 0, GRID_ROWS - 1),
+    col: clamp(targetTile.col - dc, 0, GRID_COLS - 1),
+    row: clamp(targetTile.row - dr, 0, GRID_ROWS - 1),
   };
 
-  const progress = ball.curveMotion
-    ? curveMotionProgress(ball.curveMotion)
-    : clamp(
-        vec2Dist(ball.passStart, ball.position) /
-          Math.max(1, vec2Dist(ball.passStart, ball.passTarget)),
-        0,
-        1,
-      );
+  const totalDist = Math.max(1, vec2Dist(ball.passStart, ball.passTarget));
+  const travelled = vec2Dist(ball.passStart, ball.position);
+  const progress = clamp(travelled / totalDist, 0, 1);
 
   // Long balls are not normal floor passes. They can only be blocked during
   // the takeoff square in the direction of the kick, or during the landing
@@ -1726,34 +1139,15 @@ function detectAndResolveEvents(
   events: GameEvent[],
   rng: () => number,
   passTracker: BallTracker,
+  defense: DefenseRuntime,
 ): void {
   if (ball.ownerId === null) {
     const candidates: { player: SimPlayer; score: number }[] = [];
     for (const player of players) {
       const dist = vec2Dist(player.position, ball.position);
-      const isGoalkeeper = player.role === "goalkeeper";
-      const isKeeperPassing =
-        isGoalkeeper &&
-        ball.passTarget !== undefined &&
-        passTracker.playerId === player.id &&
-        (passTracker.type === "pass" || passTracker.type === "long_pass");
-      // A keeper's extended idle reach must not pull back a ball they just
-      // passed. Keep the passer out of loose-ball contests until that pass ends.
-      if (isKeeperPassing) continue;
-      const tileDistance = Math.hypot(
-        (player.position.x - ball.position.x) / TILE_W,
-        (player.position.y - ball.position.y) / TILE_H,
-      );
-      const controlRange = isGoalkeeper
-        ? GOALKEEPER_REACH_TILES
-        : INTERCEPTION_RADIUS;
-      const controlDistance = isGoalkeeper ? tileDistance : dist;
-      const canContestLongBall =
-        isGoalkeeper || longBallDirectionalContestAllowed(player, ball, dist);
+      const canContestLongBall = longBallDirectionalContestAllowed(player, ball, dist);
       if (
-        (isGoalkeeper
-          ? controlDistance <= controlRange + 0.001
-          : controlDistance < controlRange) &&
+        dist < INTERCEPTION_RADIUS &&
         canContestLongBall &&
         player.state !== PlayerState.RECOVERING
       ) {
@@ -1764,7 +1158,7 @@ function detectAndResolveEvents(
                 vec2Normalize(vec2Sub(ball.position, player.position)),
               )
             : 0;
-        let score = (controlRange - controlDistance) / controlRange;
+        let score = (INTERCEPTION_RADIUS - dist) / INTERCEPTION_RADIUS;
         score += Math.max(0, velTowardBall) * 0.3;
         if (ball.passStyle === "long") {
           const aerial = typeof player.stats.aerial === "number" ? player.stats.aerial : player.stats.attack;
@@ -1774,11 +1168,9 @@ function detectAndResolveEvents(
         } else {
           score += (player.stats.defense / 10) * 0.2;
         }
-        // Movement is positioning/control, not renamed Luck: reward it
-        // deterministically when two players arrive at the same loose ball.
-        score += (player.stats.movement / 10) * 0.12;
+        score += rng() * (player.stats.luck / 10) * 0.2;
         if (player.ability === "iron_tackle") score += 0.15;
-        if (isGoalkeeperAbility(player.ability)) score += 0.35;
+        if (player.ability === "goalkeeper") score += 0.35;
         candidates.push({ player, score });
       }
     }
@@ -1826,7 +1218,6 @@ function detectAndResolveEvents(
           ball.height = 0;
           ball.passStyle = undefined;
           ball.passStart = undefined;
-          ball.curveMotion = undefined;
           loser.state = PlayerState.DRIBBLING;
           winner.state = PlayerState.RECOVERING;
           winner.recoveryTimer = 1.0;
@@ -1836,7 +1227,7 @@ function detectAndResolveEvents(
             passTracker.teamId !== null &&
             passTracker.teamId !== loser.teamId
           ) {
-            if (passTracker.type === "shot" && isGoalkeeperAbility(loser.ability)) {
+            if (passTracker.type === "shot" && loser.ability === "goalkeeper") {
               events.push({
                 type: GameEventType.SAVE,
                 tick,
@@ -1914,7 +1305,6 @@ function detectAndResolveEvents(
           ball.height = 0;
           ball.passStyle = undefined;
           ball.passStart = undefined;
-          ball.curveMotion = undefined;
 
           // Return the offside player to their match-start position
           winner.position = { ...winner.startPosition };
@@ -1938,7 +1328,6 @@ function detectAndResolveEvents(
       ball.height = 0;
       ball.passStyle = undefined;
       ball.passStart = undefined;
-      ball.curveMotion = undefined;
       winner.state = PlayerState.DRIBBLING;
 
       if (loser && loser.teamId !== winner.teamId) {
@@ -1955,12 +1344,11 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
-            passStyle: passTracker.type === "long_pass" ? "long" : "ground",
             message: passTracker.type === "long_pass" ? `${passTracker.name} launches it → ${winner.name}` : `${passTracker.name} → ${winner.name}`,
           });
         } else if (
           passTracker.type === "shot" &&
-          isGoalkeeperAbility(winner.ability)
+          winner.ability === "goalkeeper"
         ) {
           events.push({
             type: GameEventType.SAVE,
@@ -1977,7 +1365,6 @@ function detectAndResolveEvents(
             playerId: winner.id,
             targetId: passTracker.playerId ?? undefined,
             teamId: winner.teamId,
-            passStyle: passTracker.type === "long_pass" ? "long" : "ground",
             message: passTracker.type === "long_pass" ? `${winner.name} wins the aerial ball!` : `${winner.name} intercepts!`,
           });
         }
@@ -2037,6 +1424,8 @@ function detectAndResolveEvents(
 
       const dist = vec2Dist(other.position, owner.position);
       if (dist > ENTER_DIST) continue;
+      const explicitTackle = other.command?.type === CommandType.SLIDE || other.command?.type === CommandType.STAND_TACKLE;
+      if (explicitTackle && (!defense.get(other.id)?.active || other.commandExecuted)) continue;
 
       const defSpeed = vec2Len(other.velocity);
       const carrierSpeed = vec2Len(owner.velocity);
@@ -2051,10 +1440,10 @@ function detectAndResolveEvents(
 
       // New rule: a stationary defender still exists. If the carrier runs
       // through that defender's tile, the defender gets a real ball challenge.
-      if (!defenderMovingTowardCarrier && !carrierRunningIntoDefender) continue;
+      if (!explicitTackle && !defenderMovingTowardCarrier && !carrierRunningIntoDefender) continue;
 
       const target = other.command?.targetPosition;
-      let passingThrough = carrierRunningIntoDefender;
+      let passingThrough = explicitTackle || carrierRunningIntoDefender;
       if (target) {
         const targetTile = posToTile(target);
         const ownerTile = posToTile(owner.position);
@@ -2085,32 +1474,22 @@ function detectAndResolveEvents(
           type: GameEventType.LOOSE_BALL,
           tick,
           playerId: owner.id,
-          targetId: other.id,
           teamId: owner.teamId,
-          message: `${owner.name} dribbles past ${other.name}`,
-          visualEffect: "dribbled",
-          effectPosition: {
-            x: (owner.position.x + other.position.x) / 2,
-            y: (owner.position.y + other.position.y) / 2,
-          },
-          effectDirection:
-            vec2Len(owner.velocity) > 5
-              ? vec2Normalize(owner.velocity)
-              : duelDirection(other.position, owner.position),
-          effectIntensity: clamp(
-            0.3 +
-              Math.max(
-                0,
-                statValue(owner.stats.dribbling, owner.stats.attack) -
-                  defenderBallWinStat(other),
-              ) /
-                8,
-            0.3,
-            1,
-          ),
+          message: `${owner.name} holds off ${other.name}`,
         });
       } else {
-        // Tackler wins the ball.
+        // A slide dislodges the ball; it never grants direct possession.
+        if (other.command?.type === CommandType.SLIDE) {
+          ball.ownerId = null;
+          ball.position = { ...owner.position };
+          ball.velocity = vec2Scale(vec2Normalize(vec2Sub(owner.position, other.position)), 85);
+          ball.passTarget = undefined; ball.height = 0; ball.passStyle = undefined; ball.passStart = undefined;
+          other.commandExecuted = true; other.state = PlayerState.RECOVERING; other.recoveryTimer = 0.7;
+          owner.state = PlayerState.RECOVERING; owner.recoveryTimer = 0.35;
+          events.push({ type: GameEventType.LOOSE_BALL, tick, playerId: other.id, targetId: owner.id, teamId: other.teamId, message: `${other.name} slides in — loose ball!` });
+          break;
+        }
+        // Standing challenges use the existing possession contest.
         ball.ownerId = other.id;
         ball.velocity = { x: 0, y: 0 };
         ball.height = 0;
@@ -2157,76 +1536,43 @@ function constrainToField(players: SimPlayer[], ball: SimBall): void {
 
   if (ball.position.y < 0) {
     ball.velocity.y = Math.abs(ball.velocity.y) * 0.4;
-    ball.position.y = BALL_RADIUS;
+    ball.position.y = 1;
   } else if (ball.position.y > PITCH_HEIGHT) {
     ball.velocity.y = -Math.abs(ball.velocity.y) * 0.4;
-    ball.position.y = PITCH_HEIGHT - BALL_RADIUS;
+    ball.position.y = PITCH_HEIGHT - 1;
   }
 
-  if (inGoalYRange) {
-    const leftBack = GOAL_LEFT_X - GOAL_DEPTH + BALL_RADIUS;
-    const rightBack = GOAL_RIGHT_X + GOAL_DEPTH - BALL_RADIUS;
-    if (ball.position.x < leftBack) {
-      ball.position.x = leftBack;
-      ball.velocity.x = Math.abs(ball.velocity.x) * 0.25;
-    } else if (ball.position.x > rightBack) {
-      ball.position.x = rightBack;
-      ball.velocity.x = -Math.abs(ball.velocity.x) * 0.25;
+  if (!inGoalYRange) {
+    if (ball.position.x < GOAL_LEFT_X) {
+      ball.position.x = GOAL_LEFT_X + GOAL_DEPTH + 5;
+      ball.velocity.x = Math.abs(ball.velocity.x) * 0.3;
+      ball.velocity.y *= 0.3;
+    } else if (ball.position.x > GOAL_RIGHT_X) {
+      ball.position.x = GOAL_RIGHT_X - GOAL_DEPTH - 5;
+      ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
+      ball.velocity.y *= 0.3;
     }
-  } else if (ball.position.x < GOAL_LEFT_X) {
-    ball.position.x = GOAL_LEFT_X + BALL_RADIUS;
-    ball.velocity.x = Math.abs(ball.velocity.x) * 0.3;
-    ball.velocity.y *= 0.3;
-  } else if (ball.position.x > GOAL_RIGHT_X) {
-    ball.position.x = GOAL_RIGHT_X - BALL_RADIUS;
-    ball.velocity.x = -Math.abs(ball.velocity.x) * 0.3;
-    ball.velocity.y *= 0.3;
   }
 }
 
-function checkGoal(ball: SimBall, previousPosition: Vec2): "player" | "ai" | null {
+function checkGoal(ball: SimBall): "player" | "ai" | null {
   if (ball.ownerId !== null) return null;
 
-  const lineY = (lineX: number): number => {
-    const deltaX = ball.position.x - previousPosition.x;
-    if (Math.abs(deltaX) < 0.001) return ball.position.y;
-    const progress = clamp((lineX - previousPosition.x) / deltaX, 0, 1);
-    return previousPosition.y + (ball.position.y - previousPosition.y) * progress;
-  };
-  const fitsBetweenPosts = (y: number) =>
-    y - BALL_RADIUS >= GOAL_TOP_Y &&
-    y + BALL_RADIUS <= GOAL_BOTTOM_Y;
-
-  // Score as soon as the ball's leading edge crosses the goal line. Height is
-  // deliberately ignored: a volley or lob is still a goal when it crosses.
-  const rightBallLine = GOAL_RIGHT_X - BALL_RADIUS;
-  const crossedRight =
-    ball.position.x > previousPosition.x &&
-    previousPosition.x < rightBallLine &&
-    ball.position.x >= rightBallLine;
-  if (crossedRight && fitsBetweenPosts(lineY(rightBallLine))) return "player";
-
-  const leftBallLine = GOAL_LEFT_X + BALL_RADIUS;
-  const crossedLeft =
-    ball.position.x < previousPosition.x &&
-    previousPosition.x > leftBallLine &&
-    ball.position.x <= leftBallLine;
-  if (crossedLeft && fitsBetweenPosts(lineY(leftBallLine))) return "ai";
-
-  // Preserve recovery for a ball already inside the net when a turn resumes.
   if (
-    ball.position.x > GOAL_RIGHT_X - BALL_RADIUS &&
-    ball.position.x <= GOAL_RIGHT_X + GOAL_DEPTH &&
-    fitsBetweenPosts(ball.position.y)
+    ball.position.x >= GOAL_RIGHT_X - GOAL_DEPTH &&
+    ball.position.y >= GOAL_TOP_Y &&
+    ball.position.y <= GOAL_BOTTOM_Y
   ) {
     return "player";
   }
+
   if (
-    ball.position.x < GOAL_LEFT_X + BALL_RADIUS &&
-    ball.position.x >= GOAL_LEFT_X - GOAL_DEPTH &&
-    fitsBetweenPosts(ball.position.y)
+    ball.position.x <= GOAL_LEFT_X + GOAL_DEPTH &&
+    ball.position.y >= GOAL_TOP_Y &&
+    ball.position.y <= GOAL_BOTTOM_Y
   ) {
     return "ai";
   }
+
   return null;
 }

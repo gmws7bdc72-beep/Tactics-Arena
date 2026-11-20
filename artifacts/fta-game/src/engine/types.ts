@@ -1,15 +1,3 @@
-export type PlayerRole = "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
-
-export type KitStyle = "solid" | "vertical-stripes" | "horizontal-stripes" | "diagonal-sash";
-export type SleeveStyle = "primary" | "secondary" | "split";
-
-export interface PlayerAppearance {
-  skinTone: string;
-  hairColor: string;
-  hairStyle: "short" | "fade" | "curly" | "mohawk" | "bald" | "dreadlocks";
-  facialHair: "none" | "stubble" | "goatee" | "full";
-}
-
 export interface Vec2 {
   x: number;
   y: number;
@@ -27,15 +15,18 @@ export enum PlayerState {
   PASSING = "PASSING",
   SHOOTING = "SHOOTING",
   CONTESTING = "CONTESTING",
+  SLIDING = "SLIDING",
+  LUNGING = "LUNGING",
   RECOVERING = "RECOVERING",
-  DIVING = "DIVING",
 }
 
 export enum CommandType {
   MOVE = "MOVE",
   PASS = "PASS",
   SHOOT = "SHOOT",
-  DIVE = "DIVE",
+  SLIDE = "SLIDE",
+  STAND_TACKLE = "STAND_TACKLE",
+  PRESS = "PRESS",
 }
 
 export type PassStyle = "ground" | "long";
@@ -45,11 +36,6 @@ export interface Command {
   targetPosition?: Vec2;
   targetPlayerId?: string;
   followUp?: Command;
-  /**
-   * Ordered intermediate handles for a curved action. The origin and final
-   * targetPosition are implicit and do not consume the player's point limit.
-   */
-  curvePoints?: Vec2[];
   /** When true the pass is a planned coordinated play — skip accuracy deviation so
    *  the ball lands exactly on the announced tile, matching the runner's move target. */
   coordinated?: boolean;
@@ -62,7 +48,7 @@ export interface PlayerStats {
   defense: number;
   passing: number;
   speed: number;
-  movement: number;
+  luck: number;
   shooting: number;
   dribbling: number;
   tackling: number;
@@ -72,41 +58,6 @@ export interface PlayerStats {
   vision: number;
   longPassing: number;
   aerial: number;
-}
-
-
-export type TrainingFocus =
-  | "balanced"
-  | "passing"
-  | "shooting"
-  | "longPassing"
-  | "defending"
-  | "goalkeeping"
-  | "movement";
-
-export interface DevelopmentHistoryEntry {
-  season: number;
-  week: number;
-  focus: TrainingFocus;
-  progressGain: number;
-  statGains: Partial<Record<keyof PlayerStats, number>>;
-  overallBefore: number;
-  overallAfter: number;
-  moraleAfter: number;
-  /** Ability learned during this training week, when one was unlocked. */
-  abilityUnlocked?: AbilityId;
-}
-
-export interface PlayerDevelopment {
-  focus: TrainingFocus;
-  potential: number;
-  morale: number;
-  progress: number;
-  totalGrowth: number;
-  seasonGrowth: number;
-  lastWeekGrowth: number;
-  lastTrainedWeek: number;
-  history: DevelopmentHistoryEntry[];
 }
 
 export type TeamTacticId =
@@ -151,7 +102,6 @@ export type AbilityId =
   | "powerhouse"
   | "shadow_mark"
   | "goalkeeper"
-  | "sweeper_keeper"
   | "none";
 
 export interface Ability {
@@ -163,28 +113,10 @@ export interface Ability {
 export interface PlayerCard {
   id: string;
   name: string;
-  role: PlayerRole;
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
   stats: PlayerStats;
   ability: AbilityId;
   jerseyNumber: number;
-  appearance?: PlayerAppearance;
-  age?: number;
-  potential?: number;
-  marketValue?: number;
-  weeklyWage?: number;
-  marketStatus?: "available" | "listed" | "not_for_sale" | "untouchable";
-  /** True while club debt rules force this player to remain transfer-listed. */
-  forcedListedForDebt?: boolean;
-  clubId?: string;
-  askingPrice?: number;
-  /** Preserved so season-end replacements can be audited in news and profiles. */
-  transformedFrom?: {
-    id: string;
-    name: string;
-    season: number;
-    overall: number;
-  };
-  development?: PlayerDevelopment;
 }
 
 export interface SimPlayer {
@@ -204,22 +136,7 @@ export interface SimPlayer {
   recoveryTimer: number;
   name: string;
   jerseyNumber: number;
-  role: PlayerRole;
-  appearance?: PlayerAppearance;
-  /** Runtime arc-length cursor for a curved MOVE command. */
-  curveMotion?: {
-    points: Vec2[];
-    index: number;
-    travelled: number;
-    totalLength: number;
-  };
-  /** Runtime target for a goalkeeper dive. */
-  diveMotion?: {
-    start: Vec2;
-    target: Vec2;
-    duration: number;
-    elapsed: number;
-  };
+  role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
 }
 
 export interface SimBall {
@@ -233,28 +150,6 @@ export interface SimBall {
   height?: number;
   passStyle?: PassStyle;
   passStart?: Vec2;
-  /** Runtime arc-length cursor for curved passes and shots. */
-  curveMotion?: {
-    points: Vec2[];
-    index: number;
-    travelled: number;
-    totalLength: number;
-  };
-  /** Constant speed used while a targeted pass or shot is in flight. */
-  travelSpeed?: number;
-  /** Peak visual height for a long ball, scaled to its route distance. */
-  flightPeakHeight?: number;
-}
-
-export type DuelEffectKind = "outmuscled" | "dribbled";
-
-export interface DuelEffectSnapshot {
-  id: string;
-  kind: DuelEffectKind;
-  position: Vec2;
-  direction: Vec2;
-  intensity: number;
-  progress: number;
 }
 
 export enum GameEventType {
@@ -269,7 +164,6 @@ export enum GameEventType {
   KICKOFF = "KICKOFF",
   OFFSIDE = "OFFSIDE",
   DRIBBLE = "DRIBBLE",
-  POST_HIT = "POST_HIT",
 }
 
 export interface GameEvent {
@@ -279,37 +173,6 @@ export interface GameEvent {
   targetId?: string;
   teamId?: "player" | "ai";
   message: string;
-  /** Optional non-text pitch effect attached to a physical duel. */
-  visualEffect?: DuelEffectKind;
-  effectPosition?: Vec2;
-  effectDirection?: Vec2;
-  effectIntensity?: number;
-  /** True when a deliberate shot's resolved target is inside the goal mouth. */
-  onTarget?: boolean;
-  /** Preserves pass type for match statistics. */
-  passStyle?: PassStyle;
-}
-
-
-export interface TeamMatchStats {
-  possessionTicks: number;
-  passesAttempted: number;
-  passesCompleted: number;
-  forwardPasses: number;
-  shots: number;
-  shotsOnTarget: number;
-  interceptions: number;
-  offsides: number;
-  longBallsAttempted: number;
-  longBallsCompleted: number;
-  dribblesWon: number;
-  physicalDuelsWon: number;
-  saves: number;
-}
-
-export interface MatchStats {
-  player: TeamMatchStats;
-  ai: TeamMatchStats;
 }
 
 export interface FrameSnapshot {
@@ -320,19 +183,9 @@ export interface FrameSnapshot {
     position: Vec2;
     velocity: Vec2;
     state: PlayerState;
-    stateTimer?: number;
-    actionPassStyle?: PassStyle;
-    actionTarget?: Vec2;
-    /** Deterministic kick animation authored by the simulation snapshot. */
-    actionKind?: "pass" | "longPass" | "shot";
-    /** 0..1 progress through the visible wind-up/contact/follow-through. */
-    actionProgress?: number;
     name: string;
     jerseyNumber: number;
-    role: PlayerRole;
-    appearance?: PlayerAppearance;
-    /** Ability copied from the authoritative SimPlayer into the render snapshot. */
-    ability: AbilityId;
+    role: "goalkeeper" | "defender" | "midfielder" | "forward" | "striker";
     tileRange: number;
     offside?: boolean;
   }[];
@@ -342,14 +195,10 @@ export interface FrameSnapshot {
     ownerId: string | null;
     /** Preserved from the previous turn when a pass was still in flight at turn end. */
     passTarget?: Vec2;
-    passStart?: Vec2;
     height?: number;
     passStyle?: PassStyle;
-    travelSpeed?: number;
-    flightPeakHeight?: number;
   };
   events: GameEvent[];
-  duelEffects?: DuelEffectSnapshot[];
 }
 
 export interface Formation {
@@ -362,13 +211,10 @@ export interface TeamConfig {
   name: string;
   jerseyColor: string;
   secondaryColor: string;
-  kitStyle?: KitStyle;
-  sleeveStyle?: SleeveStyle;
   crestIcon: string;
   players: PlayerCard[];
   formationId: string;
   startPositions: Vec2[];
-  trainingIntensity?: "light" | "balanced" | "intense";
 }
 
 export interface LeagueTeamEntry {
@@ -399,8 +245,6 @@ export interface PlayoffMatch {
   awayName: string;
   homeGoals?: number;
   awayGoals?: number;
-  penaltyHomeGoals?: number;
-  penaltyAwayGoals?: number;
   winnerId?: string;
 }
 
@@ -431,9 +275,6 @@ export interface LeagueState {
   aiSchedule?: [string, string][];
   aiMatchIndex?: number;
   lastMatchdayResults?: MatchdayResult[];
-  season?: number;
-  trainingWeek?: number;
-  aiSquads?: Record<string, PlayerCard[]>;
 }
 
 export interface SavedMatchState {
@@ -447,11 +288,7 @@ export interface SavedMatchState {
   ball: SimBall;
   currentFrame: FrameSnapshot;
   allEvents: GameEvent[];
-  matchEndResult: {
-    playerScore: number;
-    aiScore: number;
-    penalties?: { player: number; ai: number };
-  } | null;
+  matchEndResult: { playerScore: number; aiScore: number } | null;
   pendingCommands: [string, Command][];
   selectedPlayerId: string | null;
   passTargetMode: boolean;
@@ -467,6 +304,4 @@ export interface SavedMatchState {
   replaySpeed: 1 | 6 | 8 | 10;
   replayPlaying: boolean;
   turnSaveCount: number;
-  predictionCommands?: [string, Command][];
-  matchStats?: MatchStats;
 }
